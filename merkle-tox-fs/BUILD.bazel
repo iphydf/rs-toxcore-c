@@ -1,0 +1,75 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library", "rust_test")
+
+rust_library(
+    name = "merkle-tox-fs",
+    srcs = [
+        "src/blob.rs",
+        "src/journal.rs",
+        "src/lib.rs",
+        "src/opaque.rs",
+        "src/pack.rs",
+        "src/state.rs",
+    ],
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/tox-proto",
+        "@crates//:bao",
+        "@crates//:blake3",
+        "@crates//:parking_lot",
+        "@crates//:rmp-serde",
+        "@crates//:serde",
+        "@crates//:serde_json",
+        "@crates//:zstd",
+    ],
+)
+
+TEST_SRCS = glob(["tests/*.rs"])
+
+[
+    rust_test(
+        name = src.replace("tests/", "").replace(".rs", "").replace("_", "-"),
+        size = "small",
+        srcs = [src],
+        edition = "2024",
+        rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+        deps = [
+            ":merkle-tox-fs",
+            "//rs-toxcore-c/merkle-tox-core",
+            "//rs-toxcore-c/tox-proto",
+            "@crates//:bao",
+            "@crates//:blake3",
+            "@crates//:filetime",
+            "@crates//:proptest",
+            "@crates//:tempfile",
+        ],
+    )
+    for src in TEST_SRCS
+]
+
+rust_binary(
+    name = "fs_bench",
+    srcs = ["benches/fs_bench.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":merkle-tox-fs",
+        "//rs-toxcore-c/merkle-tox-core",
+        "@crates//:blake3",
+        "@crates//:criterion",
+        "@crates//:tempfile",
+    ],
+)
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":merkle-tox-fs",
+        ":fs_bench",
+    ] + [
+        ":" + src.replace("tests/", "").replace(".rs", "").replace("_", "-")
+        for src in TEST_SRCS
+    ],
+)

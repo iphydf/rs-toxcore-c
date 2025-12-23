@@ -1,0 +1,123 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library", "rust_test")
+
+rust_library(
+    name = "merkle-tox-core",
+    srcs = [
+        "src/builder.rs",
+        "src/cas.rs",
+        "src/clock.rs",
+        "src/crypto.rs",
+        "src/dag.rs",
+        "src/engine/mod.rs",
+        "src/engine/authoring.rs",
+        "src/engine/conversation.rs",
+        "src/engine/handlers/mod.rs",
+        "src/engine/processor/mod.rs",
+        "src/engine/processor/side_effects.rs",
+        "src/engine/processor/verification.rs",
+        "src/engine/session/active.rs",
+        "src/engine/session/handshake.rs",
+        "src/engine/session/mod.rs",
+        "src/error.rs",
+        "src/identity.rs",
+        "src/lib.rs",
+        "src/node.rs",
+        "src/sync/mod.rs",
+        "src/testing/cas.rs",
+        "src/testing/gateway.rs",
+        "src/testing/hub.rs",
+        "src/testing/identity.rs",
+        "src/testing/mod.rs",
+        "src/testing/store.rs",
+        "src/vfs.rs",
+        "src/viz.rs",
+    ],
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//rs-toxcore-c/tox-proto",
+        "//rs-toxcore-c/tox-reconcile",
+        "//rs-toxcore-c/tox-sequenced",
+        "@crates//:bao",
+        "@crates//:bitflags",
+        "@crates//:blake3",
+        "@crates//:chacha20",
+        "@crates//:crossbeam",
+        "@crates//:curve25519-dalek",
+        "@crates//:ed25519-dalek",
+        "@crates//:fs2",
+        "@crates//:hex",
+        "@crates//:hkdf",
+        "@crates//:parking_lot",
+        "@crates//:rand",
+        "@crates//:rmp-serde",
+        "@crates//:serde",
+        "@crates//:serde-big-array",
+        "@crates//:serde_bytes",
+        "@crates//:sha2",
+        "@crates//:subtle",
+        "@crates//:thiserror",
+        "@crates//:tracing",
+        "@crates//:x25519-dalek",
+        "@crates//:zstd",
+    ],
+)
+
+TEST_SRCS = glob(["tests/*.rs"])
+
+[
+    rust_test(
+        name = src.replace("tests/", "").replace(".rs", "").replace("_", "-"),
+        size = "small",
+        srcs = [src],
+        edition = "2024",
+        rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+        deps = [
+            ":merkle-tox-core",
+            "//rs-toxcore-c/merkle-tox-fs",
+            "//rs-toxcore-c/tox-proto",
+            "//rs-toxcore-c/tox-reconcile",
+            "@crates//:bao",
+            "@crates//:blake3",
+            "@crates//:curve25519-dalek",
+            "@crates//:ed25519-dalek",
+            "@crates//:hex",
+            "@crates//:rand",
+            "@crates//:proptest",
+            "@crates//:rmp-serde",
+            "@crates//:serde",
+            "@crates//:serde_bytes",
+            "@crates//:tempfile",
+            "@crates//:tracing-subscriber",
+            "@crates//:x25519-dalek",
+        ],
+    )
+    for src in TEST_SRCS
+]
+
+rust_binary(
+    name = "core_bench",
+    srcs = ["benches/core_bench.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":merkle-tox-core",
+        "//rs-toxcore-c/tox-proto",
+        "//rs-toxcore-c/tox-reconcile",
+        "@crates//:bao",
+        "@crates//:blake3",
+        "@crates//:criterion",
+    ],
+)
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":merkle-tox-core",
+        ":core_bench",
+    ] + [
+        ":" + src.replace("tests/", "").replace(".rs", "").replace("_", "-")
+        for src in TEST_SRCS
+    ],
+)

@@ -1,0 +1,102 @@
+load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_test")
+
+rust_test(
+    name = "compliance-test",
+    size = "small",
+    srcs = ["tests/compliance_test.rs"],
+    edition = "2024",
+    rustc_flags = [
+        "-Clink-arg=-fuse-ld=bfd",
+    ],
+    deps = [
+        "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/merkle-tox-fs",
+        "//rs-toxcore-c/merkle-tox-sqlite",
+        "//rs-toxcore-c/tox-proto",
+        "@crates//:bao",
+        "@crates//:blake3",
+        "@crates//:hex",
+        "@crates//:rand",
+        "@crates//:rmp-serde",
+        "@crates//:rusqlite",
+        "@crates//:serde",
+        "@crates//:tempfile",
+    ],
+)
+
+rust_test(
+    name = "random-compliance-test",
+    size = "small",
+    srcs = ["tests/random_compliance_test.rs"],
+    edition = "2024",
+    rustc_flags = [
+        "-Clink-arg=-fuse-ld=bfd",
+    ],
+    deps = [
+        "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/merkle-tox-fs",
+        "//rs-toxcore-c/merkle-tox-sqlite",
+        "@crates//:hex",
+        "@crates//:rand",
+        "@crates//:rmp-serde",
+        "@crates//:rusqlite",
+        "@crates//:serde",
+        "@crates//:tempfile",
+    ],
+)
+
+
+
+rust_test(
+    name = "persistence-proptest",
+    size = "medium",
+    srcs = ["tests/persistence_proptest.rs"],
+    edition = "2024",
+    rustc_flags = [
+        "-Clink-arg=-fuse-ld=bfd",
+    ],
+    deps = [
+        "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/merkle-tox-fs",
+        "//rs-toxcore-c/merkle-tox-sqlite",
+        "@crates//:hex",
+        "@crates//:proptest",
+        "@crates//:rand",
+        "@crates//:rmp-serde",
+        "@crates//:rusqlite",
+        "@crates//:serde",
+        "@crates//:tempfile",
+    ],
+)
+
+rust_test(
+    name = "robustness-test",
+    size = "small",
+    srcs = ["tests/robustness_test.rs"],
+    edition = "2024",
+    rustc_flags = [
+        "-Clink-arg=-fuse-ld=bfd",
+    ],
+    deps = [
+        "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/merkle-tox-fs",
+        "//rs-toxcore-c/merkle-tox-sqlite",
+        "@crates//:hex",
+        "@crates//:rand",
+        "@crates//:rmp-serde",
+        "@crates//:rusqlite",
+        "@crates//:serde",
+        "@crates//:tempfile",
+    ],
+)
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":compliance-test",
+        ":random-compliance-test",
+        ":persistence-proptest",
+        ":robustness-test",
+    ],
+)

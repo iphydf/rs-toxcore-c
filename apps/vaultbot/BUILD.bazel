@@ -1,0 +1,35 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy")
+
+rust_binary(
+    name = "vaultbot",
+    srcs = ["src/main.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        "//rs-toxcore-c:toxcore",
+        "//rs-toxcore-c/merkle-tox-client",
+        "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/merkle-tox-fs",
+        "//rs-toxcore-c/merkle-tox-tox",
+        "@crates//:chrono",
+        "@crates//:clap",
+        "@crates//:directories",
+        "@crates//:hex",
+        "@crates//:parking_lot",
+        "@crates//:rand",
+        "@crates//:reqwest",
+        "@crates//:serde",
+        "@crates//:serde_json",
+        "@crates//:tokio",
+        "@crates//:tracing",
+        "@crates//:tracing-subscriber",
+    ],
+)
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":vaultbot",
+    ],
+)

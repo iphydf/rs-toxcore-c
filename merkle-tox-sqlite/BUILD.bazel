@@ -1,0 +1,59 @@
+load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_library", "rust_test")
+
+rust_library(
+    name = "merkle-tox-sqlite",
+    srcs = [
+        "src/lib.rs",
+        "src/schema.rs",
+    ],
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/tox-proto",
+        "@crates//:bao",
+        "@crates//:hex",
+        "@crates//:rmp-serde",
+        "@crates//:rusqlite",
+        "@crates//:serde",
+        "@crates//:zstd",
+    ],
+)
+
+TEST_SRCS = glob(["tests/*.rs"])
+
+[
+    rust_test(
+        name = src.replace("tests/", "").replace(".rs", "").replace("_", "-"),
+        size = "small",
+        srcs = [src],
+        edition = "2024",
+        rustc_flags = [
+            "-Clink-arg=-fuse-ld=bfd",
+        ],
+        deps = [
+            ":merkle-tox-sqlite",
+            "//rs-toxcore-c/merkle-tox-core",
+            "//rs-toxcore-c/merkle-tox-fs",
+            "@crates//:hex",
+            "@crates//:proptest",
+            "@crates//:rand",
+            "@crates//:rmp-serde",
+            "@crates//:rusqlite",
+            "@crates//:serde",
+            "@crates//:tempfile",
+        ],
+    )
+    for src in TEST_SRCS
+]
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":merkle-tox-sqlite",
+    ] + [
+        ":" + src.replace("tests/", "").replace(".rs", "").replace("_", "-")
+        for src in TEST_SRCS
+    ],
+)

@@ -1,0 +1,11 @@
+---
+source: rs-toxcore-c/toxxi/tests/widgets/oscilloscope_test.rs
+expression: rendered
+---
+────────────────────
+  ⢀⣴⣿⣿⣷⣄            
+ ⣰⣿⣿⣿⣿⣿⣿⣷⡀          
+⠼⠿⠿⠿⠿⠿⠿⠿⠿⠿⢤⣤⣤⣤⣤⣤⣤⣤⣤⣤
+           ⠻⣿⣿⣿⣿⣿⣿⡿⠁
+            ⠈⠻⣿⣿⠿⠋  
+────────────────────

@@ -1,0 +1,26 @@
+load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_proc_macro")
+
+rust_proc_macro(
+    name = "tox-proto-derive",
+    srcs = [
+        "src/deserialize.rs",
+        "src/lib.rs",
+        "src/serialize.rs",
+        "src/size.rs",
+    ],
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@crates//:proc-macro2",
+        "@crates//:quote",
+        "@crates//:syn",
+    ],
+)
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":tox-proto-derive",
+    ],
+)

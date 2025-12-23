@@ -1,0 +1,119 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library", "rust_test")
+
+rust_library(
+    name = "tox-sequenced",
+    srcs = [
+        "src/bitset.rs",
+        "src/congestion/aimd.rs",
+        "src/congestion/bbrv1.rs",
+        "src/congestion/bbrv2.rs",
+        "src/congestion/cubic.rs",
+        "src/congestion/mod.rs",
+        "src/error.rs",
+        "src/flat_map.rs",
+        "src/lib.rs",
+        "src/outgoing.rs",
+        "src/protocol.rs",
+        "src/quota.rs",
+        "src/reassembly/buffer.rs",
+        "src/reassembly/mod.rs",
+        "src/rtt.rs",
+        "src/scheduler.rs",
+        "src/session.rs",
+        "src/time.rs",
+    ],
+    edition = "2024",
+    proc_macro_deps = [
+        "@crates//:serde_repr",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//rs-toxcore-c/tox-proto",
+        "@crates//:rand",
+        "@crates//:serde",
+        "@crates//:serde-big-array",
+        "@crates//:serde_bytes",
+        "@crates//:smallvec",
+        "@crates//:thiserror",
+        "@crates//:tracing",
+    ],
+)
+
+TEST_SRCS = glob(["tests/*.rs"])
+
+[
+    rust_test(
+        name = src.replace("tests/", "").replace(".rs", "").replace("_", "-"),
+        size = "small",
+        srcs = [src],
+        edition = "2024",
+        rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+        deps = [
+            ":tox-sequenced",
+            "//rs-toxcore-c/tox-proto",
+            "@crates//:proptest",
+            "@crates//:rand",
+            "@crates//:rmp-serde",
+            "@crates//:serde",
+            "@crates//:serde_bytes",
+            "@crates//:serde_json",
+            "@crates//:smallvec",
+            "@crates//:tracing-subscriber",
+        ],
+    )
+    for src in TEST_SRCS
+]
+
+rust_binary(
+    name = "benchmark",
+    srcs = ["src/bin/benchmark.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-sequenced",
+        "@crates//:clap",
+        "@crates//:crossbeam",
+        "@crates//:crossterm",
+        "@crates//:rand",
+        "@crates//:ratatui",
+        "@crates//:serde",
+        "@crates//:serde_json",
+    ],
+)
+
+rust_binary(
+    name = "micro_bench",
+    srcs = ["benches/micro_bench.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-sequenced",
+        "@crates//:criterion",
+    ],
+)
+
+rust_binary(
+    name = "session_bench",
+    srcs = ["benches/session_bench.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-sequenced",
+        "@crates//:criterion",
+        "@crates//:rand",
+    ],
+)
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":tox-sequenced",
+        ":benchmark",
+        ":micro_bench",
+        ":session_bench",
+    ] + [
+        ":" + src.replace("tests/", "").replace(".rs", "").replace("_", "-")
+        for src in TEST_SRCS
+    ],
+)

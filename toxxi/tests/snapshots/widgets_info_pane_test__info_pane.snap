@@ -1,0 +1,21 @@
+---
+source: rs-toxcore-c/toxxi/tests/widgets/info_pane_test.rs
+expression: rendered
+---
+──────────────────────────────
+┌Alice────────────────────────
+│Status: Online               
+│Mood: Happy                  
+│                             
+│• Alice                      
+│• Bob                        
+│                             
+│                             
+│                             
+│                             
+│                             
+│                             
+│                             
+│                             
+│                             
+──────────────────────────────

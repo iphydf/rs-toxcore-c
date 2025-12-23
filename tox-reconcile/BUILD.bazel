@@ -1,0 +1,58 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library", "rust_test")
+
+rust_library(
+    name = "tox-reconcile",
+    srcs = [
+        "src/lib.rs",
+        "src/iblt.rs",
+    ],
+    edition = "2024",
+    proc_macro_deps = [
+        "//rs-toxcore-c/tox-proto-derive",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//rs-toxcore-c/tox-proto",
+        "@crates//:blake3",
+        "@crates//:serde",
+        "@crates//:serde_bytes",
+        "@crates//:thiserror",
+        "@crates//:tracing",
+    ],
+)
+
+rust_test(
+    name = "reconcile-test",
+    srcs = ["tests/reconcile_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-reconcile",
+        "//rs-toxcore-c/tox-proto",
+        "@crates//:blake3",
+        "@crates//:proptest",
+        "@crates//:rand",
+        "@crates//:tracing-subscriber",
+    ],
+)
+
+rust_binary(
+    name = "reconcile_bench",
+    srcs = ["benches/reconcile_bench.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-reconcile",
+        "@crates//:criterion",
+    ],
+)
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":tox-reconcile",
+        ":reconcile-test",
+        ":reconcile_bench",
+    ],
+)

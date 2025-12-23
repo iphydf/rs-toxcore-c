@@ -1,0 +1,132 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library", "rust_test")
+
+rust_library(
+    name = "tox-proto",
+    srcs = [
+        "src/constants.rs",
+        "src/lib.rs",
+    ],
+    edition = "2024",
+    proc_macro_deps = [
+        "//rs-toxcore-c/tox-proto-derive",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@crates//:bitflags",
+        "@crates//:rand",
+        "@crates//:rmp",
+        "@crates//:rmp-serde",
+        "@crates//:serde",
+        "@crates//:serde_bytes",
+        "@crates//:smallvec",
+        "@crates//:thiserror",
+        "@crates//:zeroize",
+    ],
+)
+
+rust_test(
+    name = "lib-test",
+    srcs = ["tests/lib_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-proto",
+        "@crates//:serde",
+        "@crates//:serde_bytes",
+    ],
+)
+
+rust_test(
+    name = "complex-test",
+    srcs = ["tests/complex_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-proto",
+        "@crates//:serde",
+        "@crates//:serde_bytes",
+    ],
+)
+
+rust_test(
+    name = "compare-test",
+    srcs = ["tests/compare_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-proto",
+        "@crates//:serde",
+        "@crates//:serde_bytes",
+    ],
+)
+
+rust_test(
+    name = "efficiency-test",
+    srcs = ["tests/efficiency_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-proto",
+    ],
+)
+
+rust_test(
+    name = "array-regression-test",
+    srcs = ["tests/array_regression_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-proto",
+        "@crates//:serde",
+        "@crates//:serde_bytes",
+    ],
+)
+
+rust_test(
+    name = "flat-test",
+    srcs = ["tests/flat_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-proto",
+    ],
+)
+
+rust_test(
+    name = "bitflags-test",
+    srcs = ["tests/bitflags_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-proto",
+        "@crates//:bitflags",
+    ],
+)
+
+rust_binary(
+    name = "proto_bench",
+    srcs = ["benches/proto_bench.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-proto",
+        "@crates//:criterion",
+        "@crates//:smallvec",
+    ],
+)
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":tox-proto",
+        ":lib-test",
+        ":complex-test",
+        ":compare-test",
+        ":efficiency-test",
+        ":array-regression-test",
+        ":flat-test",
+        ":bitflags-test",
+        ":proto_bench",
+    ],
+)

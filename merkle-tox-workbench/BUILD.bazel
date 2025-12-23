@@ -1,0 +1,80 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library", "rust_test")
+
+rust_library(
+    name = "workbench_lib",
+    srcs = [
+        "src/lib.rs",
+        "src/model.rs",
+        "src/msg.rs",
+        "src/ui.rs",
+        "src/update.rs",
+    ],
+    crate_name = "merkle_tox_workbench",
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//rs-toxcore-c:toxcore",
+        "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/merkle-tox-tox",
+        "//rs-toxcore-c/tox-proto",
+        "//rs-toxcore-c/tox-sequenced",
+        "@crates//:blake3",
+        "@crates//:clap",
+        "@crates//:crossbeam",
+        "@crates//:crossterm",
+        "@crates//:hex",
+        "@crates//:parking_lot",
+        "@crates//:rand",
+        "@crates//:ratatui",
+    ],
+)
+
+rust_binary(
+    name = "workbench",
+    srcs = ["src/main.rs"],
+    edition = "2024",
+    rustc_flags = [
+        "-Clink-arg=-fuse-ld=bfd",
+    ],
+    deps = [
+        ":workbench_lib",
+        "@crates//:clap",
+        "@crates//:crossterm",
+        "@crates//:ratatui",
+    ],
+)
+
+TEST_SRCS = glob(["tests/*.rs"])
+
+[
+    rust_test(
+        name = src.replace("tests/", "").replace(".rs", "").replace("_", "-"),
+        size = "small",
+        srcs = [src],
+        edition = "2024",
+        rustc_flags = [
+            "-Clink-arg=-fuse-ld=bfd",
+        ],
+        deps = [
+            ":workbench_lib",
+            "//rs-toxcore-c/merkle-tox-core",
+            "@crates//:crossterm",
+            "@crates//:ed25519-dalek",
+            "@crates//:hex",
+            "@crates//:rand",
+        ],
+    )
+    for src in TEST_SRCS
+]
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":workbench_lib",
+        ":workbench",
+    ] + [
+        ":" + src.replace("tests/", "").replace(".rs", "").replace("_", "-")
+        for src in TEST_SRCS
+    ],
+)

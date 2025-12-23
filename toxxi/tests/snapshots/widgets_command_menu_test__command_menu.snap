@@ -1,0 +1,16 @@
+---
+source: rs-toxcore-c/toxxi/tests/widgets/command_menu_test.rs
+expression: rendered
+---
+────────────────────────────────────────────────────────────────────────────────
+                                                                                
+                                                                                
+                                                                                
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  /about                                                     Show version info│
+│  /file         send <path>                              Manage file transfers│
+│  /help                                                              Show help│
+│> /msg          <name> <text>                           Send a private message│
+│  /quit                                                             Exit Toxxi│
+╰──────────────────────────────────────────────────── (4/5) [Tab] to complete ─╯
+────────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,16 @@
+---
+source: rs-toxcore-c/toxxi/tests/widgets/input_box_test.rs
+expression: rendered
+---
+───────────────
+╭─────────────╮
+│> Testing 🦀↳│
+│   width and↳│
+│   🤝🏾 wrappi↳│
+│  ng with 你↳│
+│  好! And so↳│
+│  me more te↳│
+│  xt to forc↳│
+│  e wraps.   │
+╰─────────────╯
+───────────────

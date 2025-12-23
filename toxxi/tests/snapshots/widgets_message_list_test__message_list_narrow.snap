@@ -1,0 +1,16 @@
+---
+source: rs-toxcore-c/toxxi/tests/widgets/message_list_test.rs
+expression: rendered
+---
+──────────────────────────────
+                              
+                              
+                              
+                              
+                              
+                              
+12:00 Alice ●                 
+Hello!                        
+12:01 Tester ✓                
+Hey Alice!                    
+──────────────────────────────

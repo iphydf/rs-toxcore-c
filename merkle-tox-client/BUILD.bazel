@@ -1,0 +1,48 @@
+load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_library", "rust_test")
+
+rust_library(
+    name = "merkle-tox-client",
+    srcs = [
+        "src/lib.rs",
+        "src/policy.rs",
+        "src/state.rs",
+    ],
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//rs-toxcore-c/merkle-tox-core",
+        "@crates//:blake3",
+        "@crates//:ed25519-dalek",
+        "@crates//:futures",
+        "@crates//:hex",
+        "@crates//:tokio",
+        "@crates//:tracing",
+    ],
+)
+
+rust_test(
+    name = "client-test",
+    size = "small",
+    srcs = ["tests/client_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":merkle-tox-client",
+        "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/merkle-tox-sqlite",
+        "@crates//:blake3",
+        "@crates//:ed25519-dalek",
+        "@crates//:rand",
+        "@crates//:tokio",
+        "@crates//:tracing-subscriber",
+    ],
+)
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":merkle-tox-client",
+        ":client-test",
+    ],
+)

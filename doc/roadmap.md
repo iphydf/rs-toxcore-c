@@ -1,0 +1,184 @@
+# Merkle-Tox Production Roadmap
+
+This document outlines the architectural and implementation improvements
+required to bring the Merkle-Tox prototype to production quality.
+
+## 1. Persistence & Storage Architecture
+
+The storage layer must be transitioned from a prototype filesystem structure to
+a robust, transactional database system.
+
+### Critical Improvements
+
+-   **Transactional Consistency:** Redesign the `NodeStore` and
+    `process_effects` loop to support multi-operation transactions. A sequence
+    of engine effects (e.g., writing a node and updating heads) must be
+    committed atomically.
+-   **Database Backend:** Transition the default storage from loose files and
+    custom packs to a robust transactional database engine (e.g., SQLite or
+    RocksDB).
+-   **In-Memory Indexing:** Implement a disk-backed B-Tree or similar structure
+    for metadata lookups to avoid loading the entire object index into memory.
+-   **Durability Primitives:** Add `fsync` support to the Virtual Filesystem
+    (VFS) and ensure the storage layer uses it correctly to prevent data loss on
+    power failure.
+-   **Schema Migration Framework:** Implement a robust schema migration system
+    (e.g., using `rusqlite_migrations`) to handle database upgrades without
+    losing user data.
+-   **Startup Integrity Check:** Implement a recovery mode on startup that
+    identifies and cleans up "orphaned" or unverified nodes left by partial
+    syncs.
+
+## 2. Core Engine Scalability & Performance
+
+The engine must support conversations with high message volumes and multiple
+concurrent devices without linear performance degradation.
+
+### Critical Improvements
+
+-   **Incremental State Loading:** Refactor `load_conversation_state` to avoid
+    loading the entire conversation history into RAM. Use checkpoints for
+    identity and permission states.
+-   **Fine-Grained Locking:** Move away from the single, coarse-grained mutex
+    around `MerkleToxNode`. Implement granular locking (e.g., per-session or
+    actor-based) to enable parallel processing.
+-   **Optimized Permission Checks:** Replace recursive delegation walks with a
+    flattened permission cache or an efficient graph-based lookup.
+-   **Zero-Copy Hotpath:** Reduce heap allocations in the packet processing
+    pipeline by using reference-counted buffers (`Bytes`) instead of frequent
+    `.clone()` calls on nodes.
+-   **Pagination support:** Enable the engine and UI to load and display only
+    the most recent N messages while maintaining background synchronization of
+    the full DAG.
+
+## 3. Asynchronous I/O & Backpressure
+
+Decouple the network processing loop from blocking disk I/O to maintain
+responsiveness under load.
+
+### Critical Improvements
+
+-   **Async Storage API:** Redesign the `NodeStore` and `BlobStore` traits to be
+    asynchronous, allowing storage operations to be offloaded to a dedicated
+    thread pool.
+-   **Flow Control & Backpressure:** Implement a mechanism to signal peers to
+    slow down when local storage or the processing pipeline is overwhelmed.
+-   **Pacing & Congestion Control:** Validate and tune the `tox-sequenced`
+    congestion control algorithms (AIMD/Cubic/BBR) against real-world network
+    conditions.
+
+## 4. Protocol Evolution & Versioning
+
+The protocol must be able to evolve without breaking the existing network.
+
+### Critical Improvements
+
+-   **Versioned Wire Format:** Add version fields to `WireNode` and `MerkleNode`
+    to support backward-incompatible changes in the future.
+-   **Cross-Conversation Integrity:** Mandate that all parents of a node must
+    belong to the same conversation ID to prevent cross-room sync attacks or
+    accidental data leakage.
+-   **Feature Negotiation:** Expand the `CapsAnnounce` handshake to include a
+    bitset of supported sub-protocols and features (e.g., compression methods,
+    privacy enhancements).
+
+## 5. State Pruning & Garbage Collection
+
+Manage the long-term growth of the local database to prevent disk exhaustion.
+
+### Critical Improvements
+
+-   **Snapshot-Based Pruning:** Implement logic to handle
+    `ControlAction::Snapshot` by deleting historical nodes and metadata that
+    precede the snapshot basis hash.
+-   **Retention Policies:** Introduce TTL (Time-To-Live) for ephemeral data and
+    a mechanism to "forget" devices or peers that have been offline for an
+    extended period.
+
+## 6. Privacy & Metadata Protection
+
+Harden the wire format and sync process against passive and active network
+observers.
+
+### Critical Improvements
+
+-   **Obfuscate DAG Structure:** Encrypt or hash the `parents` field in
+    `WireNode` to prevent observers from mapping conversation graphs.
+-   **Encrypt Headers & Payloads (Rationale #2 & #3):** Move `network_timestamp`
+    and `author_pk` from the `WireNode` header into the encrypted payload.
+    Ensure that `Admin` and `KeyWrap` payloads are fully encrypted (currently
+    they are plaintext).
+-   **Revert to Linear Ratchets:** Replace the "DAG-based merge ratchet"
+    implementation in `conversation.rs` and `crypto.rs` with the documented
+    **Per-Sender Linear Ratchets**. This eliminates the brittle
+    `historical_chains` cache and the risk of becoming "cryptographically stuck"
+    during large forks.
+-   **Metadata-Private Sync:** Investigate Private Information Retrieval (PIR)
+    or oblivious synchronization techniques to reduce metadata leakage during
+    the IBLT reconciliation process.
+
+## 7. Security & Denial-of-Service Protection
+
+Protect the node against malicious peers and resource exhaustion attacks.
+
+### Critical Improvements
+
+-   **Ancestry Trust Cap (Rationale #5):** Implement the 16-hop structural trust
+    cap. Mandate that content chains must be re-anchored by a verified Admin
+    node every 16 levels to prevent "infinite junk" history attacks.
+-   **Contiguity-Based Eviction (Rationale #4):** Implement the Opaque Store
+    eviction policy. Prioritize keeping nodes close to the Local Low-Water Mark
+    (LLWM) to mitigate Rank-Padding attacks.
+-   **Nonce Hardening:** Audit and harden nonce derivation in `crypto.rs` to
+    guarantee unique, cryptographically strong nonces for every encryption
+    operation, especially for KeyWrap.
+-   **Opportunistic Handshake Completion (Rationale #6):** Implement the
+    `HandshakePulse` authoring logic to ensure 1-on-1 conversations rotate away
+    from "Last Resort" keys as soon as possible.
+-   **Bounded Allocations:** Fix `tox-proto` to enforce maximum limits on
+    collection sizes during deserialization.
+-   **CPU DoS Protection:** Harden auto-generated deserialization code to avoid
+    long-running loops when skipping extra fields.
+-   **IBLT Size Limits:** Enforce strict maximum cell counts for `SyncSketch`
+    messages at the deserialization layer to prevent memory-exhaustion attacks
+    during reconciliation.
+-   **Resource Quotas:** Implement global and per-identity limits on peer
+    sessions and reassembly buffers.
+-   **Peer Reputation & Attribution:** Track validation failures per peer and
+    implement automated punishment.
+
+## 8. API & Code Quality
+
+Ensure the library is easy to use safely and meets high standards for
+correctness.
+
+### Critical Improvements
+
+-   **Secure Defaults:** Refactor constructors to use secure, entropy-seeded
+    RNGs (`OsRng`) by default. Deterministic injection must be a specialized
+    testing-only feature.
+-   **Error Propagation:** Eliminate `unwrap()` and `expect()` calls in the
+    library core. Replace them with robust `Result` handling.
+-   **FFI Safety Audit:** Perform a comprehensive safety review of the `toxcore`
+    FFI wrapper and `tox-proto` unsafe optimizations (e.g., `transmute`).
+-   **Standardized Logging:** Implement structured tracing tags across all
+    components to improve sync troubleshooting in production environments.
+
+## 9. Tooling, Backup & Documentation
+
+Provide the necessary ecosystem for users and developers.
+
+### Improvements
+
+-   **Documentation Integrity:** Ensure `doc/merkle-tox-ratchet.md` and
+    `doc/merkle-tox-design-rationale.md` remain the source of truth for the
+    linear ratchet model once the implementation is reverted.
+-   **Formal Specification:** Create a formal specification of the binary wire
+    format and protocol state machine transitions.
+-   **Integrated Backup Tool:** Develop a utility for creating consistent
+    snapshots of identity seeds and conversation history for user migration.
+-   **Network Simulation:** Expand the `VirtualHub` to simulate high-latency,
+    low-bandwidth, and lossy environments to ensure protocol robustness.
+-   **Development Tool Isolation:** Ensure that developer tools like
+    `merkle-tox-workbench` and test mocks are strictly separated from production
+    builds.

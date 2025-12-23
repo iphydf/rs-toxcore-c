@@ -1,0 +1,105 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library", "rust_test")
+
+COMMON_DEPS = [
+    "//rs-toxcore-c:toxcore",
+    "@crates//:ratatui",
+    "@crates//:crossterm",
+    "@crates//:qrcode",
+    "@crates//:unicode-width",
+    "@crates//:unicode-segmentation",
+    "@crates//:base64",
+    "@crates//:clap",
+    "@crates//:directories",
+    "@crates//:chrono",
+    "@crates//:chrono-tz",
+    "@crates//:serde",
+    "@crates//:serde_json",
+    "@crates//:reqwest",
+    "@crates//:regex",
+    "@crates//:rand",
+    "@crates//:tokio",
+    "@crates//:rhai",
+    "@crates//:tempfile",
+    "@crates//:futures",
+    "@crates//:proptest",
+    "@crates//:insta",
+    "@crates//:resvg",
+    "@crates//:tiny-skia",
+    "@crates//:qoi",
+]
+
+PROC_MACRO_DEPS = [
+    "@crates//:proptest-derive",
+]
+
+rust_library(
+    name = "toxxi_lib",
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/main.rs"],
+    ),
+    compile_data = glob(["assets/**"]),
+    crate_name = "toxxi",
+    edition = "2024",
+    proc_macro_deps = PROC_MACRO_DEPS,
+    deps = COMMON_DEPS,
+)
+
+rust_binary(
+    name = "toxxi",
+    srcs = ["src/main.rs"],
+    edition = "2024",
+    proc_macro_deps = PROC_MACRO_DEPS,
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = COMMON_DEPS + [":toxxi_lib"],
+)
+
+TEST_SRCS = glob(
+    ["tests/**/*.rs"],
+    exclude = ["tests/e2e/**"],
+)
+
+[
+    rust_test(
+        name = src.replace("tests/", "").replace(".rs", "").replace("/", "-").replace("_", "-"),
+        srcs = [src] + (glob(["tests/e2e/**"]) if src.endswith("e2e_test.rs") else []),
+        crate_root = src,
+        edition = "2024",
+        proc_macro_deps = PROC_MACRO_DEPS,
+        rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+        data = glob(["tests/snapshots/**"]),
+        deps = COMMON_DEPS + [":toxxi_lib"],
+    )
+    for src in TEST_SRCS
+]
+
+BENCH_SRCS = glob(["benches/*.rs"])
+
+[
+    rust_binary(
+        name = src.replace("benches/", "").replace(".rs", ""),
+        srcs = [src],
+        edition = "2024",
+        rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+        deps = COMMON_DEPS + [
+            ":toxxi_lib",
+            "@crates//:criterion",
+        ],
+    )
+    for src in BENCH_SRCS
+]
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":toxxi",
+        ":toxxi_lib",
+    ] + [
+        ":" + src.replace("tests/", "").replace(".rs", "").replace("/", "-").replace("_", "-")
+        for src in TEST_SRCS
+    ] + [
+        ":" + src.replace("benches/", "").replace(".rs", "")
+        for src in BENCH_SRCS
+    ],
+)
