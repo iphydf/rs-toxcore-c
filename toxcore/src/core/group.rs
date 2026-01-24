@@ -5,6 +5,7 @@ use crate::types::{
     MessageType, PublicKey, Tox_Err_Group_Disconnect, Tox_Err_Group_Invite_Accept,
     Tox_Err_Group_Invite_Friend, Tox_Err_Group_Is_Connected, Tox_Err_Group_Join,
     Tox_Err_Group_Kick_Peer, Tox_Err_Group_Leave, Tox_Err_Group_New, Tox_Err_Group_Peer_Query,
+    Tox_Err_Group_By_Id,
     Tox_Err_Group_Self_Name_Set, Tox_Err_Group_Self_Query, Tox_Err_Group_Self_Status_Set,
     Tox_Err_Group_Send_Custom_Packet, Tox_Err_Group_Send_Custom_Private_Packet,
     Tox_Err_Group_Send_Message, Tox_Err_Group_Send_Private_Message, Tox_Err_Group_Set_Ignore,
@@ -130,6 +131,20 @@ impl Tox {
             group_number.0
         )
         .map(ChatId)
+        .map_err(|e| e.into())
+    }
+
+    pub fn group_by_id(
+        &self,
+        chat_id: &ChatId,
+    ) -> Result<GroupNumber, Tox_Err_Group_By_Id> {
+        ffi_call!(
+            tox_group_by_id,
+            ffi::Tox_Err_Group_By_Id::TOX_ERR_GROUP_BY_ID_OK,
+            self.ptr,
+            chat_id.0.as_ptr()
+        )
+        .map(GroupNumber)
         .map_err(|e| e.into())
     }
 

@@ -1,8 +1,8 @@
 use super::tox::Tox;
 use crate::ffi;
 use crate::types::{
-    self, FileId, FileNumber, FriendNumber, Tox_Err_File_Control, Tox_Err_File_Get,
-    Tox_Err_File_Seek, Tox_Err_File_Send, Tox_Err_File_Send_Chunk, ToxFileControl,
+    self, FileId, FileNumber, FriendNumber, Tox_Err_File_By_Id, Tox_Err_File_Control,
+    Tox_Err_File_Get, Tox_Err_File_Seek, Tox_Err_File_Send, Tox_Err_File_Send_Chunk, ToxFileControl,
 };
 use std::ptr;
 
@@ -99,6 +99,24 @@ impl Tox {
             file_number.0
         )
         .map(FileId)
+        .map_err(|e| e.into())
+    }
+
+    pub fn file_by_id(
+        &self,
+        file_id: &FileId,
+    ) -> Result<(FriendNumber, FileNumber), Tox_Err_File_By_Id> {
+        let mut friend_number = 0;
+        let mut file_number = 0;
+        ffi_call!(
+            tox_file_by_id,
+            ffi::Tox_Err_File_By_Id::TOX_ERR_FILE_BY_ID_OK,
+            self.ptr,
+            file_id.0.as_ptr(),
+            &mut friend_number,
+            &mut file_number
+        )
+        .map(|_| (FriendNumber(friend_number), FileNumber(file_number)))
         .map_err(|e| e.into())
     }
 }

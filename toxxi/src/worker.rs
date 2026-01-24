@@ -13,7 +13,7 @@ use toxcore::tox::{
     ToxSavedataType, ToxUserStatus,
 };
 use toxcore::types::{
-    ChatId, ConferenceId, FileId, GROUP_CHAT_ID_SIZE, PublicKey, Tox_Err_File_Send_Chunk,
+    ChatId, ConferenceId, GROUP_CHAT_ID_SIZE, PublicKey, Tox_Err_File_Send_Chunk,
     Tox_Err_Friend_Send_Message, ToxError, ToxGroupRole, ToxLogLevel,
 };
 
@@ -28,16 +28,7 @@ fn find_friend(tox: &Tox, pk: &PublicKey) -> Option<FriendNumber> {
 }
 
 fn find_group(tox: &Tox, chat_id: &ChatId) -> Option<GroupNumber> {
-    for i in 0..tox.group_count() {
-        let gnum = GroupNumber(i);
-        let group = tox.group(gnum);
-        if let Ok(id) = group.chat_id()
-            && &id == chat_id
-        {
-            return Some(gnum);
-        }
-    }
-    None
+    tox.group_by_id(chat_id).ok().map(|g| g.get_number())
 }
 
 fn find_conference(tox: &Tox, id: &ConferenceId) -> Option<ConferenceNumber> {
@@ -253,8 +244,6 @@ pub fn spawn_tox(
             let mut group_peers: HashMap<GroupNumber, HashMap<PublicKey, GroupPeerNumber>> =
                 HashMap::new();
             // TODO: Add a hard limit on the size of these maps to prevent potential DoS/OOM.
-            let mut file_id_map: HashMap<FileId, (FriendNumber, FileNumber)> = HashMap::new();
-            let mut file_number_map: HashMap<(FriendNumber, FileNumber), FileId> = HashMap::new();
             let mut file_size_map: HashMap<(FriendNumber, FileNumber), u64> = HashMap::new();
 
             loop {
@@ -739,10 +728,6 @@ pub fn spawn_tox(
                                 ) {
                                     Ok(file) => {
                                         if let Ok(file_id) = file.file_id() {
-                                            file_id_map
-                                                .insert(file_id, (friend_number, file.number()));
-                                            file_number_map
-                                                .insert((friend_number, file.number()), file_id);
                                             file_size_map
                                                 .insert((friend_number, file.number()), file_size);
                                             let _ =
@@ -769,13 +754,10 @@ pub fn spawn_tox(
                             }
                         }
                         ToxAction::FileControl(_pk, file_id, control) => {
-                            if let Some((friend_number, file_number)) = file_id_map.get(&file_id) {
-                                let friend_number = *friend_number;
-                                let file_number = *file_number;
-                                if let Err(e) = tox
-                                    .file(&tox.friend(friend_number), file_number)
-                                    .control(control)
-                                {
+                            if let Ok(file) = tox.file_by_id(&file_id) {
+                                let friend_number = file.friend_number();
+                                let file_number = file.number();
+                                if let Err(e) = file.control(control) {
                                     let _ = tx.send(Msg::System(SystemEvent::Log {
                                         severity: crate::msg::LogSeverity::Error,
                                         context: crate::msg::LogContext::Global,
@@ -789,16 +771,14 @@ pub fn spawn_tox(
                                 if control
                                     == toxcore::types::ToxFileControl::TOX_FILE_CONTROL_CANCEL
                                 {
-                                    file_id_map.remove(&file_id);
-                                    file_number_map.remove(&(friend_number, file_number));
                                     file_size_map.remove(&(friend_number, file_number));
                                 }
                             }
                         }
                         ToxAction::FileSendChunk(pk, file_id, position, data) => {
-                            if let Some((friend_number, file_number)) = file_id_map.get(&file_id) {
-                                let friend_number = *friend_number;
-                                let file_number = *file_number;
+                            if let Ok(file) = tox.file_by_id(&file_id) {
+                                let friend_number = file.friend_number();
+                                let file_number = file.number();
 
                                 if !deferred_chunks.is_empty() {
                                     deferred_chunks.push_back((
@@ -809,7 +789,6 @@ pub fn spawn_tox(
                                     ));
                                     continue;
                                 }
-                                let file = tox.file(&tox.friend(friend_number), file_number);
                                 let len = data.len();
                                 match file.send_chunk(position, &data) {
                                     Ok(_) => {
@@ -843,17 +822,13 @@ pub fn spawn_tox(
                                 if let Some(size) = file_size_map.get(&(friend_number, file_number))
                                     && position + len as u64 >= *size
                                 {
-                                    file_id_map.remove(&file_id);
-                                    file_number_map.remove(&(friend_number, file_number));
                                     file_size_map.remove(&(friend_number, file_number));
                                 }
                             }
                         }
                         ToxAction::FileSeek(_pk, file_id, position) => {
-                            if let Some((friend_number, file_number)) = file_id_map.get(&file_id) {
-                                let _ = tox
-                                    .file(&tox.friend(*friend_number), *file_number)
-                                    .seek(position);
+                            if let Ok(file) = tox.file_by_id(&file_id) {
+                                let _ = file.seek(position);
                             }
                         }
                         ToxAction::Shutdown => {
@@ -1204,10 +1179,6 @@ pub fn spawn_tox(
                                 let file =
                                     tox.file(&tox.friend(e.friend_number()), e.file_number());
                                 if let Ok(file_id) = file.file_id() {
-                                    file_id_map
-                                        .insert(file_id, (e.friend_number(), e.file_number()));
-                                    file_number_map
-                                        .insert((e.friend_number(), e.file_number()), file_id);
                                     file_size_map.insert(
                                         (e.friend_number(), e.file_number()),
                                         e.file_size(),
@@ -1224,13 +1195,7 @@ pub fn spawn_tox(
                             Event::FileChunkRequest(e) => {
                                 let file =
                                     tox.file(&tox.friend(e.friend_number()), e.file_number());
-                                let file_id_opt = file.file_id().ok().or_else(|| {
-                                    file_number_map
-                                        .get(&(e.friend_number(), e.file_number()))
-                                        .cloned()
-                                });
-
-                                if let Some(file_id) = file_id_opt {
+                                if let Ok(file_id) = file.file_id() {
                                     let _ = tx.send(Msg::Tox(ToxEvent::FileChunkRequest(
                                         e.friend_number(),
                                         file_id,
@@ -1243,13 +1208,8 @@ pub fn spawn_tox(
                                 let pk = tox.friend(e.friend_number()).public_key().unwrap();
                                 let file =
                                     tox.file(&tox.friend(e.friend_number()), e.file_number());
-                                let file_id_opt = file.file_id().ok().or_else(|| {
-                                    file_number_map
-                                        .get(&(e.friend_number(), e.file_number()))
-                                        .cloned()
-                                });
 
-                                if let Some(file_id) = file_id_opt {
+                                if let Ok(file_id) = file.file_id() {
                                     let _ = tx_io.send(IOAction::WriteChunk(
                                         pk,
                                         file_id,
@@ -1269,9 +1229,6 @@ pub fn spawn_tox(
                                         file_size_map.get(&(e.friend_number(), e.file_number()))
                                         && e.position() + e.data().len() as u64 >= *size
                                     {
-                                        file_id_map.remove(&file_id);
-                                        file_number_map
-                                            .remove(&(e.friend_number(), e.file_number()));
                                         file_size_map.remove(&(e.friend_number(), e.file_number()));
                                     }
                                 } else {
@@ -1289,26 +1246,13 @@ pub fn spawn_tox(
                             Event::FileRecvControl(e) => {
                                 let file =
                                     tox.file(&tox.friend(e.friend_number()), e.file_number());
-                                let file_id_opt = file.file_id().ok().or_else(|| {
-                                    file_number_map
-                                        .get(&(e.friend_number(), e.file_number()))
-                                        .cloned()
-                                });
 
-                                if let Some(file_id) = file_id_opt {
+                                if let Ok(file_id) = file.file_id() {
                                     let _ = tx.send(Msg::Tox(ToxEvent::FileRecvControl(
                                         e.friend_number(),
                                         file_id,
                                         e.control(),
                                     )));
-
-                                    if e.control()
-                                        == toxcore::types::ToxFileControl::TOX_FILE_CONTROL_CANCEL
-                                    {
-                                        file_id_map.remove(&file_id);
-                                        file_number_map
-                                            .remove(&(e.friend_number(), e.file_number()));
-                                    }
                                 }
                             }
                             _ => {}

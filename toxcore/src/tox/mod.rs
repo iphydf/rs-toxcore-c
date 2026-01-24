@@ -332,6 +332,15 @@ impl Tox {
         self.inner.core.group_get_number_groups()
     }
 
+    pub fn group_by_id(&self, chat_id: &ChatId) -> Result<Group<'_>> {
+        let number = self
+            .inner
+            .core
+            .group_by_id(chat_id)
+            .map_err(ToxError::GroupById)?;
+        Ok(self.group(number))
+    }
+
     pub fn file(&self, friend: &Friend, number: FileNumber) -> File<'_> {
         File {
             tox: self,
@@ -354,6 +363,15 @@ impl Tox {
             .file_send(friend.get_number(), kind, file_size, file_id, filename)
             .map_err(ToxError::FileSend)?;
         Ok(self.file(friend, number))
+    }
+
+    pub fn file_by_id(&self, file_id: &FileId) -> Result<File<'_>> {
+        let (friend_number, file_number) = self
+            .inner
+            .core
+            .file_by_id(file_id)
+            .map_err(ToxError::FileById)?;
+        Ok(self.file(&self.friend(friend_number), file_number))
     }
 
     pub fn conference(&self, number: ConferenceNumber) -> Conference<'_> {

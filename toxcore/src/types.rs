@@ -527,6 +527,12 @@ impl_tox_enum!(Tox_Err_File_Get, ffi::Tox_Err_File_Get, {
     TOX_ERR_FILE_GET_NOT_FOUND,
 });
 
+impl_tox_enum!(Tox_Err_File_By_Id, ffi::Tox_Err_File_By_Id, {
+    TOX_ERR_FILE_BY_ID_OK,
+    TOX_ERR_FILE_BY_ID_NULL,
+    TOX_ERR_FILE_BY_ID_NOT_FOUND,
+});
+
 impl_tox_enum!(Tox_Err_File_Send, ffi::Tox_Err_File_Send, {
     TOX_ERR_FILE_SEND_OK,
     TOX_ERR_FILE_SEND_NULL,
@@ -773,6 +779,12 @@ impl_tox_enum!(Tox_Err_Group_Send_Custom_Private_Packet, ffi::Tox_Err_Group_Send
     TOX_ERR_GROUP_SEND_CUSTOM_PRIVATE_PACKET_DISCONNECTED,
 });
 
+impl_tox_enum!(Tox_Err_Group_By_Id, ffi::Tox_Err_Group_By_Id, {
+    TOX_ERR_GROUP_BY_ID_OK,
+    TOX_ERR_GROUP_BY_ID_NULL,
+    TOX_ERR_GROUP_BY_ID_NOT_FOUND,
+});
+
 impl_tox_enum!(Tox_Err_Key_Derivation, ffi::Tox_Err_Key_Derivation, {
     TOX_ERR_KEY_DERIVATION_OK,
     TOX_ERR_KEY_DERIVATION_NULL,
@@ -837,6 +849,7 @@ pub enum ToxError {
     FileControl(Tox_Err_File_Control),
     FileSeek(Tox_Err_File_Seek),
     FileGet(Tox_Err_File_Get),
+    FileById(Tox_Err_File_By_Id),
     FileSendChunk(Tox_Err_File_Send_Chunk),
     ConferenceNew(Tox_Err_Conference_New),
     ConferenceDelete(Tox_Err_Conference_Delete),
@@ -873,6 +886,7 @@ pub enum ToxError {
     GroupSelfStatusSet(Tox_Err_Group_Self_Status_Set),
     GroupPeerQuery(Tox_Err_Group_Peer_Query),
     GroupTopicSet(Tox_Err_Group_Topic_Set),
+    GroupById(Tox_Err_Group_By_Id),
     GetPort(Tox_Err_Get_Port),
     EventsIterate(Tox_Err_Events_Iterate),
     AvNew(Toxav_Err_New),
