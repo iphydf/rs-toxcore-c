@@ -67,8 +67,8 @@ MessagePack-encoded object.
 ## 4. Optimized Binary Handling
 
 To ensure cryptographic data (hashes, keys, signatures) and payloads are
-serialized as efficient MessagePack **Binary** types rather than arrays of
-integers, the following rules MUST be followed:
+serialized as MessagePack **Binary** types rather than arrays of integers, the
+following rules MUST be followed:
 
 ### `serde_bytes` for Dynamic Buffers
 
@@ -91,7 +91,7 @@ which are 64 bytes) MUST use the `serde-big-array` crate.
 
 -   **Why**: Standard Serde only supports traits for arrays up to size 32. For
     larger arrays, a custom serializer or `BigArray` helper is required to
-    prevent compilation errors and ensure efficient binary encoding.
+    prevent compilation errors and ensure binary encoding.
 
 ```rust
 use serde_big_array::BigArray;
@@ -122,8 +122,9 @@ Merkle-Tox implements **Power-of-2 Padding**.
 Before encryption and serialization into a `WireNode`, the sensitive metadata
 and content fields are logically combined into a single buffer.
 
-1.  **Bundle Structure**: `[sender_pk (32B), sequence_number (8B), content
-    (MsgPack), metadata (MsgPack)]`.
+1.  **Bundle Structure**: Because Header Encryption separates routing info,
+    padding is applied to the `payload_data` block: `[network_timestamp (8B),
+    content (MsgPack), metadata (MsgPack)]`.
 2.  **Target Sizes**: The reassembled payload MUST be padded to the next power
     of 2: 128, 256, 512, 1024, 2048, or 4096 bytes.
 3.  **Scheme**: Merkle-Tox uses **ISO/IEC 7816-4** padding:

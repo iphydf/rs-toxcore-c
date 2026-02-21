@@ -120,10 +120,11 @@ A node is only considered valid if:
 3.  A valid **Trust Path** exists from the `sender_pk` back to the `author_pk`
     (the Master Seed).
 4.  **Causality-Dependent Authorization**: Permissions are recalculated for
-    every node based on the linearized DAG state. A Trust Path is only valid if
-    it has not been invalidated by a `RevokeDevice` node that is a **topological
-    ancestor** of the node being verified, or appears earlier in the consensus
-    network time ordering.
+    every node based on the strictly linearized causal history of the DAG. A
+    Trust Path is only valid if it has not been invalidated by a `RevokeDevice`
+    node that is a **topological ancestor** of the node being verified. (Note:
+    Network time is NEVER used for cryptographic authorization boundaries, as it
+    is manipulable by attackers backdating nodes).
 5.  **Limits**: See `merkle-tox.md` for `MAX_PARENTS` and other hard limits.
 
 ## 4. Content Types
@@ -172,20 +173,23 @@ enum Content {
         data: Vec<u8>,
     },
 
-    /// ID 7: Batch of keys for group rekeying (Encrypted for specific members).
-    /// See merkle-tox-deniability.md for usage.
+    /// ID 7: Batch of keys for distributing the global metadata/DARE key (K_conv).
+    /// Used when adding/revoking members. Does NOT encrypt content.
     KeyWrap {
-        epoch: u64,
+        generation: u64,
         /// Hash of the Anchor Snapshot or Genesis Node that proves the
         /// sender's authority. Required for new joiners to trust the key.
         anchor_hash: [u8; 32],
         wrapped_keys: Vec<WrappedKey>,
     },
 
-    /// ID 8: Encrypted ratchet state for self-recovery (Encrypted to own devices).
-    RatchetSnapshot {
-        epoch: u64,
-        ciphertext: Vec<u8>, // Encrypted RatchetState
+    /// ID 8: Encrypted cache of historical keys to allow newly authorized devices to decrypt past history.
+    /// The key database is uploaded as a Blob to the CAS. This node distributes the decryption key.
+    HistoryKeyExport {
+        /// Hash of the encrypted Key Cache Blob in the CAS.
+        blob_hash: [u8; 32],
+        /// The symmetric key used to encrypt the blob, wrapped for the new device.
+        wrapped_keys: Vec<WrappedKey>,
     },
 
     /// ID 9: Bridged from legacy Tox transport.
@@ -198,6 +202,12 @@ enum Content {
         message_type: u8,
         /// Deterministic ID for cross-device deduplication.
         dedup_id: [u8; 32],
+    },
+
+    /// ID 10: Distributes a device's unique SenderKey for payload encryption.
+    /// Provides scalable Forward Secrecy and PCS without Admin bottlenecks.
+    SenderKeyDistribution {
+        wrapped_keys: Vec<WrappedKey>,
     },
 }
 
@@ -232,26 +242,24 @@ enum ControlAction {
         last_resort_key: SignedPreKey,
     },
 
-    /// Requests a peer to publish fresh pre-keys (X3DH Pulse).
+    /// Requests a peer to publish fresh pre-keys.
+    /// Used primarily in 1-on-1 chats to compel a full KeyWrap rotation of $K_{conv}$
+    /// after relying on a Last Resort key.
     HandshakePulse,
 
     /// A "Snapshot" node to allow shallow sync by summarizing state.
     /// REQUIRES: Full Admin Track verification up to basis_hash.
     Snapshot(SnapshotData),
 
-    /// A "Standalone" Snapshot for shallow sync.
+    /// A "Speculative" Snapshot for shallow sync.
     /// AUTH: MUST be signed by a Level 1 Admin.
-    /// RULE: This node acts as a trust anchor and can be verified using the
-    /// Founder's key (from Genesis) + the enclosed Certificate.
+    /// RULE: This node acts as a speculative trust anchor and can be initially
+    /// verified using the Founder's key (from Genesis) + the enclosed Certificate.
+    /// It MUST be followed by a background sync of the Admin Track to verify
+    /// that the Admin was not revoked prior to the snapshot.
     AnchorSnapshot {
         data: SnapshotData,
         cert: DelegationCertificate,
-    },
-
-    /// Signals a rotation of the K_conv. Followed by KeyWrap content nodes.
-    /// RULE: Monotonicity. new_epoch MUST be exactly current_epoch + 1.
-    Rekey {
-        new_epoch: u64,
     },
 }
 
@@ -303,8 +311,12 @@ struct DelegationCertificate {
 
 struct WrappedKey {
     /// PK of the recipient member device.
+    /// Note: While earlier designs attempted to hide this via trial decryption,
+    /// room membership is already public to relays via cleartext `AuthorizeDevice`
+    /// Admin nodes. Therefore, including the `recipient_pk` here avoids the
+    /// massive CPU overhead of trial decryption in 200+ user groups.
     recipient_pk: [u8; 32],
-    /// New K_conv, encrypted with the recipient's PK.
+    /// New K_conv or SenderKey, encrypted with the pairwise X3DH secret.
     ciphertext: Vec<u8>,
 }
 ```

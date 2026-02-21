@@ -30,7 +30,7 @@ rs-toxcore-c/
 ### `//rs-toxcore-c/tox-proto:tox-proto`
 
 -   **Type**: `rust_library`
--   **Responsibilities**: Efficient positional serialization using MessagePack.
+-   **Responsibilities**: Positional serialization using MessagePack.
 -   **Dependencies**: `@crates//:rmp-serde`, `@crates//:serde`,
     `@crates//:serde_bytes`.
 -   **Macros**: `//rs-toxcore-c/tox-proto-derive`.

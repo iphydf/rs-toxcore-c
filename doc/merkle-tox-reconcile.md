@@ -1,11 +1,11 @@
-# Merkle-Tox Sub-Design: Efficient Set Reconciliation (`tox-reconcile`)
+# Merkle-Tox Sub-Design: Set Reconciliation (`tox-reconcile`)
 
 ## Overview
 
 Merkle-Tox primarily uses a heads-based reconciliation strategy
 (`merkle-tox-sync.md`). While effective for small groups, this approach scales
 linearly with the number of concurrent branches (heads). To support large group
-chats and efficient background synchronization of large histories, we introduce
+chats and background synchronization of large histories, we introduce
 **Invertible Bloom Lookup Tables (IBLT)** via the `tox-reconcile` library.
 
 `tox-reconcile` provides a way for two peers to identify the differences between
@@ -89,8 +89,6 @@ struct SyncSketch {
 }
 
 struct SyncRange {
-    /// The epoch this sketch covers. 0 for all epochs.
-    pub epoch: u64,
     /// Minimum topological rank (inclusive).
     pub min_rank: u64,
     /// Maximum topological rank (inclusive).
@@ -100,8 +98,8 @@ struct SyncRange {
 
 ### B. Standard Sizing Tiers
 
-To ensure wire compatibility and efficient transport, Merkle-Tox uses fixed
-sizing tiers. A tier is selected based on the estimated difference size $D$.
+To ensure wire compatibility and transport, Merkle-Tox uses fixed sizing tiers.
+A tier is selected based on the estimated difference size $D$.
 
 Tier   | Cells ($m$) | Max Diff ($D$) | Wire Size | Transport Method
 :----- | :---------- | :------------- | :-------- | :-------------------------
@@ -125,9 +123,8 @@ sketch:
 2.  **Level 1 (Recent History Sketch)**: A small IBLT covering the last ~500
     messages.
 3.  **Level 2 (Sharded Archive)**: Large history is split into logical "shards".
-    -   **Deterministic Sharding**: Shards are defined by **Epoch ID** and
-        **Topological Rank ranges** (e.g., Shard 0: Rank 0-9999, Shard 1:
-        10000-19999).
+    -   **Deterministic Sharding**: Shards are defined by **Topological Rank
+        ranges** (e.g., Shard 0: Rank 0-9999, Shard 1: 10000-19999).
     -   Peers compare shard-level Blake3 checksums. If a checksum differs, they
         exchange a **Medium** sketch for that specific shard.
 
@@ -136,8 +133,8 @@ sketch:
 ### A. Tier Selection (Initiator)
 
 -   **Multicast Gossip**: Always uses the **Tiny** tier.
--   **Periodic Unicast**: Defaults to **Small** tier (covers most day-to-day
-    syncs).
+-   **Background Unicast (`RECONCILE_UNICAST_INTERVAL_MS = 300000`)**: Defaults
+    to **Small** tier (covers most day-to-day syncs).
 -   **Deep Sync**: Defaults to **Medium** tier.
 -   **Adaptive Scaling**: If a sync session recently failed with a smaller tier,
     the initiator promotes the request to the next larger tier.
@@ -210,7 +207,8 @@ Hashing every message into an IBLT can be CPU-intensive for mobile devices.
     -   When a node is removed (e.g., during pruning), it is **subtracted** from
         the in-memory sketch (XOR/Decrement).
     -   **Persistence**: Since in-memory sketches can be lost on restart,
-        Merkle-Tox periodically checkpoints "Shard Sketches" via the
+        Merkle-Tox MUST checkpoint "Shard Sketches" when a shard is filled or
+        every 1,000 modified nodes (`SKETCH_CHECKPOINT_INTERVAL = 1000`) via the
         **`ReconciliationStore`** trait.
     -   **Reconstruction**: If a checkpoint is missing or corrupted, the sketch
         is rebuilt on-demand by scanning the `NodeStore` for the target range.
@@ -236,7 +234,8 @@ Set reconciliation is deployed differently depending on the network context:
 
 ### A. Multicast Gossip (Lossy)
 
--   Nodes periodically broadcast a **Tiny** sketch to the Tox Group.
+-   Nodes MUST broadcast a **Tiny** sketch to the Tox Group at a fixed interval
+    (`RECONCILE_GOSSIP_INTERVAL_MS = 60000`).
 -   This identifies if any peers have "drifted" from the global consensus.
 -   If a peer receives a multicast sketch and cannot decode a difference of 0,
     it initiates a **Reliable Unicast** sync with the broadcaster.

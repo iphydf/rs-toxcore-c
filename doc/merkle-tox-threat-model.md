@@ -35,7 +35,9 @@ synchronization swarm:
     could have forged this to frame me"), the protocol must allow any
     participant with $K_{conv}$ to be mathematically capable of forging any
     message in the room. KCI resistance would require asymmetric signatures on
-    every message, which would destroy deniability.
+    every message, which would destroy deniability. As a direct consequence,
+    Merkle-Tox has no **Internal Accountability** for content nodes; any group
+    member can forge messages appearing to be from any other group member.
 *   **Boundaries**: KCI only applies to **Content Nodes**. **Admin Nodes** (like
     `RevokeDevice`) require Ed25519 signatures from the specific author and are
     therefore KCI-resistant.
@@ -144,8 +146,8 @@ synchronization swarm:
     authorized that device. This creates a deadlock where the user has the key
     but refuses to use it.
 *   **Mitigation**: **Speculative Decryption & Identity Pending Status**.
-    1.  The client uses the Admin's `Signature` and the internal pairwise MAC of
-        the `WrappedKey` to verify the integrity of the `KeyWrap`.
+    1.  The client uses the Admin's `Signature` to verify the integrity of the
+        `KeyWrap`.
     2.  If the MAC is valid, the client tentatively accepts the key and decrypts
         the Opaque Store.
     3.  Messages are displayed with an **"Identity Pending"** warning. This

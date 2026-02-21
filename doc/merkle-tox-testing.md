@@ -156,7 +156,7 @@ build its visualizations.
     `retransmit_count`.
 -   **DAG Metrics**: `heads` (List of hashes), `max_rank`, `verified_count`,
     `speculative_count`.
--   **Identity Metrics**: `authorized_devices` count, `current_epoch`.
+-   **Identity Metrics**: `authorized_devices` count, `current_generation`.
 -   **Storage Metrics**: `db_size`, `write_latency_ms`.
 
 ## 7. Network Topology Templates
@@ -192,8 +192,8 @@ The benchmarking suite is **fully implemented** and available in
 -   [x] **Virtual Hub**: Implemented in-memory router with Gilbert-Elliot loss.
 -   [x] **TUI Workbench**: 4-tab dashboard with live metrics and DAG
     visualization.
--   [x] **Chaos Scenarios**: Automated Joiner, Partition, Rekey, and Blob
-    swarms.
+-   [x] **Chaos Scenarios**: Automated Joiner, Partition, SenderKey Rotation,
+    and Blob swarms.
 
 ### Future Enhancements
 

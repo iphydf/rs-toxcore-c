@@ -26,7 +26,7 @@ Upon connection, peers exchange `SYNC_HEADS` packets.
 -   Contains the **`ConversationID`** (Genesis Hash) and a list of hashes
     representing the latest nodes they have for the conversation.
 -   **Anchor Ad**: Members MUST also include the hash of their **Earliest Known
-    Admin Head** (the oldest Snapshot or Rekey node they have verified). This
+    Admin Head** (the oldest Snapshot or KeyWrap node they have verified). This
     acts as an **Explicit Vouch** for the chain of nodes between that anchor and
     the current heads, allowing joiners to bridge gaps larger than 500 hops
     using data from blind relays.
@@ -85,8 +85,9 @@ DoS, this is tiered and uses **Adaptive PoW Consensus**:
     the client MUST **Blacklist** that peer for that specific `SyncRange`.
     -   **Escalation**: To deter persistent attackers, the blacklist duration
         MUST increase exponentially with each repeated offense within a 24-hour
-        period (e.g., 10 minutes, 1 hour, 24 hours). This prevents state machine
-        deadlocks while penalizing repeat offenders.
+        period (`BLACKLIST_TIER_1_MS = 600000`, `BLACKLIST_TIER_2_MS = 3600000`,
+        `BLACKLIST_TIER_3_MS = 86400000`). This prevents state machine deadlocks
+        while penalizing repeat offenders.
 
 ## 3. Adaptive Genesis PoW
 
@@ -95,7 +96,7 @@ and the initial **`SYNC_HEADS`** handshake are protected by a two-stage PoW:
 
 1.  **Stage 1: Baseline Entry (Hardcoded)**:
     -   A new client wishing to join or sync a conversation must solve a fixed,
-        baseline PoW (e.g., 12 bits).
+        baseline PoW (`BASELINE_POW_DIFFICULTY = 12`).
     -   This allows the client to receive the `SYNC_HEADS` and the **Current
         Consensus Difficulty** from authorized members.
 2.  **Stage 2: Adaptive Top-up (Dynamic)**:
@@ -148,20 +149,32 @@ For**:
 2.  **Explicit Vouch (Member)**: A `WireNode` hash is vouched for if it is
     advertised in a `SYNC_HEADS` or `SYNC_SKETCH` by a peer who has already been
     authorized via an `AuthorizeDevice` node in the DAG.
-    -   **Single-Voucher Optimization**: To minimize memory usage on resource-
-        constrained devices, the engine only needs to track the **first**
-        authorized peer who vouched for a specific hash. If that peer fails to
-        provide the data, the hash is marked as "Orphaned" until another peer
-        re-vouches for it. This reduces memory complexity from $O(Nodes \times
-        Peers)$ to $O(Nodes)$.
+    -   **Bounded Voucher Set (Anti-Withholding)**: To prevent a malicious peer
+        from advertising hashes and then refusing to serve the data (a Data
+        Withholding attack), the engine tracks a strictly bounded set of
+        authorized peers (`MAX_VOUCHERS_PER_HASH = 3`) who vouched for a
+        specific hash.
+        -   **Rotation**: If the primary peer fails to provide the requested
+            node within the timeout (`VOUCHER_TIMEOUT_MS = 10000`) or
+            disconnects, the engine penalizes that peer and immediately requests
+            the node from the next peer in the voucher set.
+        -   This ensures continuous synchronization while keeping memory
+            complexity strictly bounded at $O(Nodes)$ rather than $O(Nodes
+            \times Peers)$.
 3.  **Structural Vouch (Ancestry Cap)**: If a verified node (Admin OR Content)
     lists a hash as a parent or basis, that hash is automatically vouched for.
     -   **Cap**: This transitive vouching is limited to **500 hops** to prevent
         deep buffer exhaustion while still allowing normal conversation flow.
     -   **Periodic Re-anchoring**: To ensure blind relays can serve long
-        histories, Admins MUST author a lightweight `Snapshot` or `Rekey` node
+        histories, Admins MUST author a lightweight `Snapshot` or `KeyWrap` node
         at least once every 400 messages. This resets the hop counter and
-        provides a signed trust anchor for the next segment of history.
+        provides a signed trust anchor for the next segment of history. (Note:
+        If all Admins go offline and the 500-hop limit is reached, blind relays
+        will intentionally stall. This is a strict security requirement to
+        prevent buffer exhaustion DoS via Sybil regular members. For highly
+        active groups, the recommended operational solution to prevent this UX
+        stall is to grant Admin status to an "always-on" bot or trusted server
+        to handle automated re-anchoring).
 
 ### Speculative Quota & Opaque Storage
 
@@ -169,9 +182,9 @@ Vouched-for but undecryptable `WireNodes` are stored in the **Opaque Store**:
 
 -   **Quota**: 100MB per conversation.
 -   **Per-Peer Fetch Quota**: To mitigate **Anchor Spoofing**, the sync engine
-    limits the number of outstanding Opaque requests per voucher (e.g., max 500
-    nodes). A voucher only regains quota as their provided nodes are promoted or
-    successfully decrypted.
+    limits the number of outstanding Opaque requests per voucher
+    (`MAX_OPAQUE_REQUESTS_PER_VOUCHER = 500`). A voucher only regains quota as
+    their provided nodes are promoted or successfully decrypted.
 -   **Vouch Purging**: When a member's device is revoked via a `RevokeDevice`
     node, the system MUST immediately purge all entries from the **Vouch
     Registry** associated with that device identity. This makes the associated
@@ -213,14 +226,16 @@ Once a `KeyWrap` or initial $K_{conv}$ is established:
     -   **Topological Anchor**: A content node MUST NOT be decrypted or promoted
         until its cryptographic ancestry is anchored to a verified Admin node or
         a previously promoted content node.
-3.  **Trial Decryption**: The client attempts to decrypt the locked nodes using
-    the current and recent conversation keys ($K_{epoch}, K_{epoch-1}$).
+3.  **Trial Decryption**: The client attempts to decrypt the locked nodes. It
+    first uses $K_{header}$ to decrypt the routing info, identifying the sender.
+    It then uses that sender's current `SenderKey` (or a recent historical step)
+    to decrypt the payload.
     -   **De-duplication**: If a promotion is already in progress for a specific
-        branch, incoming redundant `KeyWrap` nodes for that same epoch MUST be
-        ignored to prevent a "Promotion Storm" DoS.
+        branch, incoming redundant `SenderKeyDistribution` nodes for that same
+        generation MUST be ignored to prevent a "Promotion Storm" DoS.
 4.  **Verification**: The client validates sequence numbers and DAG structure.
 5.  **Speculative Promotion (Identity Pending)**: If a `KeyWrap` is
-    authenticated (via Pairwise MAC) but the sender's authorization cannot be
+    authenticated (via Signature) but the sender's authorization cannot be
     verified yet (due to missing Admin track nodes), the key is used to decrypt
     the Opaque Store tentatively.
     -   Content is moved to the **Verified Store** but marked as **"Identity

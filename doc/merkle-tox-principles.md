@@ -24,10 +24,6 @@ values of the Tox ecosystem.
 *   **Implementation**: Sensitive metadata (`sender_pk`, `sequence_number`) is
     encrypted within the `WireNode`. All packets are padded to power-of-2
     boundaries using ISO/IEC 7816-4.
-*   **Current Tension**: The cleartext `epoch` field in `WireNode` provides a
-    small signal about key rotation frequency. This is a justified compromise to
-    enable efficient history re-sync for late joiners without performing
-    expensive trial decryption.
 
 ## 3. Temporal Fingerprinting Protection
 
@@ -36,9 +32,9 @@ values of the Tox ecosystem.
     hardware-clock offsets (Temporal Fingerprinting).
 *   **Implementation**:
     *   **Timestamp Jitter**: The `tox-sequenced` layer SHOULD inject a small
-        amount of random noise (e.g., ±5ms) into the PING/PONG timestamps. This
-        prevents a peer from calculating a machine-unique microsecond-level
-        offset.
+        amount of random noise (between `-TIME_JITTER_MS` and `+TIME_JITTER_MS`,
+        where `TIME_JITTER_MS = 5`) into the PING/PONG timestamps. This prevents
+        a peer from calculating a machine-unique microsecond-level offset.
     *   **Coarse-Grained Synchronization**: While internal RTT measurements
         require precision for congestion control, the publicly-visible
         `network_timestamp` in the DAG and the offsets shared with peers should

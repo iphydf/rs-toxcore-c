@@ -40,10 +40,11 @@ Handles both large binary assets (Blobs) and undecryptable encrypted nodes
 Tracks which authorized peers have vouched for specific hashes.
 
 -   `put_vouch(hash, peer_pk)`: Records a vouch from an authorized member.
--   `get_voucher(hash)`: Returns the PK of the first authorized member who
-    advertised this hash.
--   **Single-Voucher Rule**: To ensure scalability, the registry only needs to
-    persist a single voucher per hash.
+-   `get_vouchers(hash)`: Returns a small list (up to `MAX_VOUCHERS_PER_HASH`)
+    of authorized members who advertised this hash.
+-   **Bounded Voucher Set**: To ensure scalability while preventing Data
+    Withholding attacks, the registry only needs to persist a small, fixed
+    maximum number of vouchers per hash.
 -   **Persistence**: Both the **Vouch Registry** and the **Blacklist Registry**
     MUST be persistent to ensure that trust state and escalation levels survive
     application restarts.
@@ -92,16 +93,17 @@ sharded into `verified` and `speculative` subdirectories.
 
 #### Packed Objects ("Cold" Store)
 
-To avoid millions of tiny files, the FS backend periodically "bakes" loose nodes
-into immutable pack files.
+To avoid millions of tiny files, the FS backend MUST "bake" loose nodes into
+immutable pack files.
 
 -   **`pack-<id>.data`**: Concatenated raw node data.
 -   **`pack-<id>.idx`**: A sorted binary index mapping `Hash -> Offset`.
--   **Trigger**: Performed per-conversation once loose nodes exceed a threshold
-    (e.g., 500 nodes).
--   **Compaction**: To maintain efficiency, multiple small pack files are
-    periodically merged (compacted) into a single larger pack file. This reduces
-    file descriptor usage and improves binary search performance.
+-   **Trigger**: Performed per-conversation once loose nodes exceed a strict
+    threshold (`COMPACTION_THRESHOLD = 500 nodes`).
+-   **Compaction**: To maintain efficiency, multiple pack files MUST be merged
+    (compacted) into a single larger pack file when the number of active packs
+    exceeds a threshold (`MAX_ACTIVE_PACKS = 10`). This reduces file descriptor
+    usage and improves binary search performance.
 
 ### Metadata Indexing
 
@@ -115,10 +117,11 @@ Since FS lacks SQL indices, it maintains a **Volatile Index** in memory:
     `Rank` alongside the `Hash` to allow for single-pass indexing without
     reading the large `.data` files.
 -   **Dynamic Permission Cache**: Because permissions are dynamic and
-    rank-dependent, the storage layer **MUST** maintain a versioned cache of
-    "Effective Permissions" for active devices at specific topological ranks.
-    This cache prevents $O(N^2)$ computational overhead during bulk Promotion
-    Flows by allowing trust-path validation to be memoized.
+    causality-dependent, the storage layer **MUST** maintain a versioned cache
+    of "Effective Permissions" for active devices relative to specific points in
+    the causal history of the DAG. This cache prevents $O(N^2)$ computational
+    overhead during bulk Promotion Flows by allowing trust-path validation to be
+    memoized.
 -   This ensures that DAG validation and sync logic remain $O(1)$ or $O(\log N)$
     without constant disk seeking.
 
@@ -131,9 +134,9 @@ Regardless of the backend, large binary assets are treated as
 
 -   **De-duplication**: Multiple references to the same file hash point to the
     same single file in the `vault/`.
--   **Hybrid Storage**: Small blobs (e.g., < 64KB) may be stored directly in the
-    database or as loose objects, while large files are always stored on the raw
-    filesystem.
+-   **Hybrid Storage**: Small blobs (`< IN_DB_BLOB_MAX_SIZE = 65536` bytes) may
+    be stored directly in the database or as loose objects, while large files
+    are always stored on the raw filesystem.
 
 ### 5. Blob Metadata (FS Backend)
 
@@ -179,5 +182,5 @@ To protect chat history from forensic analysis:
     key ($K_{conv}$), the raw data on disk is unreadable without the DAG
     handshake keys, even if the database itself is unencrypted.
 -   **Metadata Decryption**: Searchable metadata (like `sender_pk`) is decrypted
-    before indexing to allow for efficient local lookups while remaining
-    obfuscated on the wire.
+    before indexing to allow for local lookups while remaining obfuscated on the
+    wire.

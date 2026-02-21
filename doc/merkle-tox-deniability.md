@@ -18,9 +18,10 @@ cannot cryptographically prove who authored a specific node.
 Every conversation (1:1 or Group) establishes a symmetric **Shared Conversation
 Key**.
 
--   In **1:1 chats**, this is derived from the Tox `crypto_box` shared secret.
--   In **Group chats**, this is a rotating symmetric key shared among all
-    authorized devices of all participants.
+-   In **1:1 chats**, this is distributed securely via an X3DH handshake during
+    the initial connection.
+-   In **Group chats**, this is distributed securely via X3DH (`KeyWrap` nodes)
+    to all authorized devices of all participants.
 
 ### From Signatures to MACs
 
@@ -84,14 +85,17 @@ See **`merkle-tox-ratchet.md`** for the ratchet implementation details.
 ### Post-Compromise Security (PCS)
 
 To "heal" a conversation after a device has been compromised, Merkle-Tox
-performs periodic **Epoch Rotations**.
+performs periodic **Sender Key Rotations**.
 
-1.  **Triggers**: Rotation occurs every **5,000 messages** or **7 days**.
-2.  **Mechanism**: A new root $K_{epoch}$ is generated and distributed via
-    ephemeral-static DH (KeyWrap) to all authorized members.
+1.  **Triggers**: Rotation occurs per-device every **5,000 messages** or **7
+    days**.
+2.  **Mechanism**: The device generates a new `SenderKey` (ratchet root) and
+    distributes it via ephemeral-static DH (`SenderKeyDistribution`) to all
+    currently authorized members.
 3.  **Result**: This provides **Post-Compromise Security**, ensuring that an
-    attacker who has stolen a previous key is eventually rotated out of the
-    conversation.
+    attacker who has stolen a previous device key is eventually rotated out of
+    the message decryption capability. This decentralized $O(N)$ distribution
+    prevents the $O(N^2)$ Admin bottleneck associated with global key rotations.
 
 ## 3. "Lazy Consensus" Fallback
 
@@ -142,9 +146,11 @@ DARE model.
     -   **EXCEPTION (KeyWrap)**: `KeyWrap` nodes (Content ID 7) are sent in
         **cleartext** (and signed with an Ed25519 Signature) to allow new
         members to receive the conversation keys. For these nodes, the
-        `sender_pk` MUST NOT be encrypted, enabling joiners to verify the "Chain
-        of Custody" back to a verified Admin. The internal `WrappedKey` payloads
-        use pairwise authenticated encryption.
+        `sender_pk` and `recipient_pk` lists are technically visible to relays.
+        However, because room membership is already public via the
+        `AuthorizeDevice` Admin nodes, this does not expose any new information,
+        and avoiding trial decryption saves massive CPU overhead in large
+        groups.
 
 ### Transitive Rationale
 
@@ -176,5 +182,5 @@ their specific messages remain plausibly deniable.
 -   **Deniability**: Provided by the symmetric nature of the MAC (DARE).
 -   **Forward Secrecy**: Provided by the symmetric ratchet (per-message) and
     X3DH (per-handshake).
--   **Post-Compromise Security**: Provided by periodic epoch rotations and
-    re-keying.
+-   **Post-Compromise Security**: Provided by periodic per-device `SenderKey`
+    rotations.

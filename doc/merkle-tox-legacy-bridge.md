@@ -41,8 +41,12 @@ pub enum Content {
 
 To ensure all devices agree on which DAG a legacy message belongs to:
 
-*   **1:1 Chats**: The `ConversationId` is derived using the **Deterministic
-    1-on-1 Genesis** rule (defined in `merkle-tox-dag.md`).
+*   **1:1 Chats**: The `ConversationId` is derived deterministically from the
+    sorted pair of Tox Public Keys using keyed Blake3: `ConversationId =
+    blake3::keyed_hash(sort(PkA, PkB), b"MerkleToxLegacy1on1Bridge\0\0\0\0")`.
+    *(Note: This differs from native Merkle-Tox 1:1 chats which use a random
+    Genesis Hash to support multi-device, but is necessary here to map the
+    legacy Tox stable identifiers.)*
 *   **Legacy Groups (DHT)**: The `ConversationId` is derived deterministically
     from the stable `ChatId` using keyed Blake3: `ConversationId =
     blake3::keyed_hash(ChatId, b"MerkleToxLegacyGroupBridge\0\0\0\0")`.

@@ -50,12 +50,12 @@ delegation rules:
 
 -   **Cryptographic Validity**: A `DelegationCertificate` is cryptographically
     valid if it is correctly signed by an issuer who was authorized at the
-    moment of the certificate's creation (its topological rank).
+    moment of the certificate's creation (determined by causal ancestry).
 -   **Effective Permissions (Dynamic Intersection)**: A device's actual power is
     the **intersection** of its certificate's claims and the issuer's actual
-    power at the rank of the node being verified. If an issuer oversteps their
-    authority (e.g., granting `ADMIN` when they only have `MESSAGE`), the
-    escalated permission is ignored by the engine.
+    power at the point in causal history of the node being verified. If an
+    issuer oversteps their authority (e.g., granting `ADMIN` when they only have
+    `MESSAGE`), the escalated permission is ignored by the engine.
 -   **Expiration**: A device's authorization is only valid until the earliest
     `expires_at` timestamp in its trust path.
 
@@ -71,14 +71,41 @@ A `MerkleNode` is only valid if its author (the `sender_pk`) was authorized at
 the moment of creation.
 
 1.  **Pathing**: Every node must be linked to a valid `DelegationCertificate`.
-2.  **Recursive Check**: When validating a node at **Topological Rank N**, the
-    client must verify that:
+2.  **Recursive Check**: When validating a node **N**, the client must verify
+    that:
     -   The `sender_pk` holds a certificate signed by an Admin.
     -   **Crucially**: The Admin's own authorization was not revoked by any node
-        with a rank **$\le$ N**.
-3.  **Transitive Revocation**: If Admin A is revoked at Rank 100, all Level 2
+        that is a **topological ancestor** of N.
+    -   **Concurrent Admin Resolution (Tie-Breaker)**: If the DAG contains
+        concurrent `RevokeDevice` nodes that target each other's authors (a
+        "mutually assured destruction" scenario where a compromised Admin tries
+        to drag down honest Admins), the system MUST deterministically serialize
+        the Admin track before evaluation. Concurrent Admin nodes are sorted by
+        **Admin Seniority**:
+        1.  The `topological_rank` of the `AuthorizeDevice` node that granted
+            the author's Admin status (older/lower rank wins).
+        2.  If authorized at the exact same rank, tie-break using the
+            lexicographical Blake3 `hash` of that same historical
+            `AuthorizeDevice` node. Because the sorting relies entirely on
+            *historical, immutable* data, an attacker cannot "grind" the hash of
+            their new `RevokeDevice` node to artificially win the tie-breaker.
+            The junior Admin's revocation is evaluated second, and because they
+            were just revoked by the senior Admin, their action is discarded as
+            invalid.
+3.  **Transitive Revocation**: If Admin A is revoked by node R, all Level 2
     devices authorized *only* by Admin A automatically lose their authority to
-    author any node with a Rank $\ge$ 101.
+    author any node that descends from R.
+    -   **Concurrent Node Resolution**: Because network time is not used, an
+        attacker might attempt to author nodes concurrently with their
+        revocation (i.e., the revocation is not an ancestor of the new node).
+        These concurrent nodes are accepted as valid, as the author possessed
+        the keys at that logical moment.
+    -   **Cryptographic Isolation**: To definitively cut off a revoked attacker,
+        the revocation MUST be immediately followed by a `KeyWrap` node rotating
+        the global metadata key ($K_{conv}$). The attacker does not receive the
+        new key, making them mathematically incapable of generating valid MACs
+        or Header Encryptions for new messages. Their parallel branch physically
+        dies.
 
 ### Logical vs. Cryptographic Validity
 
@@ -97,20 +124,45 @@ DAG) from the *presence of power*.
 ### Post-Revocation Cleanup
 
 When an Admin is revoked, the remaining Admins SHOULD author a new `Snapshot` or
-`Rekey` node to explicitly formalize the new set of authorized devices and
-rotate the conversation key ($K_{conv}$), physically excluding the revoked
-branch from future messages.
+`KeyWrap` node to explicitly formalize the new set of authorized devices and
+rotate the conversation metadata key ($K_{conv}$), physically excluding the
+revoked branch from future actions.
 
 --------------------------------------------------------------------------------
 
-## 4. Speculative Decryption & Unverified Silence
+## 4. Multi-Device History Synchronization
+
+Because Merkle-Tox provides strict Forward Secrecy, a newly authorized device
+cannot mathematically decrypt historical messages because the past `SenderKey`s
+have been ratcheted and deleted. To fulfill the promise of allowing users to
+"catch up" from new devices, the protocol uses a **History Key Export**
+mechanism built on top of the CAS.
+
+1.  **Export & Encrypt**: When Device A authorizes Device B, Device A compiles
+    its local repository of all known historical keys (past $K_{conv}$
+    generations and past `SenderKey` seeds). Device A encrypts this repository
+    with a newly generated symmetric $K_{export}$.
+2.  **CAS Upload**: Device A uploads the encrypted repository as a standard Blob
+    to the Content-Addressable Storage (CAS) swarm, deriving a `blob_hash`.
+3.  **Key Distribution**: Device A authors a `HistoryKeyExport` node to the DAG.
+    This node contains the `blob_hash` and the $K_{export}$ encrypted
+    specifically for Device B (using X3DH).
+4.  **Asynchronous Catch-Up**: Because the encrypted keys are stored in the CAS
+    rather than bloating the DAG, Device B can sync the entire DAG architecture
+    instantly, and then asynchronously download the key repository from blind
+    relays in the background. Once decrypted, Device B instantly regains access
+    to the user's entire historical chat record.
+
+--------------------------------------------------------------------------------
+
+## 5. Speculative Decryption & Unverified Silence
 
 To resolve deadlocks during initial synchronization (where a user has a new
 $K_{conv}$ but has not yet verified the Admin Track that authorized the sender),
 Merkle-Tox allows **Speculative Decryption** under a strict **Observer Mode**.
 
 1.  **Integrity Check**: If a `KeyWrap` node is validly authenticated via its
-    **Pairwise MAC**, the enclosed $K_{conv}$ is considered tentatively valid.
+    **Signature**, the enclosed $K_{conv}$ is considered tentatively valid.
 2.  **Promotion**: The client uses this $K_{conv}$ to decrypt history buffered
     in the Opaque Store.
 3.  **Identity Pending State**: Decrypted nodes are moved to the database but
@@ -131,7 +183,7 @@ Merkle-Tox allows **Speculative Decryption** under a strict **Observer Mode**.
 
 --------------------------------------------------------------------------------
 
-## 5. Standalone Trust (Anchor Snapshots)
+## 5. Speculative Trust (Anchor Snapshots)
 
 To break the deadlock during **Shallow Sync** (where a user needs a Snapshot to
 avoid history, but needs history to verify the Snapshot), Merkle-Tox defines
@@ -140,13 +192,13 @@ avoid history, but needs history to verify the Snapshot), Merkle-Tox defines
 ### The Deadlock
 
 A standard `Snapshot` node relies on the **Recursive Topological Validation**
-rule (Section 3). To verify the snapshot author's authority at Rank 500, a
-client must walk the Admin Track from Rank 0. This negates the performance
+rule (Section 3). To verify the snapshot author's authority deep in the DAG, a
+client must walk the Admin Track back to Genesis. This negates the performance
 benefits of the snapshot.
 
 ### The Solution: Anchor Snapshots
 
-An `AnchorSnapshot` is a special `ControlAction` that bypasses recursive
+An `AnchorSnapshot` is a special `ControlAction` that allows for *speculative*
 validation through an **Authority Chain**.
 
 -   **Requirement**: MUST be signed by a **Level 1 Admin Device** and MUST
@@ -181,12 +233,17 @@ properties.
 
 ### Device Accountability
 
-Every message includes the `sender_pk` of the device that authored it.
+Every message includes the `sender_pk` of the device that claims to have
+authored it.
 
--   **Internal Accountability**: Within the group, participants can verify which
-    device sent a message, aiding in identifying compromised hardware.
--   **External Deniability**: Because the content uses DARE MACs, this
-    accountability is only visible to those who hold the shared conversation
+-   **Group Authentication**: Within the group, participants can verify that a
+    message was sent by *someone* in the room (via the shared $K_{conv}$ MAC).
+    However, because the MAC is symmetric, **Internal Accountability**
+    (cryptographically proving *which* specific device sent a message) is
+    mathematically impossible. Any authorized member can forge the `sender_pk`
+    field of a Content node to frame another member.
+-   **External Deniability**: Because the content uses DARE MACs, this group
+    authentication is only visible to those who hold the shared conversation
     key. To an outsider, the `sender_pk` and `content` are not cryptographically
     linked in a non-repudiable way.
 
@@ -206,8 +263,8 @@ user's "Logical" presence consistent.
 While the current design uses the device's Tox Public Key for `sender_pk`,
 Merkle-Tox supports **Ephemeral Pre-keys** published via **Announcement Nodes**.
 
--   **Announcement Nodes**: Devices periodically publish signed X25519 pre-keys
-    to the DAG.
+-   **Announcement Nodes**: Devices MUST publish new signed X25519 pre-keys to
+    the DAG every 30 days or after 100 successful handshakes.
 -   **Anonymity**: This allows a device to participate in multiple conversations
     using different ephemeral keys, further decoupling the physical hardware
     from the persistent logical history and preventing cross-conversation

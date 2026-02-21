@@ -42,7 +42,7 @@ To handle loss efficiently without stalling the stream:
 -   **Acknowledgments**: Receivers send `ACK` packets containing a bitset (map)
     of received fragments for a specific `message_id`.
 -   **Retransmission**: The sender only re-sends fragments that were not
-    acknowledged after a timeout or upon receiving a `NACK`.
+    acknowledged after the dynamic RTO expires or upon receiving a `NACK`.
 -   **Reassembly**: Once all fragments for a `message_id` are received, the
     original data is reconstructed and passed to the logic layer.
 
@@ -50,8 +50,9 @@ To handle loss efficiently without stalling the stream:
 
 -   **Sliding Window**: Limits the number of in-flight fragments to prevent
     overwhelming the peer or the Tox network.
--   **Dynamic Timeouts**: Timeouts for retransmission are calculated based on
-    observed Round-Trip Time (RTT).
+-   **Dynamic Timeouts**: Retransmission TimeOut (RTO) MUST be calculated based
+    on a Smoothed RTT (SRTT) estimator, bounded strictly by a floor and ceiling
+    (`MIN_RTO_MS = 250`, `MAX_RTO_MS = 10000`).
 
 ## 4. Packet Types (Transport Header)
 

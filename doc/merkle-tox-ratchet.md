@@ -13,13 +13,17 @@ Every physical device ($sender_pk$) authors messages in a sequential order
 defined by its `sequence_number`. This sequence forms a linear cryptographic
 chain.
 
-### A. Initialization (Chain Seed)
+### A. Initialization (Sender Key)
 
-When a device is first authorized or a new epoch begins, its initial chain key
-is derived from the conversation's shared key ($K_{conv}$):
+When a device is first authorized or needs to establish Post-Compromise
+Security, it generates a random 32-byte `SenderKey`. This key becomes the
+initial chain key:
 
-*   $K_{chain, 0} = ext{Blake3-KDF}( ext{context: "merkle-tox v1 sender-seed"},
-    K_{conv} || sender_pk)$
+*   $K_{chain, 0} = SenderKey$
+
+The device distributes this `SenderKey` to all other authorized devices in the
+room via a `SenderKeyDistribution` node (encrypted individually for each
+recipient using X3DH).
 
 ### B. Step Function
 
@@ -50,38 +54,55 @@ conditions where a single parent key might be needed for multiple concurrent
 siblings. Each $sender_pk$ can only be in one cryptographic state at any given
 `sequence_number`.
 
-## 3. Epochs and Post-Compromise Security (PCS)
+## 3. Post-Compromise Security (PCS)
 
 While the linear ratchet provides Forward Secrecy, it does not provide
-**Post-Compromise Security (PCS)**. Merkle-Tox achieves PCS through **Epoch
-Rotations**.
+**Post-Compromise Security (PCS)**. Merkle-Tox achieves PCS through **Periodic
+Sender Key Rotations**.
 
-### A. Epoch Boundaries
+### A. Rotation Boundaries
 
-Every 5,000 messages or 7 days, the group performs a "Rekey" event.
+Instead of an Admin bottlenecking the room by rekeying everyone simultaneously,
+PCS is handled *per-device*. Every 5,000 messages or 7 days, a device performs a
+"Sender Rekey":
 
-1.  **Revocation Check**: The admin verifies the member list against the latest
-    DAG revocations.
-2.  **New Root**: A new $K_{epoch}$ is generated and distributed via `KeyWrap`
-    nodes.
-3.  **Reset**: All per-sender ratchets are **wiped and re-initialized** using
-    the new $K_{epoch}$ as the seed (see Section 1.A).
+1.  **Revocation Check**: The device verifies the current member list against
+    the DAG.
+2.  **New Root**: The device generates a new `SenderKey` ($K_{chain, 0}$).
+3.  **Distribution**: It authors a `SenderKeyDistribution` node, encrypting the
+    new key via X3DH for all currently authorized members.
 
 ### B. Self-Healing
 
-Once a new epoch is established and old keys are deleted, an attacker who
-previously had access to a device's chain is "kicked out" of the future key
-space.
+Once a new `SenderKey` is established and distributed, an attacker who
+previously had access to the device's old chain is "kicked out" of the future
+key space. The computational burden of key rotation ($O(N)$ encryptions) is
+distributed across all active participants, enabling scaling for rooms with 200+
+users.
 
 ## 4. Implementation Rules
 
-1.  **Sequential Processing**: A recipient MUST process messages from a specific
-    $sender_pk$ in strict `sequence_number` order to maintain the ratchet. Out-
-    of-order messages are buffered in the **Opaque Store**.
-2.  **Immediate Deletion**: Implementations MUST overwrite old chain keys with
-    zeros in memory as soon as the ratchet advances to the next sequence.
-3.  **Storage Isolation**: The current $K_{chain}$ for each active sender SHOULD
-    be stored in a separate, encrypted table to prevent leakage.
-4.  **Monotonicity**: A client MUST NOT accept a message with a
-    `sequence_number` lower than the current known ratchet index for that
-    sender.
+1.  **Forward Skipping (Out-of-Order Support)**: A recipient MUST support
+    skipping forward in the ratchet if a message arrives out of order. The
+    recipient iteratively advances the chain, deriving and caching the $K_{msg,
+    i}$ for all skipped `sequence_number`s up to the received message. To
+    prevent memory- exhaustion DoS attacks, a strict skip limit
+    (`MAX_RATCHET_SKIPS = 2000`) MUST be enforced. Messages jumping further
+    ahead are buffered in the **Opaque Store**.
+2.  **Immediate Deletion**: Implementations MUST overwrite old chain keys
+    ($K_{chain, i}$) with zeros in memory as soon as the ratchet advances to the
+    next sequence.
+3.  **Storage Isolation**: The current $K_{chain}$ and the cache of skipped
+    message keys SHOULD be stored in a separate, encrypted table to prevent
+    leakage.
+4.  **Key Cache & Replay Protection**: When a delayed out-of-order message
+    arrives, it is decrypted using its cached $K_{msg, i}$. Upon successful
+    decryption, that key MUST be immediately deleted from the cache.
+    -   **Strict TTL (Forward Secrecy)**: To minimize the vulnerability window
+        where a seized device might leak cached keys from RAM, any key remaining
+        in the skipped cache MUST be permanently deleted after a strict
+        Time-To-Live (`RATCHET_CACHE_TTL_MS = 86400000`), even if the
+        corresponding delayed message never arrived.
+    -   A client MUST NOT accept a message with a `sequence_number` lower than
+        the current chain index UNLESS its corresponding key is present in the
+        skipped message cache (preventing replays).

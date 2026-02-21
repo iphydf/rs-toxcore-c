@@ -41,6 +41,14 @@ Peer B confirms possession and provides:
 -   `size`: Total size in bytes.
 -   `bao_root`: (Optional) The Blake3-Merkle root of the Bao-style internal
     tree, allowing for incremental verification of chunks.
+    -   **Security Rule (Anti-Download Bombing)**: If a peer provides a
+        `bao_root`, the client MUST strictly verify that it is **byte-for-byte
+        identical** to the authoritative `hash` from the verified `MerkleNode`
+        before initiating any `BLOB_REQ` downloads. (Because Blake3 natively
+        structures its hash as a Merkle tree, the root of the Bao outboard is
+        exactly equal to the final Blake3 hash of the file). If a peer provides
+        a mismatching root, they are attempting to stream a fake file and MUST
+        be immediately blacklisted.
 
 ### `BLOB_REQ` (Message Type 0x08)
 
@@ -90,9 +98,9 @@ To support large files (e.g., 1GB+) without high memory usage:
 ## 5. Privacy & Selective Downloading
 
 -   Clients do not automatically download every blob they see in the history.
--   **Thumbnails**: For images, a small (e.g., < 32KB) thumbnail can be embedded
-    in the `MerkleNode`'s `metadata` or as a separate small blob that *is*
-    auto-downloaded.
+-   **Thumbnails**: For images, a small (`MAX_THUMBNAIL_SIZE = 32768` bytes)
+    thumbnail can be embedded in the `MerkleNode`'s `metadata` or as a separate
+    small blob that *is* auto-downloaded.
 -   **User-Initiated**: Large blobs are only downloaded when the user interacts
     with the message (e.g., clicking "Download Image").
 -   **Status Tracking**: The UI uses the blob status (**Pending, Downloading,

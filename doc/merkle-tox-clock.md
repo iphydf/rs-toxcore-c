@@ -75,8 +75,9 @@ different sessions or rooms, Merkle-Tox introduces **Anti-Fingerprinting
 Jitter**:
 
 -   **Mechanism**: The `tox-sequenced` layer SHOULD inject a random offset
-    (e.g., ±5ms) into the $T_2$ (Receive) and $T_3$ (Transmit) timestamps before
-    sending a PONG.
+    (between `-TIME_JITTER_MS` and `+TIME_JITTER_MS`, where `TIME_JITTER_MS =
+    5`) into the $T_2$ (Receive) and $T_3$ (Transmit) timestamps before sending
+    a PONG.
 -   **Impact**: This prevents a peer from calculating the sub-millisecond
     hardware clock drift that is unique to specific hardware oscillators.
 -   **Resolution**: While this reduces the precision of the raw offset sample,

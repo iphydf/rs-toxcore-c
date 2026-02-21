@@ -5,26 +5,29 @@ required to bring the Merkle-Tox prototype to production quality.
 
 ## 1. Persistence & Storage Architecture
 
-The storage layer must be transitioned from a prototype filesystem structure to
-a transactional database system.
+The storage layer must provide abstractions to properly support two primary
+backends: a zero-dependency filesystem backend (`fs`) and a transactional
+database engine (`sqlite`).
 
 -   **Transactional Consistency:** Redesign the `NodeStore` and
-    `process_effects` loop to support multi-operation transactions. A sequence
-    of engine effects (e.g., writing a node and updating heads) must be
-    committed atomically.
--   **Database Backend:** Transition the default storage from loose files and
-    custom packs to a transactional database engine (e.g., SQLite or RocksDB).
--   **In-Memory Indexing:** Implement a disk-backed B-Tree or similar structure
-    for metadata lookups to avoid loading the object index into memory.
--   **Durability Primitives:** Add `fsync` support to the Virtual Filesystem
-    (VFS) and ensure the storage layer uses it correctly to prevent data loss on
-    power failure.
--   **Schema Migration Framework:** Implement a schema migration system (e.g.,
-    using `rusqlite_migrations`) to handle database upgrades without losing user
-    data.
--   **Startup Integrity Check:** Implement a recovery mode on startup that
-    identifies and cleans up "orphaned" or unverified nodes left by partial
-    syncs.
+    `process_effects` loop to support atomic multi-operation transactions across
+    both SQL and custom FS backends. A sequence of engine effects (e.g., writing
+    a node and updating heads) must be committed atomically.
+-   **Dual Backends:** Fully implement and optimize both the SQLite backend and
+    the Filesystem backend (incorporating the Bloom filters, fanout tables, and
+    incremental compaction defined in `merkle-tox-storage-format.md`).
+-   **Indexing:** Ensure $O(1)$ or $O(\log N)$ lookups without exhausting RAM.
+    For the FS backend, finalize the Bloom Filter and Fanout Table
+    implementation; for the SQLite backend, ensure SQL indices are maintained.
+-   **Durability Primitives:** Add `fsync` / `fdatasync` support and coalesced
+    durability barriers to the Virtual Filesystem (VFS) to prevent data loss on
+    power failure while minimizing flash wear.
+-   **Schema & Format Migration:** Implement a migration system (e.g., using
+    `rusqlite_migrations` for SQL and versioned pack structures for FS) to
+    handle upgrades without losing user data.
+-   **Startup Integrity Check:** Implement a recovery mode on startup for both
+    backends that identifies and cleans up "orphaned" or unverified nodes left
+    by partial syncs or interrupted compactions.
 
 ## 2. Engine Scalability & Performance
 
@@ -37,8 +40,8 @@ concurrent devices without linear performance degradation.
 -   **Fine-Grained Locking:** Move away from the single, coarse-grained mutex
     around `MerkleToxNode`. Implement granular locking (e.g., per-session or
     actor-based) to enable parallel processing.
--   **Optimized Permission Checks:** Replace recursive delegation walks with a
-    flattened permission cache or an efficient graph-based lookup.
+-   **Permission Checks:** Replace recursive delegation walks with a flattened
+    permission cache or a graph-based lookup.
 -   **Zero-Copy Hotpath:** Reduce heap allocations in the packet processing
     pipeline by using reference-counted buffers (`Bytes`) instead of frequent
     `.clone()` calls on nodes.
@@ -93,8 +96,9 @@ observers.
     `WireNode` to prevent observers from mapping conversation graphs.
 -   **Encrypt Headers & Payloads (Rationale #2 & #3):** Move `network_timestamp`
     and `author_pk` from the `WireNode` header into the encrypted payload.
-    Ensure that `Admin` and `KeyWrap` payloads are fully encrypted (currently
-    they are plaintext).
+    Ensure `encrypted_routing` header is properly applied to `sender_pk` and
+    `sequence_number`. (Note: `Admin` and `KeyWrap` must remain plaintext for
+    onboarding).
 -   **Revert to Linear Ratchets:** Replace the "DAG-based merge ratchet"
     implementation in `conversation.rs` and `crypto.rs` with the documented
     **Per-Sender Linear Ratchets**. This eliminates the brittle
@@ -119,7 +123,10 @@ Protect the node against malicious peers and resource exhaustion attacks.
     operation, especially for KeyWrap.
 -   **Opportunistic Handshake Completion (Rationale #6):** Implement the
     `HandshakePulse` authoring logic to ensure 1-on-1 conversations rotate away
-    from "Last Resort" keys as soon as possible.
+    from "Last Resort" keys immediately upon the peer coming online. This MUST
+    include a debounce mechanism (e.g., ignoring pulses if a `KeyWrap` was
+    authored within the last 5 minutes) to prevent "KeyWrap Storms" when
+    processing large batches of offline messages.
 -   **Bounded Allocations:** Fix `tox-proto` to enforce maximum limits on
     collection sizes during deserialization.
 -   **CPU DoS Protection:** Harden auto-generated deserialization code to avoid

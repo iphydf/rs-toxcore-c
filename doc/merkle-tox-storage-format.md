@@ -34,21 +34,21 @@ The storage root is a directory (e.g., `~/.merkle-tox/storage/`).
 │   └── ff/
 ├── conversations/      # Conversation-specific metadata
 │   └── [conv_id]/      # Hex-encoded Conversation ID
-│       ├── .lock       # Conversation-level advisory lock
-│       ├── state.bin   # Latest Heads and Epoch metadata
-│       ├── ratchet.bin # Double-buffered active ChainKey table
-│       ├── journal.bin # Append-only log of recent Nodes (Hot)
-│       ├── packs/      # Segmented historical Nodes (Cold Tier)
-│       │   ├── [id].pack # Bundled nodes
-│       │   └── [id].idx  # Sorted index for this pack
-│       ├── keys/       # Historical Conversation Keys (K_conv)
-│       │   └── [epoch].key # Raw 32-byte key for specific epoch
-│       ├── sketches/   # Cached Reconciliation Sketches
+│       ├── .lock           # Conversation-level advisory lock
+│       ├── state.bin       # Latest Heads and Generation metadata
+│       ├── ratchet.bin     # Double-buffered active ChainKey table
+│       ├── journal.bin     # Append-only log of recent Nodes (Hot)
+│       ├── packs/          # Segmented historical Nodes (Cold Tier)
+│       │   ├── [id].pack   # Bundled nodes
+│       │   └── [id].idx    # Sorted index for this pack
+│       ├── keys/           # Historical Conversation Keys (K_conv)
+│       │   └── [generation].key # Raw 32-byte key for specific generation
+│       ├── sketches/       # Cached Reconciliation Sketches
 │       │   └── [range].bin # Serialized IBLT or other sketch
 │       ├── permissions.bin # Persisted Effective Permissions cache
-│       └── opaque/     # Undecryptable WireNodes (Opaque Tier)
-│           ├── 0001.bin # Segmented logs for cheap eviction
-│           └── index.bin # Volatile or persistent index for opaque nodes
+│       └── opaque/         # Undecryptable WireNodes (Opaque Tier)
+│           ├── 0001.bin    # Segmented logs for cheap eviction
+│           └── index.bin   # Volatile or persistent index for opaque nodes
 └── global.bin          # Network clock offset and global settings
 ```
 
@@ -68,14 +68,12 @@ the file:
 
 ### 2.1. Atomicity & Durability
 
-1.  **Metadata Updates**: Updates to `.bin` (excluding `journal.bin` and
-    `ratchet.bin`) or `.idx` files **MUST** use the "Write-to-Temp + Fsync +
-    Rename" pattern.
+1.  **Metadata Updates**: Updates to `.bin` (excluding `journal.bin`) or `.idx`
+    files **MUST** use the "Write-to-Temp + Fsync + Rename" pattern to ensure
+    crash-safe atomicity on modern flash storage.
 2.  **Journal Updates**: Updates to `journal.bin` **MUST** use `lseek(EOF)` +
     `write()`.
-3.  **Ratchet Updates**: Updates to `ratchet.bin` **MUST** use the **Atomic
-    In-Place** double-buffered pattern (see Section 6.2).
-4.  **Durability Barrier**: `fsync()` calls MAY be deferred and coalesced (see
+3.  **Durability Barrier**: `fsync()` calls MAY be deferred and coalesced (see
     Section 9). However, a full durability barrier **MUST** be completed before
     `state.bin` is updated.
 
@@ -136,10 +134,12 @@ conversation events are multiplexed into the single `journal.bin`.
     *   **Type 0x04 (Promotion):** Hash is `blake3(Payload)`. Payload is
         `MsgPack([NodeHash target])`.
     *   **Type 0x05 (Ratchet Advance):** Hash is `blake3(Payload)`. Payload is
-        `MsgPack([NodeHash trigger, u8[32] chain_key])`.
-        *   Note: The `trigger` node hash is used to look up the `sender_pk` and
-            `sequence_number` in the volatile index to correctly attribute the
-            ratchet update.
+        `MsgPack([NodeHash trigger, u64 sequence_number])`.
+        *   Note: To preserve Forward Secrecy, `journal.bin` MUST NEVER store
+            raw `chain_key`s. The `trigger` node hash is used to look up the
+            `sender_pk`. Upon startup, the engine rebuilds the key cache in RAM
+            by stepping the ratchet forward from the last compacted checkpoint
+            up to this `sequence_number`.
 *   **Tail-Commit Footer (Optional Optimization):** `[u32 magic_end] [u32
     record_count] [u8[32] journal_checksum] [IndexTable]`
     *   **Write Path**: The footer **SHOULD NOT** be written for every append.
@@ -189,19 +189,20 @@ Historical nodes are bundled into `data.pack`.
 
 #### 4.2.1. Index Format (`index.idx`)
 
-| Offset         | Type        | Description                                 |
-| :------------- | :---------- | :------------------------------------------ |
-| `0`            | `u32`       | Magic Number (`0x4D544F58`)                 |
-| `4`            | `u32`       | Fanout Bits ($B$): Usually 8 or 16.         |
-| `8`            | `u32`       | Bloom Filter K-Functions (usually 2-3).     |
-| `12`           | `u32`       | Bloom Filter Size ($M$ in bytes).           |
-| `16`           | `u8[M]`     | **Bloom Filter**: For fast "Not Found"      |
-:                :             : rejection.                                  :
-| `16+M`         | `u32[2^B]`  | **Fanout Table**: Cumulative counts (prefix |
-:                :             : sum) for hashes with prefix $\le i$.        :
-| `16+M+4*2^B`   | `u32`       | Header Length ($L$)                         |
-| `20+M+4*2^B`   | `MsgPack`   | Header: `{ "version": 1, "count": N }`      |
-| `20+M+4*2^B+L` | `Record[N]` | Sorted Array of 56-byte records             |
+| Offset         | Type        | Description                                  |
+| :------------- | :---------- | :------------------------------------------- |
+| `0`            | `u32`       | Magic Number (`0x4D544F58`)                  |
+| `4`            | `u32`       | Fanout Bits ($B$): MUST be between 8 and 24. |
+| `8`            | `u32`       | Bloom Filter K-Functions (MUST be between 1  |
+:                :             : and 4).                                      :
+| `12`           | `u32`       | Bloom Filter Size ($M$ in bytes).            |
+| `16`           | `u8[M]`     | **Bloom Filter**: For fast "Not Found"       |
+:                :             : rejection.                                   :
+| `16+M`         | `u32[2^B]`  | **Fanout Table**: Cumulative counts (prefix  |
+:                :             : sum) for hashes with prefix $\le i$.         :
+| `16+M+4*2^B`   | `u32`       | Header Length ($L$)                          |
+| `20+M+4*2^B`   | `MsgPack`   | Header: `{ "version": 1, "count": N }`       |
+| `20+M+4*2^B+L` | `Record[N]` | Sorted Array of 56-byte records              |
 
 #### 4.2.2. Index Record (56 bytes)
 
@@ -217,8 +218,8 @@ Offset | Type       | Description
 `55`   | `u8`       | **Reserved** (Must be zero)
 
 **Alignment Note**: The 56-byte record size is chosen to ensure 8-byte alignment
-of all `u64` fields, providing optimal performance for memory-mapped access
-across 64-bit architectures.
+of all `u64` fields, optimizing performance for memory-mapped access across
+64-bit architectures.
 
 #### 4.2.3. Lookup Algorithm
 
@@ -316,13 +317,16 @@ during compaction.
 
 *   **Format:** A fixed-width header followed by $N$ slots. Each slot stores the
     `PhysicalDevicePk`, `ChainKey`, and `last_sequence_number`.
-*   **Update Frequency**: Only updated during **Compaction** (every 500 nodes)
-    using the Atomic In-Place pattern (Section 2.1.3).
+*   **Update Frequency**: Updated during every **Coalesced Durability Barrier**
+    (defined by `DURABILITY_SYNC_MS = 2000` or `DURABILITY_SYNC_MESSAGES = 20`,
+    see Section 9.1) using the standard "Write-to-Temp + Fsync + Rename"
+    pattern. Waiting until Compaction would defeat Forward Secrecy by leaving
+    old keys on disk.
 *   **Source of Truth**: On startup, the implementation loads the checkpoint
-    from `ratchet.bin` and then **replays** the `Ratchet Advance` (Type 0x05)
-    records from the `journal.bin` to reach the current hot state. This provides
-    $O(1)$ lookups for the `last_sequence_number` of each sender without
-    scanning all nodes.
+    from `ratchet.bin` and then **rebuilds** the hot state by stepping the
+    ratchet forward for each sender based on the `Ratchet Advance` (Type 0x05)
+    sequence numbers recorded in `journal.bin`. This preserves Forward Secrecy
+    on disk while providing $O(1)$ lookups in memory.
 
 ### 6.3. Permissions Cache (`permissions.bin`)
 
@@ -360,10 +364,11 @@ locking bottleneck and improves write performance.
 
 ### 6.6. Conversation Keys (`/keys/`)
 
-To support historical decryption after epoch rotations, implementations **MUST**
-persist the conversation keys ($K_{conv}$) for each epoch.
+To support historical decryption after group key rotations, implementations
+**MUST** persist the conversation keys ($K_{conv}$) for each generation.
 
-*   **Format**: `[epoch_hex].key` containing exactly 32 bytes of raw key data.
+*   **Format**: `[generation_hex].key` containing exactly 32 bytes of raw key
+    data.
 *   **Security**: These keys **MUST** be treated with the same forensic care as
     Ratchet Keys (Section 8).
 
@@ -396,10 +401,6 @@ the Exclusive Lock. Maintenance follows the **Shadow Write Pattern**:
     *   Acquire `LOCK_EX`.
     *   Atomic Switch: Update `state.bin` with the new pack ID and a new
         `active_journal_id`.
-    *   **Ratchet Table Sync**: Write the Captured Ratchet Checkpoints into
-        `ratchet.bin` using the Atomic In-Place pattern.
-        *   **Validation**: Each slot in the double-buffer **SHOULD** include a
-            per-slot sequence number to detect partial writes after a crash.
     *   Reclaim: Truncate `journal.bin` to 16 bytes (the header) and write the
         new generation ID.
     *   Release `LOCK_EX`.
@@ -459,7 +460,7 @@ updates into a single I/O barrier to protect battery life and flash endurance:
     calls.
 2.  **Idle-Sync Pattern**: Trigger the durability barrier (fsync + state update)
     only when the network event loop goes **idle**, or when a threshold is met
-    (e.g., 50 messages or 2 seconds).
+    (`DURABILITY_SYNC_MESSAGES = 50` or `DURABILITY_SYNC_MS = 2000`).
 3.  **Battery Optimization**: By batching, implementations reduce the number of
     times the storage hardware must be powered up to full-write mode,
     significantly extending battery life on mobile devices.
@@ -482,9 +483,10 @@ To prevent memory pressure when managing hundreds of conversations:
 
 1.  **Lazy mmap**: Implementations **SHOULD** only `mmap()` the `index.idx`
     files for conversations that are actively being viewed or synchronized.
-2.  **Idle Eviction**: When a conversation has been idle for a period (e.g., 5
-    minutes), implementations SHOULD `munmap()` its indices to free up virtual
-    memory and allow the kernel to reclaim physical pages.
+2.  **Idle Eviction**: When a conversation has been idle for a period
+    (`IDLE_UNMAP_TIMEOUT_MS = 300000`), implementations SHOULD `munmap()` its
+    indices to free up virtual memory and allow the kernel to reclaim physical
+    pages.
 3.  **Bloom Filter Density**: Bloom filters SHOULD be sized at ~10 bits per
     record. For a standard 10,000-node pack, this results in a tiny 12.5 KB
     footprint, ensuring that even under heavy multi-conversation load, the total
@@ -516,9 +518,9 @@ these "push backs."
 *   **Suggestion:** Implement a unified WAL for all state changes (nodes, heads,
     keys).
 *   **Push Back:** Too complex for a minimal C implementation.
-*   **Decision:** Used the **Atomic Rename** pattern for metadata and a
-    **Double-Buffered Table** for ratchets. These provide identical durability
-    guarantees with significantly less code.
+*   **Decision:** Used the **Atomic Rename** pattern for metadata (including
+    ratchets). These provide identical durability guarantees with significantly
+    less code.
 
 ### 11.2. Materialized Registry Files
 
@@ -594,14 +596,19 @@ these "push backs."
 
 ### 11.10. Atomic Rename for High-Frequency Files
 
-*   **Suggestion:** Use the standard "Write-to-Temp + Rename" pattern for
-    `ratchet.bin` and `journal.bin`.
-*   **Push Back:** Every `rename()` involves directory entry updates and inode
-    allocation/deletion. In a high-throughput chat, this creates high I/O
-    latency and premature flash failure on mobile devices.
-*   **Decision:** Used **Append-Only** (Journal) and **Atomic In-Place**
-    (Ratchet) patterns for these files. These utilize fixed-logical-address
-    writes that the OS and SSD can optimize far better than file-level moves.
+*   **Suggestion:** Avoid the "Write-to-Temp + Rename" pattern for `ratchet.bin`
+    and `journal.bin` to save inode allocation overhead, especially since
+    `ratchet.bin` MUST be updated frequently (on every durability barrier) to
+    preserve Forward Secrecy.
+*   **Push Back:** While `journal.bin` can safely be append-only, in-place
+    overwrites for `ratchet.bin` are not genuinely atomic on modern SSDs due to
+    the Flash Translation Layer (FTL). A crash during an in-place write can
+    result in page corruption.
+*   **Decision:** Used **Append-Only** for `journal.bin` and standard **Atomic
+    Rename** for `ratchet.bin`. While updating `ratchet.bin` via Rename every
+    few seconds (during the Idle-Sync barrier) introduces slight directory-level
+    I/O overhead, it guarantees crash-safety without sacrificing the strict
+    deletion required for Forward Secrecy.
 
 ### 11.11. MessagePack for Structural Headers/Footers
 
