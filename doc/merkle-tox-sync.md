@@ -28,8 +28,8 @@ Upon connection, peers exchange `SYNC_HEADS` packets.
 -   **Anchor Ad**: Members MUST also include the hash of their **Earliest Known
     Admin Head** (the oldest Snapshot or Rekey node they have verified). This
     acts as an **Explicit Vouch** for the chain of nodes between that anchor and
-    the current heads, allowing joiners to bridge gaps larger than 16 hops using
-    data from blind relays.
+    the current heads, allowing joiners to bridge gaps larger than 500 hops
+    using data from blind relays.
 -   **CAS Inventory Flag**: A bitmask or boolean indicating if the peer is
     available to seed blobs for this conversation.
 
@@ -154,16 +154,14 @@ For**:
         provide the data, the hash is marked as "Orphaned" until another peer
         re-vouches for it. This reduces memory complexity from $O(Nodes \times
         Peers)$ to $O(Nodes)$.
-3.  **Structural Vouch (Ancestry Cap)**: If a verified Admin node (e.g., a
-    `Snapshot` or `Rekey` node) lists a hash as a parent or basis, that hash is
-    automatically vouched for.
-    -   **Cap**: This transitive vouching is limited to **16 hops**.
-    -   **Leap-frog Re-anchoring**: To fetch history deeper than 16 hops from a
-        blind relay, the client MUST iteratively find an earlier Admin node
-        within the vouched-for 16-hop window. This node then becomes the new
-        "Anchor," authorizing the download of the *next* 16 hops. This ensures
-        that trust is always anchored to signed management nodes, preventing
-        buffer exhaustion via deep unverified chains.
+3.  **Structural Vouch (Ancestry Cap)**: If a verified node (Admin OR Content)
+    lists a hash as a parent or basis, that hash is automatically vouched for.
+    -   **Cap**: This transitive vouching is limited to **500 hops** to prevent
+        deep buffer exhaustion while still allowing normal conversation flow.
+    -   **Periodic Re-anchoring**: To ensure blind relays can serve long
+        histories, Admins MUST author a lightweight `Snapshot` or `Rekey` node
+        at least once every 400 messages. This resets the hop counter and
+        provides a signed trust anchor for the next segment of history.
 
 ### Speculative Quota & Opaque Storage
 

@@ -108,9 +108,9 @@ observers.
 
 Protect the node against malicious peers and resource exhaustion attacks.
 
--   **Ancestry Trust Cap (Rationale #5):** Implement the 16-hop structural trust
-    cap. Mandate that content chains must be re-anchored by a verified Admin
-    node every 16 levels to prevent "infinite junk" history attacks.
+-   **Ancestry Trust Cap (Rationale #5):** Implement the 500-hop structural
+    trust cap. Mandate that content chains must be re-anchored by a verified
+    Admin node every 400 levels to prevent "infinite junk" history attacks.
 -   **Contiguity-Based Eviction (Rationale #4):** Implement the Opaque Store
     eviction policy. Prioritize keeping nodes close to the Local Low-Water Mark
     (LLWM) to mitigate Rank-Padding attacks.

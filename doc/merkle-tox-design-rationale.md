@@ -69,8 +69,8 @@ redundancies.
 *   **Decision**: Dismissed due to **Buffer Exhaustion** risks.
 *   **Rationale**: A single valid Admin node could be used to vouch for an
     infinite chain of junk history, filling the victim's quota instantly.
-*   **Result**: Implement a **16-hop Ancestry Cap**. Structural trust must be
-    "re-anchored" by a new verified Admin node every 16 levels.
+*   **Result**: Implement a **500-hop Ancestry Cap**. Structural trust must be
+    "re-anchored" by a new verified Admin node every 400 levels.
 
 ## 6. Blocking 1-on-1 Pulse (Dismissed)
 

@@ -154,10 +154,13 @@ validation through an **Authority Chain**.
 -   **Verification**: The client verifies the Founder's public key from the
     **Genesis Node**, uses it to verify the Admin's Certificate, and then uses
     the Admin's key to verify the Snapshot.
--   **Standalone**: This allows a joiner to establish a secure root of trust
-    immediately using only two nodes: Genesis and AnchorSnapshot.
--   **Security**: This concentrates trust in high-level keys but enables
-    instant, secure joining of conversations with years of history.
+-   **Speculative Trust**: This allows a joiner to establish a *tentative* root
+    of trust immediately using only two nodes: Genesis and AnchorSnapshot. The
+    conversation enters **Identity Pending** mode.
+-   **Security**: While it enables instant viewing of history, the client MUST
+    background-sync the full Admin Track back to Genesis to cryptographically
+    prove the Anchor's Admin was never revoked. If a revocation is found, the
+    Anchor is discarded and the speculative history is wiped.
 
 --------------------------------------------------------------------------------
 

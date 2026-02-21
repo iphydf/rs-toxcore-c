@@ -28,10 +28,13 @@ Instead of an asymmetric signature, each `MerkleNode` contains an
 **Authenticator**:
 
 -   `Authenticator = Blake3_MAC(K_mac, Node_Contents)`
--   `Encryption = ChaCha20(K_enc, Content)`
+-   `Header_Encryption = ChaCha20(K_header, Routing_Info)`
+-   `Payload_Encryption = ChaCha20(K_msg_i, Content)`
 
-Where `K_enc` and `K_mac` are derived from $K_{conv}$ using **Blake3-KDF**. See
-**`merkle-tox.md`** for the full cryptographic suite.
+Where `K_mac` and `K_header` are derived from $K_{conv}$ using **Blake3-KDF**,
+ensuring global deniability and preventing metadata leakage to relays. `K_msg_i`
+is derived from the sender's current **Ratchet Chain Key**, ensuring Forward
+Secrecy. See **`merkle-tox.md`** for the full cryptographic suite.
 
 ### Plausible Deniability
 
@@ -133,13 +136,15 @@ DARE model.
     cannot prove who authored a specific `Content::Text` node.
 -   **Strict Encryption**: Clients MUST use "Encrypt-then-MAC" for the `content`
     and `metadata` fields. In Content nodes, the `sender_pk` and
-    `sequence_number` SHOULD also be encrypted using the $K_{conv}$ to prevent
-    metadata leakage.
+    `sequence_number` MUST be encrypted into an `encrypted_routing` header using
+    $K_{header}$ (derived from $K_{conv}$) to prevent metadata leakage to blind
+    relays.
     -   **EXCEPTION (KeyWrap)**: `KeyWrap` nodes (Content ID 7) are sent in
-        **cleartext** (but still authenticated with a `PairwiseMac`) to allow
-        new members to receive the conversation keys. For these nodes, the
+        **cleartext** (and signed with an Ed25519 Signature) to allow new
+        members to receive the conversation keys. For these nodes, the
         `sender_pk` MUST NOT be encrypted, enabling joiners to verify the "Chain
-        of Custody" back to a verified Admin.
+        of Custody" back to a verified Admin. The internal `WrappedKey` payloads
+        use pairwise authenticated encryption.
 
 ### Transitive Rationale
 

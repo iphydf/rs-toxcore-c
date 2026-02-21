@@ -144,8 +144,8 @@ synchronization swarm:
     authorized that device. This creates a deadlock where the user has the key
     but refuses to use it.
 *   **Mitigation**: **Speculative Decryption & Identity Pending Status**.
-    1.  The client uses the `PairwiseMac` to verify the integrity of the
-        `KeyWrap`.
+    1.  The client uses the Admin's `Signature` and the internal pairwise MAC of
+        the `WrappedKey` to verify the integrity of the `KeyWrap`.
     2.  If the MAC is valid, the client tentatively accepts the key and decrypts
         the Opaque Store.
     3.  Messages are displayed with an **"Identity Pending"** warning. This

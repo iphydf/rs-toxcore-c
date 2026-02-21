@@ -66,11 +66,12 @@ values of the Tox ecosystem.
 *   **Implementation**: Use **Structural Vouching** to allow non-member relays
     to serve encrypted history segments that are topologically linked to
     verified Admin nodes.
-*   **Current Tension**: The **16-hop Ancestry Cap** limits how much history can
-    be fetched from a blind relay without an intermediate Admin "anchor" (e.g.,
-    a Snapshot). This protects the buffer from deep-ancestry DoS attacks. If a
-    conversation has gaps in the Admin track larger than 16 hops, a new joiner
-    may require a full group member to come online to "re-anchor" the trust.
+*   **Current Tension**: The **500-hop Ancestry Cap** limits how much history
+    can be fetched from a blind relay without an intermediate Admin "anchor"
+    (e.g., a Snapshot). This protects the buffer from deep-ancestry DoS attacks.
+    If a conversation has gaps in the Admin track larger than 500 hops, a new
+    joiner may require a full group member to come online to "re-anchor" the
+    trust.
 
 ## 6. High Availability & Offline Support
 

@@ -28,11 +28,11 @@ struct MerkleNode {
     author_pk: [u8; 32],
 
     /// Physical Device PK (The Tox Public Key of the device that signed this).
-    /// Note: Encrypted on the wire for Content nodes, stored in clear in DB.
+    /// Note: Encrypted in the wire header to prevent metadata leaks to relays.
     sender_pk: [u8; 32],
 
     /// Monotonic counter per-device for gap detection.
-    /// Note: Encrypted on the wire for Content nodes, stored in clear in DB.
+    /// Note: Encrypted in the wire header to prevent metadata leaks to relays.
     sequence_number: u64,
 
     /// Logical depth in the DAG (max(parent_ranks) + 1).
@@ -56,12 +56,9 @@ enum NodeAuth {
     /// K_mac is derived from the global K_conv.
     Mac([u8; 32]),
 
-    /// For KeyWrap nodes: Blake3-MAC(SK_pairwise, NodeData).
-    /// SK_pairwise is derived from the X3DH shared secret for the recipient.
-    /// This allows a new member to verify the KeyWrap before they have K_conv.
-    PairwiseMac([u8; 32]),
-
-    /// For administrative nodes: Ed25519-Sig(Sender_SK, NodeData).
+    /// For administrative and KeyWrap nodes: Ed25519-Sig(Sender_SK, NodeData).
+    /// Because KeyWrap is an administrative action distributing keys, it MUST
+    /// be signed by the Admin to prevent spoofing.
     Signature([u8; 64]),
 }
 ```
@@ -83,17 +80,24 @@ On the wire, the node is serialized as a `WireNode` struct (MessagePack Array):
 
 1.  `parents`: `Vec<[u8; 32]>`
 2.  `author_pk`: `[u8; 32]`
-3.  `payload_data`: `Vec<u8>` (Optionally encrypted and/or compressed)
-    -   Contains: `[sender_pk, sequence_number, network_timestamp, content,
-        metadata]`
-    -   **ENCRYPTION**: This field is **ChaCha20 encrypted** for standard
-        Content nodes.
+3.  `encrypted_routing`: `Vec<u8>`
+    -   Contains: `[sender_pk, sequence_number]`.
+    -   **ENCRYPTION**: ChaCha20 encrypted using $K_{header}$ (derived from
+        $K_{conv}$) to hide metadata from blind relays. Authorized members
+        decrypt this first to identify the sender's ratchet.
+    -   **EXCEPTION**: `KeyWrap` nodes and **Admin Nodes** send these fields in
+        **cleartext** (as `[sender_pk, sequence_number]`) to allow
+        onboarding/validation by peers who do not yet have $K_{conv}$.
+4.  `payload_data`: `Vec<u8>` (Optionally encrypted and/or compressed)
+    -   Contains: `[network_timestamp, content, metadata]`
+    -   **ENCRYPTION**: This field is **ChaCha20 encrypted** with the sender's
+        ratchet key ($K_{msg\_i}$) for standard Content nodes.
     -   **EXCEPTION**: `KeyWrap` nodes (Content ID 7) and **Admin Nodes** are
         sent in **cleartext** (but still padded and optionally compressed) to
         allow for immediate validation and onboarding.
-4.  `topological_rank`: `u64`
-5.  `flags`: `u32` (Bitmask, e.g., 0x01 = Compressed)
-6.  `authentication`: `NodeAuth`
+5.  `topological_rank`: `u64`
+6.  `flags`: `u32` (Bitmask, e.g., 0x01 = Compressed)
+7.  `authentication`: `NodeAuth`
 
 **Note**: Admin nodes do NOT encrypt their payload on the wire to allow for
 immediate validation by any peer, even those without the conversation key.
@@ -108,20 +112,18 @@ author) delegates signing power to multiple **Physical Devices** (the senders).
 A node is only considered valid if:
 
 1.  The `authentication` is valid:
-    -   **Admin Nodes**: MUST use `NodeAuth::Signature`.
-        -   **EXCEPTION**: The **1-on-1 Genesis Node** is an Admin node (Control
-            Action) but uses `NodeAuth::Mac` derived from the initial handshake
-            shared secret.
+    -   **Admin and KeyWrap Nodes**: MUST use `NodeAuth::Signature`.
     -   **Content Nodes**: MUST use `NodeAuth::Mac`.
 2.  **Chain Isolation**: Admin nodes MUST ONLY reference other Admin nodes as
     parents. Content nodes may reference both. (See `merkle-tox-deniability.md`
     for the security rationale).
 3.  A valid **Trust Path** exists from the `sender_pk` back to the `author_pk`
     (the Master Seed).
-4.  **Rank-Dependent Authorization**: Permissions are recalculated for every
-    node based on the DAG state at the node's **topological rank**. A Trust Path
-    is only valid if it has not been invalidated by a `RevokeDevice` node with a
-    rank $\le$ the node's own rank.
+4.  **Causality-Dependent Authorization**: Permissions are recalculated for
+    every node based on the linearized DAG state. A Trust Path is only valid if
+    it has not been invalidated by a `RevokeDevice` node that is a **topological
+    ancestor** of the node being verified, or appears earlier in the consensus
+    network time ordering.
 5.  **Limits**: See `merkle-tox.md` for `MAX_PARENTS` and other hard limits.
 
 ## 4. Content Types
@@ -315,18 +317,18 @@ The first node in any conversation is the **Genesis Node**.
 -   It defines the initial parameters of the room.
 -   A node is only valid if a path exists from it back to the Genesis Node.
 
-### Recommendation: Deterministic 1-on-1 Genesis
+### Recommendation: Standardized 1-on-1 Genesis
 
-To ensure both parties in a 1-on-1 chat always agree on the `Conversation ID`
-without an explicit handshake:
+To ensure that multi-device synchronization functions correctly for 1-on-1
+chats, the "Deterministic Genesis" based on device-specific `crypto_box` secrets
+is NOT used.
 
--   The Genesis Node is derived deterministically: `GenesisData =
-    sort(PublicKeyA, PublicKeyB)`.
--   **Authentication**: Instead of a signature, it uses a **Symmetric MAC**
-    derived from the shared Tox `crypto_box` secret.
--   Both clients generate this node locally. Because the data and the MAC key
-    are identical for both, the resulting Blake3 hash (the Conversation ID) is
-    identical.
+-   1-on-1 chats use the exact same **Group Genesis** procedure as larger
+    groups.
+-   The initiator generates a random $K_{conv}$ and authors the Genesis Node.
+-   The initiator then uses the **X3DH Handshake** to securely wrap and deliver
+    the new $K_{conv}$ to the recipient's logical identity, allowing both users
+    to sync the conversation across all their authorized devices.
 
 ### Recommendation: Group Genesis
 

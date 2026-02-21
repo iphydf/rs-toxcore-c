@@ -93,7 +93,8 @@ Once a fresh `Announcement` is available:
     -   **Anchor Hint**: The `KeyWrap` node MUST include the `anchor_hash` of
         the latest **Anchor Snapshot** (or Genesis Node) known to the author.
     -   **Authentication**: The `KeyWrap` MUST be authenticated using a
-        `PairwiseMac` derived from $SK_{pairwise}$.
+        `Signature` (Ed25519) by the authoring Admin. The internal $K_{conv}$ is
+        protected via authenticated encryption using $SK_{pairwise}$.
 
 ## 3. Forward Secrecy & Deniability
 
