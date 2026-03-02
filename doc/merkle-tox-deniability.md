@@ -80,7 +80,7 @@ payload_data = nonce_msg_i || ChaCha20-IETF(K_msg_i, nonce_msg_i, [network_times
 
 # 5. Sign with the sender's current ephemeral signing key (Encrypt-then-Sign)
 Node_Contents = ToxProto::serialize([
-    parents, author_pk, sender_hint, encrypted_routing,
+    parents, sender_hint, encrypted_routing,
     payload_data, topological_rank, flags
 ])
 Authenticator = Ed25519_Sign(ephemeral_signing_sk, "merkle-tox v1 content-sig" || Node_Contents)
@@ -95,10 +95,9 @@ canonical definition and the Admin Node signature variant.
 ### Internal Authentication
 
 During the active epoch, only the sender holds the ephemeral signing private key
-(`ephemeral_signing_sk`). Recipients verify the signature using the
+(`ephemeral_signing_sk`). Recipients verify signatures using
 `ephemeral_signing_pk` distributed via `SenderKeyDistribution`. Valid signatures
-cryptographically prove authorship to all group members, preventing real-time
-impersonation.
+prove authorship to group members, preventing real-time impersonation.
 
 ### Plausible Deniability (Key Disclosure)
 
@@ -148,15 +147,15 @@ Chain).
     rotation interval (30 days). A compromised SPK allows retroactive decryption
     of `SenderKey` distributions from that epoch.
 -   The ratchet handles the non-linear nature of the DAG by keeping each
-    sender's chain strictly linear and independent of other senders' branches.
+    sender's chain linear and independent of other senders' branches.
 
 See **`merkle-tox-ratchet.md`** for the ratchet implementation details.
 
 ### Per-Epoch Key Rotation (Header & Signing)
 
 The header encryption key is tied to the sender's **SenderKey epoch** and
-therefore rotates every 7 days or 5,000 messages, exactly matching the
-Post-Compromise Security cadence of payload encryption:
+therefore rotates every 7 days or 5,000 messages, matching the Post-Compromise
+Security cadence of payload encryption:
 
 ```
 K_header_epoch_n = Blake3-KDF("merkle-tox v1 header-key", K_conv || SenderKey_n)
@@ -172,10 +171,9 @@ recipients already possess). For the initial distribution ($n = 0$), the node
 uses `NodeAuth::Signature` (a permanent Ed25519 signature from the device key)
 because no ephemeral key has been established yet.
 
-**Forward Secrecy**: Once a SenderKey epoch ends, the corresponding
-$K_{header\_epoch\_n}$ is irrecoverable from the new epoch's keys. The old
-ephemeral signing private key is disclosed (see Section 1), making past
-signatures unforgeable-proof but past routing metadata unrecoverable.
+**Forward Secrecy**: When a SenderKey epoch ends, $K_{header\_epoch\_n}$ is
+irrecoverable. The old ephemeral signing private key is disclosed, making past
+signatures forgeable but past routing metadata unrecoverable.
 
 **Deniability**: After epoch rotation, the old `ephemeral_signing_sk` is
 disclosed to all members via the `disclosed_keys` field. Any member can then
@@ -219,11 +217,9 @@ performs periodic **Sender Key Rotations**.
     fresh ephemeral Ed25519 key pair, distributing both via
     `SenderKeyDistribution` to all currently authorized members. The old epoch's
     `ephemeral_signing_sk` is included in `disclosed_keys`.
-3.  **Result**: This provides **Post-Compromise Security**, ensuring an attacker
-    who has stolen a previous device key is eventually rotated out of both
-    message decryption and content forgery capability. The decentralized $O(N)$
-    distribution prevents the Admin bottleneck associated with global key
-    rotations.
+3.  **Result**: Provides **Post-Compromise Security**, ensuring an attacker is
+    rotated out of decryption and forgery capability. The decentralized $O(N)$
+    distribution prevents Admin bottlenecks.
 
 ## 3. "Lazy Consensus" Fallback
 

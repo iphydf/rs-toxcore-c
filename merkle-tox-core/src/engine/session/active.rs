@@ -65,12 +65,45 @@ impl SyncSession<Active> {
 
         for parent in &wire.parents {
             if !store.has_node(parent)
-                && !self.common.missing_nodes.contains(parent)
+                && !self.common.missing_nodes_hot.contains(parent)
+                && !self.common.missing_nodes_cold.contains(parent)
                 && !self.common.in_flight_fetches.contains(parent)
             {
-                // Prioritize Admin nodes if type known, but here we don't.
-                self.common.missing_nodes.push_back(*parent);
+                // Type unknown for wire nodes; default to hot (optimistic).
+                self.common.missing_nodes_hot.push_back(*parent);
             }
+        }
+    }
+
+    /// Enqueues a missing hash into hot or cold queue based on rank relative to max head.
+    pub fn enqueue_missing(
+        &mut self,
+        hash: NodeHash,
+        hint_rank: Option<u64>,
+        store: &dyn NodeStore,
+    ) {
+        if self.common.in_flight_fetches.contains(&hash) {
+            return;
+        }
+        if self.common.missing_nodes_hot.contains(&hash)
+            || self.common.missing_nodes_cold.contains(&hash)
+        {
+            return;
+        }
+        let max_head_rank = self
+            .common
+            .local_heads
+            .iter()
+            .chain(self.common.remote_heads.iter())
+            .filter_map(|h| store.get_rank(h))
+            .max()
+            .unwrap_or(0);
+        let is_hot =
+            hint_rank.is_none_or(|r| r + tox_proto::constants::HOT_WINDOW_RANKS >= max_head_rank);
+        if is_hot {
+            self.common.missing_nodes_hot.push_back(hash);
+        } else {
+            self.common.missing_nodes_cold.push_back(hash);
         }
     }
 
@@ -79,16 +112,22 @@ impl SyncSession<Active> {
             return;
         }
 
+        if let Some(anchor) = heads.anchor_hash {
+            self.common.remote_anchor_hash = Some(anchor);
+        }
+
         for head in heads.heads {
             let known = self.common.remote_heads.contains(&head);
             if !known {
                 self.common.remote_heads.insert(head);
             }
             if !store.has_node(&head)
-                && !self.common.missing_nodes.contains(&head)
+                && !self.common.missing_nodes_hot.contains(&head)
+                && !self.common.missing_nodes_cold.contains(&head)
                 && !self.common.in_flight_fetches.contains(&head)
             {
-                self.common.missing_nodes.push_back(head);
+                // Heads are tips (always hot).
+                self.common.missing_nodes_hot.push_back(head);
             }
         }
     }
@@ -132,10 +171,12 @@ impl SyncSession<Active> {
                 );
                 for hash in &missing_locally {
                     if !store.has_node(hash)
-                        && !self.common.missing_nodes.contains(hash)
+                        && !self.common.missing_nodes_hot.contains(hash)
+                        && !self.common.missing_nodes_cold.contains(hash)
                         && !self.common.in_flight_fetches.contains(hash)
                     {
-                        self.common.missing_nodes.push_back(*hash);
+                        // Sketch-discovered nodes: rank unknown, assume hot.
+                        self.common.missing_nodes_hot.push_back(*hash);
                     }
                 }
                 Ok(DecodingResult::Success {
@@ -157,8 +198,20 @@ impl SyncSession<Active> {
 
     pub fn next_fetch_batch(&mut self, batch_size: usize) -> Option<FetchBatchReq> {
         let mut hashes = Vec::with_capacity(batch_size);
+        // Hot first
         while hashes.len() < batch_size {
-            if let Some(hash) = self.common.missing_nodes.pop_front() {
+            if let Some(hash) = self.common.missing_nodes_hot.pop_front() {
+                if !self.common.in_flight_fetches.contains(&hash) {
+                    hashes.push(hash);
+                    self.common.in_flight_fetches.insert(hash);
+                }
+            } else {
+                break;
+            }
+        }
+        // Then cold
+        while hashes.len() < batch_size {
+            if let Some(hash) = self.common.missing_nodes_cold.pop_front() {
                 if !self.common.in_flight_fetches.contains(&hash) {
                     hashes.push(hash);
                     self.common.in_flight_fetches.insert(hash);
@@ -221,30 +274,54 @@ impl SyncSession<Active> {
             return;
         }
 
+        // Backfill count check for "last N messages" shallow sync
         let is_admin = node.node_type() == crate::dag::NodeType::Admin;
+        if self.common.shallow && self.common.max_backfill_nodes > 0 {
+            if !is_admin {
+                self.common.backfill_count += 1;
+            }
+            if self.common.backfill_count >= self.common.max_backfill_nodes {
+                return;
+            }
+        }
+
         for parent in &node.parents {
             if !store.has_node(parent)
-                && !self.common.missing_nodes.contains(parent)
+                && !self.common.missing_nodes_hot.contains(parent)
+                && !self.common.missing_nodes_cold.contains(parent)
                 && !self.common.in_flight_fetches.contains(parent)
             {
                 if is_admin {
-                    self.common.missing_nodes.push_front(*parent);
+                    self.common.missing_nodes_hot.push_front(*parent);
                 } else {
-                    self.common.missing_nodes.push_back(*parent);
+                    // Use rank-based classification for content nodes
+                    let parent_rank = node.topological_rank.saturating_sub(1);
+                    self.enqueue_missing(*parent, Some(parent_rank), store);
                 }
             }
         }
     }
 
     pub fn make_sync_heads(&self, flags: u64) -> SyncHeads {
+        self.make_sync_heads_with_store(flags, None)
+    }
+
+    pub fn make_sync_heads_with_store(
+        &self,
+        flags: u64,
+        store: Option<&dyn NodeStore>,
+    ) -> SyncHeads {
         let mut heads: Vec<NodeHash> = self.common.local_heads.iter().cloned().collect();
         if heads.len() > MAX_HEADS_SYNC {
             heads.truncate(MAX_HEADS_SYNC);
         }
+        let anchor_hash =
+            store.and_then(|s| s.get_admin_heads(&self.conversation_id).first().cloned());
         SyncHeads {
             conversation_id: self.conversation_id,
             heads,
             flags,
+            anchor_hash,
         }
     }
 
@@ -331,8 +408,9 @@ impl SyncSession<Active> {
 
         let has_fetchable_missing = self
             .common
-            .missing_nodes
+            .missing_nodes_hot
             .iter()
+            .chain(self.common.missing_nodes_cold.iter())
             .any(|h| !self.common.in_flight_fetches.contains(h));
 
         if self.common.heads_dirty || self.common.recon_dirty || has_fetchable_missing {
@@ -346,6 +424,13 @@ impl SyncSession<Active> {
         let next_recon = self.common.last_recon_time + crate::sync::RECONCILIATION_INTERVAL;
         if next_recon > now {
             wakeup = wakeup.min(next_recon);
+        }
+
+        // Account for rate_limited_until in wakeup scheduling
+        if let Some(until) = self.common.rate_limited_until
+            && until > now
+        {
+            wakeup = wakeup.min(until);
         }
 
         wakeup

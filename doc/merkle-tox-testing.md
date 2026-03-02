@@ -3,11 +3,11 @@
 ## Overview
 
 Verifying Merkle-Tox requires testing the emergent behavior of a distributed
-swarm under adverse conditions.
+swarm.
 
-This sub-design defines the **Merkle-Tox Benchmark & Chaos Laboratory**, a suite
-simulating network topologies, injecting impairments, and bridging virtual
-simulations with real-world Tox nodes.
+Defines the **Merkle-Tox Benchmark & Chaos Laboratory**, a suite simulating
+network topologies, injecting impairments, and bridging virtual simulations with
+real-world Tox nodes.
 
 ## 1. Abstractions
 
@@ -58,7 +58,7 @@ internal components:
 
 ## 2. Virtual Hub (Chaos Engine)
 
-The `VirtualHub` is a central coordinator for simulated swarms. It acts as a
+The `VirtualHub` is a central coordinator for simulated swarms, acting as a
 virtual router and impairment injector.
 
 ### Impairment Model
@@ -93,9 +93,9 @@ a **Gateway Node**.
 ## 4. Benchmark TUI Design
 
 The benchmark application is a `ratatui`-based dashboard for observing swarm
-convergence and performance. It is implemented in `merkle-tox-workbench/` and
-follows a modular **MVU (Model-View-Update)** pattern for state management,
-enabling testing and predictable UI state transitions.
+convergence. Implemented in `merkle-tox-workbench/`, it follows a modular **MVU
+(Model-View-Update)** pattern for state management, enabling testing and
+predictable UI state transitions.
 
 ### Tab 1: Fleet Overview (Network State)
 
@@ -131,7 +131,7 @@ enabling testing and predictable UI state transitions.
 
 ## 5. Automated Scenarios
 
-The suite includes pre-defined scripts to verify protocol robustness:
+The suite includes pre-defined scripts:
 
 -   **Late Joiner**: 10 nodes author history for 5 minutes. An 11th node joins.
     Time how long until the 11th node's `VerifiedHeads == GlobalHeads`.
@@ -163,8 +163,7 @@ The benchmark supports defining swarms via topology recipes:
 -   **`Mesh(N)`**: Every node is connected to every other node.
 -   **`Star(N)`**: $N-1$ nodes connect to a single central Hub (or Gateway).
 -   **`Dynamic(N, PeeringProbability)`**: Randomly generated graph.
--   **`Partitioned(Groups[])`**: Strictly separated clusters with optional
-    Bridge nodes.
+-   **`Partitioned(Groups[])`**: Separated clusters with optional Bridge nodes.
 
 ## 8. Implementation Refinements
 
@@ -178,7 +177,7 @@ The benchmark supports defining swarms via topology recipes:
 
 ## 9. Implementation Status
 
-The benchmarking suite is **fully implemented** and available in
+The benchmarking suite is **implemented** and available in
 `merkle-tox-workbench/src/main.rs`.
 
 ### Completed Milestones

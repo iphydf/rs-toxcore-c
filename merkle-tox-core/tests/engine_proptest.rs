@@ -23,6 +23,7 @@ fn arb_protocol_message() -> impl Strategy<Value = ProtocolMessage> {
                 conversation_id: ConversationId::from([0; 32]),
                 heads: heads.into_iter().map(NodeHash::from).collect(),
                 flags: 0,
+                anchor_hash: None,
             }
         )),
         any::<[u8; 32]>().prop_map(|hash| ProtocolMessage::BlobQuery(NodeHash::from(hash))),

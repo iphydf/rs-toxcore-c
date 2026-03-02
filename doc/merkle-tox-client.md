@@ -11,7 +11,7 @@ implements policy (auto-authorization, key management, materialized views).
 ### `merkle-tox-core` (Mechanisms)
 
 -   **Policy-Free**: No opinions on who is an Admin or when to rotate keys.
--   **Poll-Based**: Strictly deterministic and portable state machine.
+-   **Poll-Based**: Deterministic and portable state machine.
 -   **Atomic**: Handles raw packets and reassembly events.
 
 ### `merkle-tox-client` (Policies)
@@ -25,8 +25,8 @@ implements policy (auto-authorization, key management, materialized views).
 
 ## 2. The Orchestration Loop
 
-The Client implements an orchestrator watching `NodeEvent`s from the Core to
-execute actions via the configured `PolicyHandler`.
+The Client implements an orchestrator watching `NodeEvent`s to execute actions
+via `PolicyHandler`.
 
 ### Auto-Authorization Flow
 
@@ -43,7 +43,7 @@ execute actions via the configured `PolicyHandler`.
 
 ## 3. High-Level API
 
-The Client provides an interface for applications like `toxxi` and `vaultbot`.
+The Client provides an interface for applications.
 
 ```rust
 impl MerkleToxClient {

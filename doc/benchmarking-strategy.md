@@ -3,8 +3,7 @@
 ## Overview
 
 Merkle-Tox operates over a limited-bandwidth, high-latency network (Tox).
-Benchmarks measure bytes on the wire and CPU time spent on serialization and
-cryptography.
+Benchmarks measure wire bytes and CPU time for serialization and cryptography.
 
 The strategy is **Tiered**: micro-level primitives, protocol-level logic units,
 and high-level user scenarios.
@@ -15,23 +14,22 @@ and high-level user scenarios.
 
 **Target:** `proto_bench`
 
-*   **Why:** Serialization is the most frequent operation in the system.
-*   **Metrics:** We benchmark naked `u64` (for discriminator optimization),
-    `SmallVec` (stack vs heap), and `Vec<u8>` (MessagePack `bin`
-    specialization).
-*   **Goal:** Ensure the custom MessagePack implementation provides maximum
-    byte-density and nanosecond-level performance.
+*   **Why:** Serialization is the most frequent operation.
+*   **Metrics:** Benchmarks `u64` (discriminator optimization), `SmallVec`
+    (stack vs heap), and `Vec<u8>` (MessagePack `bin` specialization).
+*   **Goal:** Ensure MessagePack implementation provides maximum byte-density
+    and nanosecond-level performance.
 
 ### Tier 2: Algorithmic Scaling (`tox-reconcile`)
 
 **Target:** `reconcile_bench`
 
 *   **Why:** Invertible Bloom Lookup Tables (IBLT) are used for set
-    reconciliation. If the "peeling" process (decoding differences) is slow,
-    group synchronization will stall.
+    reconciliation. If peeling (decoding differences) is slow, group
+    synchronization stalls.
 *   **Metrics:** Decoding time at maximum capacity for **Small**, **Medium**,
     and **Large** tiers.
-*   **Goal:** Verify that we can identify a gap of 500+ messages in under 1ms.
+*   **Goal:** Identify a gap of 500+ messages in <1ms.
 
 ### Tier 3: User Scenarios (`merkle-tox-core`)
 
@@ -48,14 +46,14 @@ Targets the "Hot Paths" of two primary scenarios:
 #### B. The "Blob Transfer" Path
 
 *   **Metric:** `blob_chunk_verify_64kb`.
-*   **Rationale:** Files are transferred in 64KB chunks. Every chunk is verified
-    against a Merkle tree.
+*   **Rationale:** Files transfer in 64KB chunks. Each chunk is verified against
+    a Merkle tree.
 *   **Goal:** Ensure integrity checks saturate high-speed connections without
-    bottlenecking the CPU.
+    CPU bottlenecks.
 
-## 2. Intentional Exclusions
+## 2. Exclusions
 
-The following are **excluded** from the Criterion suite:
+**Excluded** from the Criterion suite:
 
 *   **Disk I/O (SQLite/FS):** Disk performance is environment-dependent. Handled
     by integration benchmarks.

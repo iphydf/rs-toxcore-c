@@ -45,7 +45,9 @@ impl MerkleToxEngine {
                         // Send heads immediately on handshake
                         effects.push(Effect::SendPacket(
                             sender_pk,
-                            ProtocolMessage::SyncHeads(active.make_sync_heads(0)),
+                            ProtocolMessage::SyncHeads(
+                                active.make_sync_heads_with_store(0, Some(store)),
+                            ),
                         ));
                         active.common.heads_dirty = false;
                         self.sessions
@@ -84,7 +86,9 @@ impl MerkleToxEngine {
                         // Send heads immediately on handshake
                         effects.push(Effect::SendPacket(
                             sender_pk,
-                            ProtocolMessage::SyncHeads(active.make_sync_heads(0)),
+                            ProtocolMessage::SyncHeads(
+                                active.make_sync_heads_with_store(0, Some(store)),
+                            ),
                         ));
                         active.common.heads_dirty = false;
                         self.sessions
@@ -275,8 +279,15 @@ impl MerkleToxEngine {
                     }
                 }
             }
-            ProtocolMessage::SyncRateLimited { .. } => {
-                // TODO: Apply backoff for this peer based on retry_after_ms
+            ProtocolMessage::SyncRateLimited {
+                conversation_id,
+                retry_after_ms,
+            } => {
+                if let Some(session) = self.sessions.get_mut(&(sender_pk, conversation_id)) {
+                    let until = self.clock.time_provider().now_instant()
+                        + std::time::Duration::from_millis(retry_after_ms as u64);
+                    session.common_mut().rate_limited_until = Some(until);
+                }
             }
             ProtocolMessage::KeywrapAck {
                 keywrap_hash,
@@ -474,12 +485,30 @@ impl MerkleToxEngine {
                             .or_insert_with(|| (0, Vec::new()));
                         *total += wire_size;
                         entries.push((hash, wire_size, now_ms));
-                        // Evict oldest entries when quota is exceeded
+                        // Evict cold-first, then by lowest rank within tier
                         while *total > tox_proto::constants::OPAQUE_STORE_QUOTA
                             && !entries.is_empty()
                         {
-                            // Sort by timestamp ascending to evict oldest first
-                            entries.sort_by_key(|&(_, _, ts)| ts);
+                            let max_rank = store
+                                .get_heads(&conv_id)
+                                .iter()
+                                .filter_map(|h| store.get_rank(h))
+                                .max()
+                                .unwrap_or(0);
+                            let hot_cutoff =
+                                max_rank.saturating_sub(tox_proto::constants::HOT_WINDOW_RANKS);
+                            entries.sort_by(|a, b| {
+                                let a_rank = store.get_rank(&a.0).unwrap_or(0);
+                                let b_rank = store.get_rank(&b.0).unwrap_or(0);
+                                let a_cold = a_rank < hot_cutoff;
+                                let b_cold = b_rank < hot_cutoff;
+                                // Cold before hot; within same tier, lowest rank first
+                                match (a_cold, b_cold) {
+                                    (true, false) => std::cmp::Ordering::Less,
+                                    (false, true) => std::cmp::Ordering::Greater,
+                                    _ => a_rank.cmp(&b_rank),
+                                }
+                            });
                             let (evicted_hash, evicted_size, _) = entries.remove(0);
                             *total -= evicted_size;
                             effects.push(Effect::DeleteWireNode(conv_id, evicted_hash));
@@ -505,8 +534,18 @@ impl MerkleToxEngine {
             ProtocolMessage::BlobAvail(info) => {
                 let blob_hash = info.hash;
                 if let Some(sync) = self.blob_syncs.get_mut(&blob_hash) {
-                    tracing::debug!("Adding seeder {:?} for blob {:?}", sender_pk, blob_hash);
-                    sync.add_seeder(sender_pk);
+                    // Validate bao_root matches our stored info
+                    if sync.info.bao_root.is_some() && info.bao_root != sync.info.bao_root {
+                        tracing::warn!(
+                            "Peer {:?} sent mismatching bao_root for blob {:?}, blacklisting",
+                            sender_pk,
+                            blob_hash
+                        );
+                        sync.remove_seeder(&sender_pk);
+                    } else {
+                        tracing::debug!("Adding seeder {:?} for blob {:?}", sender_pk, blob_hash);
+                        sync.add_seeder(sender_pk);
+                    }
                 } else if let Some(bs) = blob_store
                     && !bs.has_blob(&blob_hash)
                 {

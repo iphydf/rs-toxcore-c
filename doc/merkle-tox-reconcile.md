@@ -3,8 +3,8 @@
 ## Overview
 
 Merkle-Tox primarily uses heads-based reconciliation (`merkle-tox-sync.md`),
-which scales linearly with concurrent branches. To support large groups,
-Merkle-Tox uses **Invertible Bloom Lookup Tables (IBLT)** via `tox-reconcile`.
+which scales linearly with concurrent branches. For large groups, Merkle-Tox
+uses **Invertible Bloom Lookup Tables (IBLT)** via `tox-reconcile`.
 
 `tox-reconcile` identifies differences between sets of message hashes in $O(1)$
 or $O(D)$ communication (where $D$ is the number of differences), regardless of
@@ -151,8 +151,7 @@ When differences exceed single sketch capacity:
 
 ### B. Decoding Failure (Responder)
 
-If a responder receives a `SYNC_SKETCH` and the peeling process fails to recover
-the set difference:
+If peeling fails to recover the set difference for a received `SYNC_SKETCH`:
 
 1.  The responder MUST reply with a `SYNC_RECON_FAIL` message containing the
     `SyncRange` and the `Tier` that failed.
@@ -163,9 +162,8 @@ the set difference:
 
 ### C. Per-Peer CPU Budget (Token Bucket)
 
-To prevent Denial of Service (DoS) attacks where an attacker floods a peer with
-large sketches to exhaust their CPU, each responder enforces a **strict per-peer
-CPU budget** using a token bucket, directly capping the defender's resource
+To prevent DoS via CPU exhaustion, each responder enforces a **per-peer CPU
+budget** using a token bucket, directly capping the defender's resource
 consumption regardless of attacker behavior. No PoW challenge/response protocol
 is needed.
 
@@ -197,7 +195,7 @@ is needed.
     -   This separates rate-limiting (honest peers under normal load) from
         punishment (peers sending garbage).
 
-## 4. Sophistication & Evolution
+## 4. Synchronization Stages
 
 `tox-reconcile` supports the following synchronization stages:
 

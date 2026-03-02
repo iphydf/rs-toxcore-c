@@ -954,7 +954,27 @@ impl<F: FileSystem> NodeStore for FsStore<F> {
             }
         }
 
-        nodes.sort_by_key(|n| (n.topological_rank, n.hash()));
+        // Sort by (topological_rank, T_eff, hash) for spec-compliant presentation ordering.
+        let t_effs: HashMap<NodeHash, i64> = nodes
+            .iter()
+            .map(|n| (n.hash(), merkle_tox_core::dag::effective_timestamp(n, self)))
+            .collect();
+        nodes.sort_by(|a, b| {
+            a.topological_rank
+                .cmp(&b.topological_rank)
+                .then_with(|| {
+                    let t_a = t_effs
+                        .get(&a.hash())
+                        .copied()
+                        .unwrap_or(a.network_timestamp);
+                    let t_b = t_effs
+                        .get(&b.hash())
+                        .copied()
+                        .unwrap_or(b.network_timestamp);
+                    t_a.cmp(&t_b)
+                })
+                .then_with(|| a.hash().cmp(&b.hash()))
+        });
         Ok(nodes)
     }
 

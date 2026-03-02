@@ -185,12 +185,12 @@ fn test_sync_session_missing_nodes_loop() {
     active_session.common.heads_dirty = false;
     active_session.common.recon_dirty = false;
 
-    // Add a node to missing_nodes that is already in in_flight_fetches
+    // Add a node to missing_nodes_hot that is already in in_flight_fetches
     let hash = NodeHash::from([1u8; 32]);
-    active_session.common.missing_nodes.push_back(hash);
+    active_session.common.missing_nodes_hot.push_back(hash);
     active_session.common.in_flight_fetches.insert(hash);
 
-    // next_wakeup will currently return 'now' because missing_nodes is not empty
+    // next_wakeup will currently return 'now' because missing_nodes_hot is not empty
     let wakeup = active_session.next_wakeup(now);
 
     // Check if we can actually send anything

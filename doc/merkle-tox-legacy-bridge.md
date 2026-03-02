@@ -10,8 +10,7 @@ consistent history when interacting with peers using legacy clients.
 
 Legacy messages are wrapped in a `MerkleNode` using the `Content::LegacyBridge`
 variant (**ID 11**). To maintain **Principle #1 (Deniability)**, these nodes use
-an **Ephemeral Signature** for authentication, exactly like native content
-nodes.
+an **Ephemeral Signature** for authentication, like native content nodes.
 
 *   **Bridging Identity**: The signature of the bridging event belongs to the
     **bridging device** (via its ephemeral signing key), and is

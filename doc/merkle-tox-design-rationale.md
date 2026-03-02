@@ -1,7 +1,7 @@
 # Merkle-Tox Design Rationale & Dismissed Considerations
 
-This document records architectural decisions and "rejected" paths to prevent
-future redesigns from re-introducing known vulnerabilities or redundancies.
+Records architectural decisions and rejected paths to prevent re-introducing
+known vulnerabilities or redundancies.
 
 ## 1. SyncKey Obfuscation (Dismissed)
 
@@ -102,9 +102,9 @@ future redesigns from re-introducing known vulnerabilities or redundancies.
     to keep old keys "just in case," violating strict Forward Secrecy or
     creating complex caching deadlocks.
 *   **Result**: Use **Per-Sender Linear Ratchets**. Each device maintains its
-    own strictly linear hash chain. DAG merges remain logical (sync/integrity)
-    but not cryptographic (encryption), achieving Signal-grade Forward Secrecy
-    with zero race conditions.
+    own linear hash chain. DAG merges remain logical (sync/integrity) but not
+    cryptographic (encryption), achieving Signal-grade Forward Secrecy with zero
+    race conditions.
 
 ## 9. Application-Layer Time Sync (Dismissed)
 
@@ -121,30 +121,28 @@ future redesigns from re-introducing known vulnerabilities or redundancies.
 
 ## 10. Admin-Only Anchoring (Dismissed)
 
-*   **Original Proposal**: Strictly require Admin nodes every 500 hops. If no
-    Admin is online, the room stalls for blind relays, requiring an "always-on"
-    Admin Bot.
+*   **Original Proposal**: Require Admin nodes every 500 hops. If no Admin is
+    online, the room stalls for blind relays, requiring an "always-on" Admin
+    Bot.
 *   **Decision**: Dismissed in favor of Level 2 `SoftAnchor`s.
 *   **Rationale**: Centralized bots violate decentralization. Sacrificing a
     small amount of "presence deniability" (L2 users signing a SoftAnchor with
     their permanent key) is an acceptable trade-off to guarantee decentralized
     availability. The "Hop Reset Topology" (where SoftAnchors only parent the
-    previous Admin node) ensures actual message *content* remains perfectly
-    deniable.
+    previous Admin node) ensures actual message *content* remains deniable.
 *   **Result**: Introduced `SoftAnchor` with a 3-chain cap and parallel topology
     to maintain availability without Centralized Admin Bots.
 
 ## 11. Deterministic Tie-Breakers for Soft Anchors (Dismissed)
 
 *   **Original Proposal**: When 400 hops are reached, use a deterministic rule
-    (e.g., mathematical distance of `device_pk` to `basis_hash`) to select
-    exactly one Level 2 user to author the `SoftAnchor`, preventing a
-    "thundering herd".
+    (e.g., mathematical distance of `device_pk` to `basis_hash`) to select one
+    Level 2 user to author the `SoftAnchor`, preventing a "thundering herd".
 *   **Decision**: Dismissed in favor of probabilistic jitter.
 *   **Rationale**: In a lossy, asynchronous network like Tox, you never have a
-    perfect view of exactly *who* is currently online. If the "mathematically
-    chosen" user happens to be offline or partitioned, the whole room would
-    stall waiting for them.
+    complete view of *who* is currently online. If the "mathematically chosen"
+    user happens to be offline or partitioned, the whole room would stall
+    waiting for them.
 *   **Result**: Clients trigger `SoftAnchor` creation at a uniformly randomized
     interval between 400 and 450 hops, effectively trading a small amount of
     network noise for guaranteed robustness.
@@ -158,6 +156,6 @@ future redesigns from re-introducing known vulnerabilities or redundancies.
 *   **Rationale**: PoW drains mobile batteries and proves only CPU time
     expenditure, not history legitimacy. A determined attacker with server
     resources could still trivially overwhelm the buffer limit of honest nodes.
-*   **Result**: Relied strictly on cryptographic authentication (`SoftAnchor`
+*   **Result**: Relied on cryptographic authentication (`SoftAnchor`
     Anti-Branching rule) which is computationally cheap to verify ($O(1)$) and
-    strictly bounds the attack surface.
+    bounds the attack surface.

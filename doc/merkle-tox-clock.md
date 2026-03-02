@@ -2,16 +2,15 @@
 
 ## Overview
 
-Merkle-Tox requires a globally consistent clock to linearize concurrent events
-in a decentralized Directed Acyclic Graph (DAG). Implements a **Median-based
-Consensus Clock** with Round-Trip Time (RTT) compensation. Monotonicity is
-enforced via slewing (§3), while causal display ordering uses
-`effective_timestamp` (§3).
+Merkle-Tox requires a globally consistent clock to linearize concurrent events.
+Implements a **Median-based Consensus Clock** with Round-Trip Time (RTT)
+compensation. Monotonicity is enforced via slewing (§3); causal display ordering
+uses `effective_timestamp` (§3).
 
 ## 1. Algorithm: Byzantine-Resilient Median
 
-Each node maintains a single, global view of "Network Time" ($T_{net}$) derived
-from the offsets of a strictly bounded set of trusted peers.
+Each node maintains a single "Network Time" ($T_{net}$) derived from the offsets
+of a bounded set of trusted peers.
 
 ### Calculation (The "Trusted Core" Approach)
 
@@ -36,9 +35,9 @@ from the offsets of a strictly bounded set of trusted peers.
 
 ## 2. Measurement (Transport Integration)
 
-Time synchronization measurements are integrated into the `tox-sequenced`
-transport layer, eliminating "ARQ Jitter" (retransmission delay) and using
-existing RTT heartbeats.
+Time synchronization measurements are integrated into `tox-sequenced`,
+eliminating "ARQ Jitter" (retransmission delay) and using existing RTT
+heartbeats.
 
 1.  **Transport PING/PONG**: The transport layer exchanges timestamps (Origin,
     Receive, Transmit) as part of its routine RTT measurement.
@@ -58,8 +57,7 @@ naturally ignored.
 
 ### Clock Slewing (Monotonicity)
 
-To prevent the clock from "jumping" (which breaks UI ordering and timers),
-$T_{net}$ is updated via **slewing**:
+To prevent clock jumps, $T_{net}$ is updated via **slewing**:
 
 -   **Limit**: The slewing rate is capped at **±1%**. One second of "network
     time" will take between 0.99s and 1.01s of local real time.
@@ -80,7 +78,7 @@ isolating timelines from public rooms.
 authorized users from amplifying votes via multiple devices. In the fallback
 consensus scenario, an attacker must control $>50\%$ of the distinct **logical
 identities** across all shared rooms to shift the clock, and their maximum
-impact is strictly contained by the 5-minute hard bound.
+impact is contained by the 5-minute hard bound.
 
 ### Temporal Fingerprinting Protection
 
@@ -132,13 +130,16 @@ ratcheting downstream timestamps into the future.
 
 ### Effective Timestamp (Display Ordering)
 
-The raw `network_timestamp` on the wire may occasionally violate causal
-intuition due to legitimate clock skew (e.g., a reply timestamped *before* its
-parent). Clients compute an **effective timestamp** for monotonic UI rendering
-without contaminating protocol logic:
+The raw `network_timestamp` may violate causal intuition due to clock skew.
+Clients compute an **effective timestamp** for monotonic UI rendering without
+contaminating protocol logic:
 
 $$T_{eff}(N) = \max\bigl(N.\text{network\_timestamp},\; \max_{P \in \text{parents}(N)} T_{eff}(P)\bigr)$$
 
+-   **Applicability**: This formula applies only to decrypted nodes. Opaque
+    nodes (undecrypted WireNodes in the Opaque Store) lack a `network_timestamp`
+    and MUST NOT participate in `effective_timestamp` calculations. Their
+    display ordering is deferred until promotion.
 -   **Presentation-Layer Only**: `effective_timestamp` is used exclusively for
     display ordering and MUST NOT be used for any protocol-level decision
     (quarantine evaluation, key expiration, rotation triggers, `expires_at`
@@ -146,7 +147,7 @@ $$T_{eff}(N) = \max\bigl(N.\text{network\_timestamp},\; \max_{P \in \text{parent
     `network_timestamp` or $T_{net}$.
 -   **Bounded Ratchet**: The effective timestamp can drift at most 10 minutes
     ahead of reality (due to the upper bound). It converges back to reality
-    purely because real-world time continues to advance; once true network time
+    reality because real-world time continues to advance; once true network time
     surpasses the spoofed timestamp, new nodes naturally begin using their own
     current, accurate timestamps.
 -   **Not Persisted**: `effective_timestamp` is computed on-the-fly from the DAG

@@ -3,6 +3,7 @@ use crate::ProtocolMessage;
 use crate::cas::SwarmSync;
 use crate::clock::{NetworkClock, TimeProvider};
 use crate::crypto::ed25519_sk_to_x25519;
+use crate::dag::NodeLookup;
 use crate::dag::{
     ChainKey, Content, ControlAction, ConversationId, EphemeralSigningPk, EphemeralSigningSk,
     EphemeralX25519Pk, EphemeralX25519Sk, KConv, LogicalIdentityPk, MerkleNode, NodeHash, NodeType,
@@ -10,7 +11,7 @@ use crate::dag::{
 };
 use crate::error::MerkleToxResult;
 use crate::identity::IdentityManager;
-use crate::sync::NodeStore;
+use crate::sync::{NodeStore, SyncRange, Tier};
 pub mod authoring;
 pub mod conversation;
 pub mod handlers;
@@ -82,6 +83,8 @@ pub struct MerkleToxEngine {
     /// per conversation. Spec: Relays MUST accept only one SoftAnchor per
     /// device_pk per basis_hash.
     pub soft_anchor_dedup: HashMap<ConversationId, HashSet<(PhysicalDevicePk, NodeHash)>>,
+    /// Last time a gossip sketch was broadcast per conversation.
+    pub last_gossip_time: HashMap<ConversationId, Instant>,
     /// Our DelegationCertificate per conversation, captured from our
     /// AuthorizeDevice node. Needed for SoftAnchor authoring.
     pub self_certs: HashMap<ConversationId, crate::dag::DelegationCertificate>,
@@ -191,6 +194,7 @@ impl MerkleToxEngine {
             consumed_opk_ids: HashMap::new(),
             soft_anchor_dedup: HashMap::new(),
             self_certs: HashMap::new(),
+            last_gossip_time: HashMap::new(),
         }
     }
 
@@ -460,6 +464,27 @@ impl MerkleToxEngine {
         effects
     }
 
+    /// Starts shallow sync limited to the last N content messages from heads.
+    pub fn start_shallow_sync_last_n(
+        &mut self,
+        conversation_id: ConversationId,
+        peer_pk: Option<PhysicalDevicePk>,
+        store: &dyn NodeStore,
+        last_n: u64,
+    ) -> Vec<Effect> {
+        let effects = self.start_shallow_sync(conversation_id, peer_pk, store, 0, 0);
+        // Set max_backfill_nodes on sessions for this conversation
+        for ((_, cid), session) in self.sessions.iter_mut() {
+            if *cid == conversation_id {
+                let c = session.common_mut();
+                c.shallow = true;
+                c.max_backfill_nodes = last_n;
+                c.backfill_count = 0;
+            }
+        }
+        effects
+    }
+
     /// Sends reinclusion request to admin for trust-restored conversation.
     pub fn request_reinclusion(
         &self,
@@ -646,17 +671,25 @@ impl MerkleToxEngine {
                     .pending_sketches
                     .retain(|nonce, _| s.common.pending_challenges.contains_key(nonce));
 
+                // Clear expired rate_limited_until
+                if s.common.rate_limited_until.is_some_and(|u| now >= u) {
+                    s.common.rate_limited_until = None;
+                }
+
                 if s.common.heads_dirty {
                     effects.push(Effect::SendPacket(
                         *peer_pk,
-                        ProtocolMessage::SyncHeads(s.make_sync_heads(0)),
+                        ProtocolMessage::SyncHeads(s.make_sync_heads_with_store(0, Some(store))),
                     ));
                     s.common.heads_dirty = false;
                 }
 
-                if s.common.recon_dirty
-                    || now.duration_since(s.common.last_recon_time)
-                        > crate::sync::RECONCILIATION_INTERVAL
+                // Guard recon with rate-limited check
+                let rate_ok = s.common.rate_limited_until.is_none_or(|until| now >= until);
+                if rate_ok
+                    && (s.common.recon_dirty
+                        || now.duration_since(s.common.last_recon_time)
+                            > crate::sync::RECONCILIATION_INTERVAL)
                 {
                     match s.make_sync_shard_checksums(&EngineStore {
                         store,
@@ -702,11 +735,12 @@ impl MerkleToxEngine {
                 let session_wakeup = s.next_wakeup(now);
                 if session_wakeup <= now {
                     debug!(
-                        "Session {:?} requesting immediate wakeup: heads_dirty={}, recon_dirty={}, missing_nodes={}",
+                        "Session {:?} requesting immediate wakeup: heads_dirty={}, recon_dirty={}, missing_hot={}, missing_cold={}",
                         cid,
                         s.common.heads_dirty,
                         s.common.recon_dirty,
-                        s.common.missing_nodes.len()
+                        s.common.missing_nodes_hot.len(),
+                        s.common.missing_nodes_cold.len()
                     );
                 }
                 next_wakeup = next_wakeup.min(session_wakeup);
@@ -715,6 +749,63 @@ impl MerkleToxEngine {
                     session_wakeup,
                 ));
             }
+        }
+
+        // Multicast Gossip: broadcast Tiny IBLT sketch every 60s per conversation
+        let gossip_convs: Vec<ConversationId> = self.conversations.keys().cloned().collect();
+        for cid in gossip_convs {
+            let last = self
+                .last_gossip_time
+                .get(&cid)
+                .copied()
+                .unwrap_or_else(|| now - crate::sync::GOSSIP_INTERVAL);
+            if now.duration_since(last) >= crate::sync::GOSSIP_INTERVAL {
+                let overlay = EngineStore {
+                    store,
+                    cache: &self.pending_cache,
+                };
+                let heads = overlay.get_heads(&cid);
+                let max_rank = heads
+                    .iter()
+                    .filter_map(|h| overlay.get_rank(h))
+                    .max()
+                    .unwrap_or(0);
+                let range = SyncRange {
+                    min_rank: 0,
+                    max_rank,
+                };
+                let k_iblt = match self.conversations.get(&cid) {
+                    Some(Conversation::Established(em)) => em
+                        .get_keys(em.current_epoch())
+                        .map(|k| crate::crypto::derive_k_iblt(&k.k_conv, &cid)),
+                    _ => None,
+                };
+                let mut iblt =
+                    tox_reconcile::IbltSketch::new_keyed(Tier::Tiny.cell_count(), k_iblt);
+                if let Ok(hashes) = overlay.get_node_hashes_in_range(&cid, &range) {
+                    for hash in hashes {
+                        iblt.insert(hash.as_ref());
+                    }
+                }
+                let sketch = tox_reconcile::SyncSketch {
+                    conversation_id: cid,
+                    cells: iblt.into_cells(),
+                    range,
+                };
+                // Send to all active peers for this conversation
+                for ((peer_pk, peer_cid), session) in &self.sessions {
+                    if *peer_cid == cid && matches!(session, PeerSession::Active(_)) {
+                        effects.push(Effect::SendPacket(
+                            *peer_pk,
+                            ProtocolMessage::SyncSketch(sketch.clone()),
+                        ));
+                    }
+                }
+                self.last_gossip_time.insert(cid, now);
+            }
+            let effective_last = self.last_gossip_time.get(&cid).copied().unwrap_or(now);
+            let next_gossip = effective_last + crate::sync::GOSSIP_INTERVAL;
+            next_wakeup = next_wakeup.min(next_gossip);
         }
 
         effects.push(Effect::ScheduleWakeup(

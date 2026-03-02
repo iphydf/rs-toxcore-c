@@ -16,6 +16,8 @@ pub struct SyncHeads {
     pub heads: Vec<NodeHash>,
     /// Flags indicating local capabilities (e.g., seeding blobs).
     pub flags: u64,
+    /// Hash of earliest known admin head (for 500-hop trust bridging).
+    pub anchor_hash: Option<NodeHash>,
 }
 
 /// Request for batch of nodes by hash.
@@ -253,6 +255,7 @@ impl<T: NodeStore + BlobStore + GlobalStore + ReconciliationStore> FullStore for
 
 pub const POW_CHALLENGE_TIMEOUT: Duration = Duration::from_secs(60);
 pub const RECONCILIATION_INTERVAL: Duration = Duration::from_secs(60);
+pub const GOSSIP_INTERVAL: Duration = Duration::from_secs(60);
 pub const DEFAULT_RECON_DIFFICULTY: u32 = 12; // ~4096 hashes
 
 #[derive(Debug, Clone, PartialEq, Eq)]

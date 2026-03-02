@@ -788,6 +788,7 @@ fn test_repro_stuck_sync() {
         conversation_id: conv_id,
         heads: vec![node_c.hash()],
         flags: 0,
+        anchor_hash: None,
     };
 
     let bob_effects = bob_engine
@@ -991,6 +992,7 @@ fn test_repro_stuck_sync() {
         conversation_id: conv_id,
         heads: alice_heads,
         flags: 0,
+        anchor_hash: None,
     });
 
     let bob_effects = bob_engine

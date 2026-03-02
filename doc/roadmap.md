@@ -13,8 +13,8 @@ zero-dependency filesystem backend (`fs`) and a transactional database engine
     `process_effects` loop to support atomic multi-operation transactions across
     both SQL and custom FS backends. A sequence of engine effects (e.g., writing
     a node and updating heads) must be committed atomically.
--   **Dual Backends:** Fully implement and optimize both the SQLite backend and
-    the Filesystem backend (incorporating the Bloom filters, fanout tables, and
+-   **Dual Backends:** Implement and optimize both the SQLite backend and the
+    Filesystem backend (incorporating the Bloom filters, fanout tables, and
     incremental compaction defined in `merkle-tox-storage-format.md`).
 -   **Indexing:** Ensure $O(1)$ or $O(\log N)$ lookups without exhausting RAM.
     For the FS backend, finalize the Bloom Filter and Fanout Table
@@ -93,15 +93,6 @@ Harden wire format and sync process against network observers.
 
 -   **Obfuscate DAG Structure:** Encrypt or hash the `parents` field in
     `WireNode` to prevent observers from mapping conversation graphs.
--   **Encrypt Headers & Payloads (Rationale #2 & #3):** Move `network_timestamp`
-    and `author_pk` from the `WireNode` header into the encrypted payload.
-    Ensure `encrypted_routing` header is properly applied to `sender_pk` and
-    `sequence_number`. (Note: `Admin` and `KeyWrap` must remain plaintext for
-    onboarding).
--   **Revert to Linear Ratchets:** Replace the "DAG-based merge ratchet"
-    implementation in `conversation.rs` and `crypto.rs` with the documented
-    **Per-Sender Linear Ratchets**, eliminating the brittle `historical_chains`
-    cache and the risk of becoming "cryptographically stuck" during large forks.
 -   **Metadata-Private Sync:** Investigate Private Information Retrieval (PIR)
     or oblivious synchronization techniques to reduce metadata leakage during
     the IBLT reconciliation process.
@@ -110,21 +101,6 @@ Harden wire format and sync process against network observers.
 
 Protect the node against malicious peers and resource exhaustion attacks.
 
--   **Ancestry Trust Cap (Rationale #5):** Implement the 500-hop structural
-    trust cap. Mandate that content chains must be re-anchored by a verified
-    Admin node every 400 levels to prevent "infinite junk" history attacks.
--   **Contiguity-Based Eviction (Rationale #4):** Implement the Opaque Store
-    eviction policy. Prioritize keeping nodes close to the Local Low-Water Mark
-    (LLWM) to mitigate Rank-Padding attacks.
--   **Nonce Hardening:** Audit and harden nonce derivation in `crypto.rs` to
-    guarantee unique, cryptographically strong nonces for every encryption
-    operation, especially for KeyWrap.
--   **Opportunistic Handshake Completion (Rationale #6):** Implement the
-    `HandshakePulse` authoring logic to ensure 1-on-1 conversations rotate away
-    from "Last Resort" keys immediately upon the peer coming online. The logic
-    MUST include a debounce mechanism (e.g., ignoring pulses if a `KeyWrap` was
-    authored within the last 5 minutes) to prevent "KeyWrap Storms" when
-    processing large batches of offline messages.
 -   **Bounded Allocations:** Fix `tox-proto` to enforce maximum limits on
     collection sizes during deserialization.
 -   **CPU DoS Protection:** Harden auto-generated deserialization code to avoid
@@ -155,9 +131,6 @@ Ensure the library is safe and meets high correctness standards.
 
 Provide ecosystem tooling for users and developers.
 
--   **Documentation Integrity:** Ensure `doc/merkle-tox-ratchet.md` and
-    `doc/merkle-tox-design-rationale.md` remain the source of truth for the
-    linear ratchet model once the implementation is reverted.
 -   **Formal Specification:** Create a formal specification of the binary wire
     format and protocol state machine transitions.
 -   **Integrated Backup Tool:** Develop a utility for creating consistent
@@ -165,8 +138,7 @@ Provide ecosystem tooling for users and developers.
 -   **Network Simulation:** Expand the `VirtualHub` to simulate high-latency,
     low-bandwidth, and lossy environments to ensure protocol robustness.
 -   **Development Tool Isolation:** Ensure that developer tools like
-    `merkle-tox-workbench` and test mocks are strictly separated from production
-    builds.
+    `merkle-tox-workbench` and test mocks are separated from production builds.
 
 ## 10. Legacy Interoperability
 

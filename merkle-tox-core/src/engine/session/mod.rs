@@ -16,7 +16,10 @@ pub struct SessionCommon {
     pub min_timestamp: i64,
     pub local_heads: HashSet<NodeHash>,
     pub remote_heads: HashSet<NodeHash>,
-    pub missing_nodes: VecDeque<NodeHash>,
+    /// Hot-window missing nodes (priority). Fetched before cold.
+    pub missing_nodes_hot: VecDeque<NodeHash>,
+    /// Cold-window missing nodes.
+    pub missing_nodes_cold: VecDeque<NodeHash>,
     pub in_flight_fetches: HashSet<NodeHash>,
     pub missing_blobs: HashSet<NodeHash>,
     pub peer_features: u64,
@@ -31,6 +34,14 @@ pub struct SessionCommon {
     pub difficulty_votes: HashMap<PhysicalDevicePk, u32>,
     pub pending_challenges: HashMap<PowNonce, Instant>,
     pub pending_sketches: HashMap<PowNonce, tox_reconcile::SyncSketch>,
+    /// When set, recon/sketch activity with this peer is paused until this instant.
+    pub rate_limited_until: Option<Instant>,
+    /// When > 0, limit backfill to this many content nodes from heads.
+    pub max_backfill_nodes: u64,
+    /// Counter: number of content nodes fetched during shallow backfill.
+    pub backfill_count: u64,
+    /// Earliest admin head advertised by remote peer (for divergence detection).
+    pub remote_anchor_hash: Option<NodeHash>,
 }
 
 pub struct SyncSession<S> {

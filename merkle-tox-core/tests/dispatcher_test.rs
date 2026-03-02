@@ -41,6 +41,7 @@ fn test_sync_heads_dispatcher() {
         conversation_id: conv_id,
         heads: vec![NodeHash::from([0xCCu8; 32])],
         flags: 0,
+        anchor_hash: None,
     };
 
     let result = engine

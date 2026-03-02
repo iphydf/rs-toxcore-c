@@ -2,8 +2,8 @@
 
 ## Overview
 
-Peers MUST negotiate capabilities before initiating a synchronization session to
-prevent protocol mismatches.
+Peers MUST negotiate capabilities before synchronizing to prevent protocol
+mismatches.
 
 ## 1. Capability Discovery
 
@@ -11,16 +11,15 @@ The handshake uses `tox-sequenced`.
 
 ### Discovery via Custom Packet
 
-1.  Upon connection, a client sends a `CAPS_ANNOUNCE` message via a
-    `tox-sequenced` DATA packet over custom lossy packets.
-2.  If the peer supports Merkle-Tox, they respond with their own
-    `CAPS_ANNOUNCE`.
+1.  Upon connection, a client sends `CAPS_ANNOUNCE` via a `tox-sequenced` DATA
+    packet.
+2.  Peers supporting Merkle-Tox respond with `CAPS_ANNOUNCE`.
 
 ## 2. Capability Negotiation
 
 ### A. Network-Intrinsic (Ephemeral)
 
-Negotiated per-session via the `CAPS_ANNOUNCE` packet.
+Negotiated per-session via `CAPS_ANNOUNCE`.
 
 Serialized via MessagePack:
 
@@ -38,30 +37,27 @@ struct CapsAnnounce {
 
 ### B. Data-Intrinsic (Persistent / Baseline)
 
-Mandatory for Version 1. Committed to the DAG (in **Genesis Node** or
+Mandatory for Version 1. Committed to the DAG (**Genesis Node** or
 **Announcement Nodes**). Every member MUST support these to parse history.
 
-*   **Signed ECIES Handshake**: Mandatory for initial $K_{conv}$ establishment.
+*   **Signed ECIES Handshake**: Mandatory for initial $K_{conv}$.
 *   **Symmetric Ratcheting**: Mandatory for post-compromise security and hash
     chaining.
 *   **Power-of-2 Padding**: Mandatory ISO/IEC 7816-4 anti-traffic analysis.
-*   **Compression**: (e.g., Zstd) If used by an author, it must be supported by
-    all readers.
+*   **Compression**: (e.g., Zstd) If used, all readers must support it.
 
-**Principle**: Data-Intrinsic features are immutable history properties. A peer
-MUST NOT author a node using an optional Data-Intrinsic feature unless enabled
-in the room's Genesis parameters.
+**Principle**: Data-Intrinsic features are immutable. A peer MUST NOT author
+nodes using optional features unless enabled in Genesis.
 
 ### `CAPS_ACK` (Packet Content)
 
-Peer B responds with `CapsAnnounce` via a `CAPS_ACK` message (0x02), completing
-the handshake. The `merkle-tox-sync` state machine begins.
+Peer B responds with `CAPS_ACK` (0x02) containing `CapsAnnounce`, completing the
+handshake and starting `merkle-tox-sync`.
 
 ## 3. Post-Handshake Procedures
 
 After `CAPS_ACK`:
 
-1.  **Head Exchange**: Both peers send `SYNC_HEADS` to begin history
-    reconciliation.
-2.  **Continuous Clock Sync**: Peers monitor transport PING/PONG timestamps to
-    maintain network time offsets.
+1.  **Head Exchange**: Both peers send `SYNC_HEADS` to begin reconciliation.
+2.  **Continuous Clock Sync**: Peers monitor PING/PONG timestamps to maintain
+    time offsets.

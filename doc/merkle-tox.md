@@ -58,6 +58,8 @@ models, attack vectors, and design trade-offs.
 The following limits ensure system stability and DoS resistance:
 
 -   **MAX_PARENTS**: 16 (Maximum number of parents a single node can have).
+-   **MAX_GROUP_DEVICES**: 4096 (Maximum authorized physical devices per
+    conversation, keeping KeyWrap within MTU).
 -   **MAX_DEVICES_PER_IDENTITY**: 32 (Maximum authorized devices per logical
     ID).
 -   **MAX_METADATA_SIZE**: 32KB (Maximum size of the optional metadata field).
@@ -74,7 +76,8 @@ The following limits ensure system stability and DoS resistance:
     KeyWrap with a different OPK if no ACK is received within this window).
 -   **HANDSHAKE_PULSE_DEBOUNCE_MS**: 300,000 (5 minutes; a device ignores a
     `HandshakePulse` if it has already authored a KeyWrap rotation within this
-    window).
+    window, or if it has already responded to a topologically newer or
+    concurrent pulse from the same peer in the current sync batch).
 -   **BLOB_CHUNK_SIZE**: 64KB (Standard size for CAS blob requests).
 
 ## Baseline Protocol (Version 1)
@@ -88,7 +91,8 @@ Version 1 implementations MUST support the following primitives:
 -   **Metadata Privacy**: **ISO/IEC 7816-4 Padding** to Power-of-2 boundaries
     and obfuscated `sender_pk`.
 -   **Hashing (DAG/CAS)**: **Blake3**.
--   **Symmetric Encryption**: **ChaCha20** (IETF version).
+-   **Symmetric Encryption**: **ChaCha20-IETF** (payload) and
+    **ChaCha20-Poly1305** (AEAD for routing headers and key wrapping).
 -   **Message Authentication (Content)**: **Ephemeral Ed25519 Signatures** with
     key disclosure (DARE).
 -   **Digital Signatures (Admin)**: **Ed25519**.

@@ -6,8 +6,7 @@ Security analysis of Merkle-Tox.
 
 ## 2. Adversary Models
 
-Attackers are categorized by their capabilities and proximity to the
-synchronization swarm:
+Attackers are categorized by capabilities and proximity:
 
 *   **Global Passive Observer (GPO):** Can monitor all network traffic between
     nodes but cannot modify, drop, or inject packets (e.g., an ISP or a
@@ -201,3 +200,37 @@ synchronization swarm:
         Store.
     3.  Messages display an **"Identity Pending"** warning, allowing history to
         be read while background sync completes Admin track verification.
+
+### 3.10. Equivocation (Split-View Attack)
+
+*   **Status**: **Prevented**
+*   **Description**: A compromised member sends different messages to different
+    subgroups.
+*   **Mitigation**: Because all nodes are committed to a global DAG with
+    content-addressable hashes, any peer who syncs with both subgroups will
+    detect the inconsistency (two different nodes with the same sequence number
+    from the same sender). The DAG makes equivocation detectable, and the
+    ratchet makes it impossible (the same sequence number cannot produce two
+    valid encryption keys).
+
+### 3.11. Selective Data Withholding
+
+*   **Status**: **Mitigated**
+*   **Description**: A compromised member advertises heads but refuses to serve
+    requested nodes to stall the sync process.
+*   **Mitigation**: Mitigated by the bounded voucher set
+    (`MAX_VOUCHERS_PER_HASH = 3`) combined with timeout-based rotation
+    (`VOUCHER_TIMEOUT_MS`) and multi-peer fetching (detailed in
+    `merkle-tox-sync.md`). If the primary peer fails to provide the requested
+    node, the engine penalizes them and immediately requests from the next
+    authorized peer.
+
+### 3.12. Rapid Authorization Churn
+
+*   **Status**: **Mitigated**
+*   **Description**: A compromised admin rapidly issues and revokes certificates
+    to create confusion, fork the state, or exhaust resources.
+*   **Mitigation**: Mitigated by the **Admin Seniority** tie-breaker (concurrent
+    actions are deterministically serialized) and **Transitive Revocation**
+    (revoking the compromised admin immediately invalidates all their downstream
+    actions and ghost authorizations).

@@ -64,17 +64,18 @@ fn test_sync_reconciliation() {
         conversation_id,
         heads: vec![NodeHash::from([3u8; 32]), NodeHash::from([4u8; 32])],
         flags: 0,
+        anchor_hash: None,
     };
 
     session.handle_sync_heads(remote_heads, &store);
 
     assert_eq!(session.common.remote_heads.len(), 2);
-    assert_eq!(session.common.missing_nodes.len(), 2);
+    assert_eq!(session.common.missing_nodes_hot.len(), 2);
 
     let batch = session.next_fetch_batch(1).unwrap();
     assert_eq!(batch.hashes.len(), 1);
     assert_eq!(session.common.in_flight_fetches.len(), 1);
-    assert_eq!(session.common.missing_nodes.len(), 1);
+    assert_eq!(session.common.missing_nodes_hot.len(), 1);
 }
 
 #[test]
@@ -110,7 +111,7 @@ fn test_shallow_sync_snapshot_stop() {
 
     // In shallow mode, we should NOT have added [0xBB; 32] to missing_nodes.
     assert!(
-        session.common.missing_nodes.is_empty(),
+        session.common.missing_nodes_hot.is_empty() && session.common.missing_nodes_cold.is_empty(),
         "Shallow sync should stop at snapshot"
     );
 
@@ -121,7 +122,8 @@ fn test_shallow_sync_snapshot_stop() {
 
     // In deep mode, we SHOULD have added [0xBB; 32] to missing_nodes.
     assert!(
-        !deep_session.common.missing_nodes.is_empty(),
+        !deep_session.common.missing_nodes_hot.is_empty()
+            || !deep_session.common.missing_nodes_cold.is_empty(),
         "Deep sync should backfill from snapshot"
     );
 }
@@ -151,8 +153,11 @@ fn test_shallow_sync_limits() {
 
     session.on_node_received(&node_rank_11, &store, None);
     // Should NOT stop yet, rank is 11 > 10.
-    assert_eq!(session.common.missing_nodes.len(), 1);
-    session.common.missing_nodes.clear();
+    let total_missing =
+        session.common.missing_nodes_hot.len() + session.common.missing_nodes_cold.len();
+    assert_eq!(total_missing, 1);
+    session.common.missing_nodes_hot.clear();
+    session.common.missing_nodes_cold.clear();
 
     let node_rank_10 = MerkleNode {
         parents: vec![NodeHash::from([0x10u8; 32])],
@@ -170,7 +175,7 @@ fn test_shallow_sync_limits() {
     session.on_node_received(&node_rank_10, &store, None);
     // SHOULD stop, rank is 10 <= 10.
     assert!(
-        session.common.missing_nodes.is_empty(),
+        session.common.missing_nodes_hot.is_empty() && session.common.missing_nodes_cold.is_empty(),
         "Should stop at rank 10"
     );
 
@@ -195,7 +200,8 @@ fn test_shallow_sync_limits() {
 
     session_time.on_node_received(&node_time_400, &store, None);
     assert!(
-        session_time.common.missing_nodes.is_empty(),
+        session_time.common.missing_nodes_hot.is_empty()
+            && session_time.common.missing_nodes_cold.is_empty(),
         "Should stop at timestamp 400 <= 500"
     );
 }
@@ -237,7 +243,7 @@ fn test_sync_session_iblt() {
     session.handle_sync_sketch(sketch, &store).unwrap();
 
     // Session should now have node1 and node2 in missing_nodes
-    assert_eq!(session.common.missing_nodes.len(), 2);
-    assert!(session.common.missing_nodes.contains(&node1_hash));
-    assert!(session.common.missing_nodes.contains(&node2_hash));
+    assert_eq!(session.common.missing_nodes_hot.len(), 2);
+    assert!(session.common.missing_nodes_hot.contains(&node1_hash));
+    assert!(session.common.missing_nodes_hot.contains(&node2_hash));
 }

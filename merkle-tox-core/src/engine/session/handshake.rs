@@ -24,7 +24,8 @@ impl SyncSession<Handshake> {
                 min_timestamp: 0,
                 local_heads: heads.into_iter().collect(),
                 remote_heads: HashSet::new(),
-                missing_nodes: VecDeque::new(),
+                missing_nodes_hot: VecDeque::new(),
+                missing_nodes_cold: VecDeque::new(),
                 in_flight_fetches: HashSet::new(),
                 missing_blobs: HashSet::new(),
                 peer_features: 0,
@@ -39,6 +40,10 @@ impl SyncSession<Handshake> {
                 difficulty_votes: HashMap::new(),
                 pending_challenges: HashMap::new(),
                 pending_sketches: HashMap::new(),
+                rate_limited_until: None,
+                max_backfill_nodes: 0,
+                backfill_count: 0,
+                remote_anchor_hash: None,
             },
             state: Handshake,
         }
@@ -62,17 +67,18 @@ impl SyncSession<Handshake> {
         }
         self.common.heads_dirty = true;
 
-        // Basic parent tracking for bootstrap
+        // Basic parent tracking for bootstrap: admin parents get hot priority
         let is_admin = node.node_type() == crate::dag::NodeType::Admin;
         for parent in &node.parents {
             if !store.has_node(parent)
-                && !self.common.missing_nodes.contains(parent)
+                && !self.common.missing_nodes_hot.contains(parent)
+                && !self.common.missing_nodes_cold.contains(parent)
                 && !self.common.in_flight_fetches.contains(parent)
             {
                 if is_admin {
-                    self.common.missing_nodes.push_front(*parent);
+                    self.common.missing_nodes_hot.push_front(*parent);
                 } else {
-                    self.common.missing_nodes.push_back(*parent);
+                    self.common.missing_nodes_hot.push_back(*parent);
                 }
             }
         }
@@ -99,6 +105,7 @@ impl SyncSession<Handshake> {
             conversation_id: self.conversation_id,
             heads,
             flags,
+            anchor_hash: None,
         }
     }
 

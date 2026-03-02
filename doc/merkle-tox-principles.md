@@ -29,9 +29,9 @@ hardening do not compromise Tox ecosystem values.
 
 ## 3. Temporal Fingerprinting Protection
 
-*   **Principle**: The protocol must minimize the ability of a peer to track a
-    user's identity across different sessions or conversations using precise
-    hardware-clock offsets (Temporal Fingerprinting).
+*   **Principle**: Minimize the ability of peers to track users across sessions
+    or conversations using precise hardware-clock offsets (Temporal
+    Fingerprinting).
 *   **Implementation**:
     *   **Timestamp Jitter**: The `tox-sequenced` layer SHOULD inject a small
         amount of random noise (between `-TIME_JITTER_MS` and `+TIME_JITTER_MS`,
@@ -41,10 +41,9 @@ hardening do not compromise Tox ecosystem values.
         require precision for congestion control, the publicly-visible
         `network_timestamp` in the DAG and the offsets shared with peers should
         be treated as fuzzy values.
-*   **Rationale**: Precise machine time is a "sticky" identifier. By adding
-    jitter, we maintain sufficient accuracy for DAG linearization and median-
-    based consensus while breaking the precision needed for reliable cross-
-    session tracking.
+*   **Rationale**: Precise machine time is a "sticky" identifier. Adding jitter
+    maintains sufficient accuracy for DAG linearization and median consensus
+    while breaking the precision needed for reliable cross- session tracking.
 
 ## 4. Byzantine-Resilient Synchronization
 

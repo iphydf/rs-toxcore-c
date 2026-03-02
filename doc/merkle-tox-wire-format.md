@@ -13,7 +13,7 @@ the `ToxProto` derive macro.
 
 ### Wire Efficiency (Arrays vs. Maps)
 
-To minimize overhead within the ~1.3KB Tox packet MTU, Merkle-Tox strictly uses
+To minimize overhead within the ~1.3KB Tox packet MTU, Merkle-Tox uses
 **MessagePack Arrays** (positional serialization).
 
 -   **Rust Representation**: Named structs and enums are used in code.

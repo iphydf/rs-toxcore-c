@@ -86,3 +86,13 @@ pub const MAX_HANDSHAKES_PER_ANNOUNCEMENT: u32 = 100;
 /// KeyWrap within this window, otherwise they are downgraded to permanent
 /// observer mode.
 pub const TRUST_RESTORED_EXPIRY_MS: i64 = 30 * 24 * 60 * 60 * 1000; // 2,592,000,000
+
+/// Nodes within this many ranks of the max head rank are considered "hot"
+/// and receive fetch priority over "cold" nodes further in history.
+pub const HOT_WINDOW_RANKS: u64 = 1000;
+
+/// CPU budget (ms) allowed for sketch computation within SKETCH_CPU_WINDOW_MS.
+pub const SKETCH_CPU_BUDGET_MS: u32 = 500;
+
+/// Sliding window (ms) for sketch CPU budget accounting.
+pub const SKETCH_CPU_WINDOW_MS: u32 = 60_000;

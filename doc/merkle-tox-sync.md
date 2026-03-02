@@ -93,14 +93,15 @@ spam:
 
 -   A new client creating a conversation must solve a fixed PoW
     (`BASELINE_POW_DIFFICULTY = 20`).
--   The PoW uses **Contextual Hashcash**. The `nonce` is not part of the
-    internal `WireNode` structure. Instead, the creator computes the full
-    `NodeHash` of the signed Genesis node, and then grinds an external `nonce`
-    such that `Blake3(CreatorPK || NodeHash || nonce)` has 20 leading zeros.
--   Because the `nonce` is external, it prevents network fragmentation (cloning)
-    attacks. At ~1M Blake3 hashes/sec on a smartphone, 20 bits (~1M attempts)
-    costs **~1–2s on a smartphone** and **~0.1–0.2s on a laptop**, raising the
-    cost of bulk room-creation spam.
+-   The PoW uses **Contextual Hashcash**. The `pow_nonce` is an explicit field
+    in the `ControlAction::Genesis` payload. The creator grinds the `pow_nonce`
+    such that `Blake3(creator_pk || ToxProto::serialize(genesis_action))` has 20
+    leading zeros.
+-   Because the grinding occurs *before* the node is serialized and signed, it
+    requires pure Blake3 hashing. At ~1M Blake3 hashes/sec on a smartphone, 20
+    bits (~1M attempts) costs **~1 second**, keeping room creation fast while
+    maintaining security against relay tampering (the nonce is covered by the
+    creator's signature).
 -   **Note**: Once a peer is authorized and syncing, sketch DoS is handled by
     the per-peer CPU budget (§2), not by PoW. PoW is only for the
     unauthenticated Genesis creation step where there is no identity to
@@ -127,8 +128,8 @@ Clients can request a sync up to a specific **logical depth**:
 ## 5. Speculative Sync & Authorized Vouching
 
 Under the DARE model, a client may receive nodes before establishing a shared
-secret. To prevent Denial of Service (DoS) while maintaining metadata privacy,
-Merkle-Tox uses **Authorized Vouching**.
+secret. To prevent DoS while maintaining metadata privacy, Merkle-Tox uses
+**Authorized Vouching**.
 
 ### The Vouching Rule
 
@@ -149,15 +150,15 @@ For**:
     authorized via an `AuthorizeDevice` node in the DAG.
     -   **Bounded Voucher Set**: To prevent a malicious peer from advertising
         hashes and refusing to serve the data (Data Withholding), the engine
-        tracks a strictly bounded set of authorized peers
-        (`MAX_VOUCHERS_PER_HASH = 3`) who vouched for a specific hash.
+        tracks a bounded set of authorized peers (`MAX_VOUCHERS_PER_HASH = 3`)
+        who vouched for a specific hash.
         -   **Rotation**: If the primary peer fails to provide the requested
             node within the timeout (`VOUCHER_TIMEOUT_MS = 10000`) or
             disconnects, the engine penalizes that peer and immediately requests
             the node from the next peer in the voucher set.
         -   This ensures continuous synchronization while keeping memory
-            complexity strictly bounded at $O(Nodes)$ rather than $O(Nodes
-            \times Peers)$.
+            complexity bounded at $O(Nodes)$ rather than $O(Nodes \times
+            Peers)$.
 3.  **Structural Vouch (Ancestry Cap)**: If a verified node (Admin OR Content)
     lists a hash as a parent or basis, that hash is automatically vouched for.
     -   **Cap**: This transitive vouching is limited to **500 hops** to prevent
@@ -179,15 +180,15 @@ For**:
         -   **Anti-Branching**: Relays MUST accept only one `SoftAnchor` per
             `device_pk` per `basis_hash`. Duplicates are dropped. Even if a
             relay is unaware of a recent revocation, the Anti-Branching rule
-            strictly bounds a revoked attacker to injecting exactly one invalid
-            SoftAnchor per basis_hash, preventing buffer exhaustion.
+            bounds a revoked attacker to injecting one invalid SoftAnchor per
+            basis_hash, preventing buffer exhaustion.
         -   **Self-Proving Validation**: Blind relays MUST verify the
             `SoftAnchor` signature against the attached
             `DelegationCertificate`'s public key, and verify the certificate is
             validly signed by an Admin key present in the relay's cached Admin
             Track. Upon validating a SoftAnchor, the blind relay MUST reset its
             vouching counter and accept up to 500 hops of history descending
-            from the `SoftAnchor` itself. The `basis_hash` is strictly used for
+            from the `SoftAnchor` itself. The `basis_hash` is used for
             Anti-Branching deduplication.
         -   **Strict Chain Isolation**: To prevent Transitive Non-Repudiation, a
             `SoftAnchor` MUST ONLY reference the `basis_hash` (the previous
@@ -199,7 +200,7 @@ For**:
             calculate the 500-hop limit using the shortest path to any valid
             anchor, this new Content node evaluates as 1 hop away from the
             `SoftAnchor`, successfully resetting the relay's buffer limit while
-            perfectly preserving the plausible deniability of the Content chain.
+            preserving the plausible deniability of the Content chain.
         -   **Surgical Pruning**: Admins MAY prune spam originating from a
             `SoftAnchor` in $O(1)$ by revoking the device and dropping the
             descending branch.
@@ -276,14 +277,14 @@ Once a `KeyWrap` or initial $K_{conv}$ is established:
     -   If a client restarts during a promotion, it re-runs the flow for all
         remaining Opaque nodes.
 7.  **Final Promotion**: Once the Admin Track is complete, "Identity Pending"
-    nodes are fully verified or discarded.
+    nodes are verified or discarded.
 
 ## 6. Security & Privacy
 
 ### Peer-Level Metadata Privacy
 
-While the Tox transport layer hides traffic from network observers, Merkle-Tox
-implements additional protections against inquisitive peers (SyncBots):
+Merkle-Tox implements additional protections against inquisitive peers
+(SyncBots):
 
 -   **Opaque Identifiers**: The `ConversationID` is a hash of the Genesis node.
     It does not leak the room name or membership to a peer who does not already
@@ -301,8 +302,8 @@ implements additional protections against inquisitive peers (SyncBots):
 
 ### High-Priority Admin Gossip
 
-To minimize the "Window of Harassment" and ensure rapid propagation of
-membership changes (Revocations, Leaves, Invites):
+To ensure rapid propagation of membership changes (Revocations, Leaves,
+Invites):
 
 -   **Priority**: Admin nodes MUST be treated as **High Priority Data** by the
     sync engine and the transport layer.
@@ -315,8 +316,8 @@ membership changes (Revocations, Leaves, Invites):
 
 ## 7. Conflict Resolution (Branching)
 
-Because the history is a DAG, concurrent messages do not "conflict" in the
-traditional sense; they create multiple Heads.
+Because history is a DAG, concurrent messages do not conflict; they create
+multiple Heads.
 
 -   When a user writes a new message, their client must include **all current
     local Heads** as parents.

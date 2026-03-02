@@ -2,14 +2,13 @@
 
 ## Overview
 
-Content-Addressable Storage (CAS) handles binary assets too large for direct
-embedding in a Merkle node. Blobs are identified by their **Bao root hash** and
-synchronized lazily.
+CAS handles binary assets too large for direct embedding in a Merkle node. Blobs
+are identified by their **Bao root hash** and synchronized lazily.
 
 ## 1. Storage Strategy
 
--   **Deduplication**: Blobs are keyed by their hash. Multiple references to the
-    same file result in a single copy on disk.
+-   **Deduplication**: Blobs are keyed by hash. Multiple references to the same
+    file result in a single copy on disk.
 -   **SQLite Index**: The `cas_blobs` table tracks status (Pending, Downloading,
     Available) and location (In-DB vs On-Disk).
 
@@ -28,9 +27,8 @@ Checks if a peer has a specific blob.
 
 -   **Unicast Only**: Queries MUST be sent via encrypted 1:1 `tox-sequenced`
     sessions.
--   **Targeting**: Clients SHOULD only query peers who have signaled
-    `CAS_INVENTORY` for the conversation and whom they trust (e.g., friends or
-    verified admins).
+-   **Targeting**: Clients SHOULD only query trusted peers (e.g., friends or
+    verified admins) who signaled `CAS_INVENTORY` for the conversation.
 
 ### `BLOB_AVAIL` (Message Type 0x07)
 
@@ -42,22 +40,22 @@ Peer B confirms possession and provides:
         peer's `bao_root` is **byte-for-byte identical** to the authoritative
         `hash` from the verified `MerkleNode` before initiating `BLOB_REQ`
         downloads. `Blob.hash` in the DAG is the Bao root hash (distinct from
-        `blake3::hash()` due to tree construction), ensuring incremental
-        verification of every 64KB chunk. Peers providing mismatching roots MUST
-        be immediately blacklisted.
+        `blake3::hash()`), ensuring incremental verification of every 64KB
+        chunk. Peers providing mismatching roots MUST be immediately
+        blacklisted.
 
 ### `BLOB_REQ` (Message Type 0x08)
 
 Requests a specific slice of the file.
 
--   `bao_root`: The Bao root hash of the blob (from the DAG).
+-   `bao_root`: Bao root hash of the blob (from the DAG).
 -   `offset`: Starting byte.
 -   `length`: Requested size (typically 64KB).
 
 ### `BLOB_DATA` (Message Type 0x09)
 
-Carries the requested chunk payload plus the **Bao proof** (intermediate hashes
-from the outboard) needed to verify the chunk against the `bao_root`.
+Carries the requested chunk payload and **Bao proof** (intermediate hashes from
+the outboard) needed to verify the chunk against `bao_root`.
 
 ## 3. Swarm Sync & Chunk Aggregation
 
@@ -68,10 +66,9 @@ from the outboard) needed to verify the chunk against the `bao_root`.
     1 to Peer B, Chunk 2 to Peer C).
 -   **Pipelining**: Each peer relationship allows up to 4 in-flight `BLOB_REQ`
     messages to saturate the link without waiting for round-trips.
--   **Incremental Verification**: Using the `bao_root` and the provided proofs,
-    Peer A verifies each 64KB chunk **immediately** upon receipt. If a peer
-    sends invalid data, they are blacklisted for that blob, and the chunk is
-    re-requested from another peer in the swarm.
+-   **Incremental Verification**: Using `bao_root` and provided proofs, Peer A
+    verifies each 64KB chunk upon receipt. If a peer sends invalid data, they
+    are blacklisted for that blob, and the chunk is re-requested.
 
 ## 4. Streaming & Direct-to-Disk I/O
 
@@ -82,7 +79,7 @@ from the outboard) needed to verify the chunk against the `bao_root`.
 -   **In-DB Optimization**: Small blobs are stored directly in SQLite. See
     **`merkle-tox-persistence.md`**.
 -   **Finalization**: Once all chunks are Bao-verified, the file is marked
-    "Available". No additional full-file hash check is needed.
+    "Available". No additional full-file hash check is required.
 
 ## 5. Privacy & Selective Downloading
 

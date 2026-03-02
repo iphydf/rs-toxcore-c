@@ -48,7 +48,7 @@ Datagram | `msg_type`    | `data`           | -                 | -       | -
 -   **Sliding Window**: Limits the number of in-flight fragments to prevent
     overwhelming the peer or the Tox network.
 -   **Dynamic Timeouts**: Retransmission TimeOut (RTO) MUST be calculated based
-    on a Smoothed RTT (SRTT) estimator, bounded strictly by a floor and ceiling
+    on a Smoothed RTT (SRTT) estimator, bounded by a floor and ceiling
     (`MIN_RTO_MS = 250`, `MAX_RTO_MS = 10000`).
 
 ## 4. Packet Types (Transport Header)

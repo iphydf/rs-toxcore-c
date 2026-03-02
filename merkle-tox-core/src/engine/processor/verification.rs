@@ -193,6 +193,23 @@ impl MerkleToxEngine {
                 self.check_permissions(&ctx, conversation_id, &node, node.network_timestamp)?;
             }
 
+            // Edit validation: target must be Text, author must match
+            if let Content::Edit { target_hash, .. } = &node.content
+                && let Some(target_node) = overlay.get_node(target_hash)
+            {
+                if !matches!(target_node.content, Content::Text(_)) {
+                    return Err(MerkleToxError::Validation(
+                        crate::dag::ValidationError::InvalidEditTarget,
+                    ));
+                }
+                if target_node.author_pk != node.author_pk {
+                    return Err(MerkleToxError::Validation(
+                        crate::dag::ValidationError::EditAuthorMismatch,
+                    ));
+                }
+                // If target not found, allow speculatively (parents may arrive later)
+            }
+
             if is_authorized {
                 let last_verified_seq =
                     overlay.get_last_sequence_number(&conversation_id, &node.sender_pk);

@@ -2,22 +2,21 @@
 
 ## Overview
 
-This sub-design defines the cryptographic structure of the Merkle-Tox history
-and the data formats for messages and control actions.
+Defines the cryptographic structure of the Merkle-Tox history and data formats
+for messages and control actions.
 
 ## 1. Merkle Node
 
-A `MerkleNode` is the atomic unit of the DAG. It is serialized using
-**MessagePack** and identified by its **Blake3** hash.
+`MerkleNode` is the atomic unit of the DAG, serialized using **MessagePack** and
+identified by its **Blake3** hash.
 
-**Hash Scope**: The content-addressable hash is computed over the **complete**
-serialized `WireNode`, **including** the `authentication` field, ensuring nodes
-with identical content but different authenticators produce different hashes and
-remain distinct in the DAG and CAS.
+**Hash Scope**: Computed over the **complete** serialized `WireNode`,
+**including** the `authentication` field, ensuring nodes with identical content
+but different authenticators produce distinct hashes.
 
-**Serialization Note**: All structures and enums are serialized as **MessagePack
-Arrays (Positional)** via the `#[derive(ToxProto)]` macro. Field names are
-omitted; receivers MUST know the field order defined below.
+**Serialization Note**: Structures and enums are serialized as **MessagePack
+Arrays (Positional)** via `#[derive(ToxProto)]`. Field names are omitted;
+receivers MUST know the defined field order.
 
 ```rust
 struct MerkleNode {
@@ -107,9 +106,11 @@ On the wire, the node is serialized as a `WireNode` struct (MessagePack Array):
         `encrypted_routing`. See `merkle-tox-deniability.md` §2 (Verification
         Order) for the full procedure.
     -   **EXCEPTION**: `KeyWrap` (Content ID 1), `SenderKeyDistribution` (ID 2),
-        `HistoryExport` (ID 3), **Admin Nodes**, and `SoftAnchor` nodes set this
-        field to `[0x00, 0x00, 0x00, 0x00]` (the `sender_pk` is already in
-        cleartext for these node types).
+        **Admin Nodes**, and `SoftAnchor` nodes set this field to `[0x00, 0x00,
+        0x00, 0x00]` (the `sender_pk` is already in cleartext for these node
+        types). `HistoryExport` (ID 3) also sets this to `[0x00, 0x00, 0x00,
+        0x00]` but encrypts its routing header using a room-wide key (see
+        below).
 3.  `encrypted_routing`: `Vec<u8>`
     -   Contains: `nonce (12B) || ciphertext` where the plaintext is
         `[sequence_number]`. (The `sender_pk` is omitted here to save 32 bytes
@@ -120,12 +121,19 @@ On the wire, the node is serialized as a `WireNode` struct (MessagePack Array):
         current $K_{header\_epoch\_n}$ (see `merkle-tox-deniability.md`). The
         recipient reads the first 12 bytes as the nonce and decrypts the
         remaining bytes.
-    -   **EXCEPTION**: `KeyWrap` (Content ID 1), `SenderKeyDistribution` (ID 2),
-        `HistoryExport` (ID 3), **Admin Nodes**, and `SoftAnchor` nodes send
-        these fields in **cleartext** (as `[sender_pk, sequence_number]`,
+    -   **EXCEPTION (Cleartext)**: `KeyWrap` (Content ID 1),
+        `SenderKeyDistribution` (ID 2), **Admin Nodes**, and `SoftAnchor` nodes
+        send these fields in **cleartext** (as `[sender_pk, sequence_number]`,
         without nonce prefix). The cleartext `sender_pk` is mandatory here to
         allow new peers to lookup the key and verify the outer signature before
         they possess any routing keys.
+    -   **EXCEPTION (HistoryExport)**: `HistoryExport` (ID 3) nodes encrypt this
+        field using a room-wide key: `K_header_export = Blake3-KDF("merkle-tox
+        v1 header-export", K_conv)`. The plaintext is `[sender_pk,
+        sequence_number]`. This hides the device-to-device export relationship
+        from relays while allowing the new device (which just received `K_conv`
+        via `KeyWrap`) to decrypt the routing header without needing
+        `K_header_epoch_n`.
 4.  `payload_data`: `Vec<u8>` (Optionally encrypted and/or compressed)
     -   Contains: `[network_timestamp, content, metadata]`
     -   **ENCRYPTION**: This field is **ChaCha20-IETF encrypted** with the
@@ -133,10 +141,16 @@ On the wire, the node is serialized as a `WireNode` struct (MessagePack Array):
         standard Content nodes. The nonce is prepended to the ciphertext: `nonce
         (12B) || ciphertext`. A random nonce prevents catastrophic $K_{msg\_i}$
         reuse if ratchet state rewinds (e.g., db restore, crash, VM clone).
-    -   **EXCEPTION**: `KeyWrap` (Content ID 1), `SenderKeyDistribution` (ID 2),
-        `HistoryExport` (ID 3), **Admin Nodes**, and `SoftAnchor` nodes are sent
-        in **cleartext** (but still padded and optionally compressed) to allow
-        immediate validation without circular key dependencies.
+    -   **EXCEPTION (Cleartext)**: `KeyWrap` (Content ID 1),
+        `SenderKeyDistribution` (ID 2), **Admin Nodes**, and `SoftAnchor` nodes
+        are sent in **cleartext** (but still padded and optionally compressed)
+        to allow immediate validation without circular key dependencies.
+    -   **EXCEPTION (HistoryExport)**: `HistoryExport` (ID 3) nodes encrypt
+        their payload using a distinct room-wide key: `K_payload_export =
+        Blake3-KDF("merkle-tox v1 payload-export", K_conv)` and a random 12-byte
+        nonce. This hides the `recipient_pk` of the exported history from
+        relays, while obeying the Key Separation Principle (distinct keys for
+        routing vs. payload).
 5.  `topological_rank`: `u64`
 6.  `flags`: `u32` (Bitmask, e.g., 0x01 = Compressed)
 7.  `authentication`: `NodeAuth`
@@ -148,6 +162,19 @@ immediate validation by any peer, even those without the conversation key.
 
 Merkle-Tox uses a hierarchical trust model where a **Logical Identity** (the
 author) delegates signing power to multiple **Physical Devices** (the senders).
+
+### Definition: Admin Node
+
+A `MerkleNode` is formally classified as an "Admin Node" if and only if its
+`authentication` is `NodeAuth::Signature` **AND** its `content` variant is one
+of the following:
+
+-   `Content::KeyWrap` (ID 1)
+-   `Content::Control` (ID 4) containing an Admin-restricted `ControlAction`
+    (e.g., `Genesis`, `AuthorizeDevice`, `RevokeDevice`, `Snapshot`,
+    `AnchorSnapshot`).
+-   *(Note: `SoftAnchor` nodes are evaluated identically to Admin nodes for
+    ancestry bounding, but are authored by L2 Participants).*
 
 ### Validation Rule
 
@@ -202,11 +229,11 @@ A node MUST satisfy the following to be valid:
     (the Master Seed).
 
 4.  **Causality-Dependent Authorization**: Permissions are recalculated for
-    every node based on the strictly linearized causal history of the DAG. A
-    Trust Path is only valid if it has not been invalidated by a `RevokeDevice`
-    node that is a **topological ancestor** of the node being verified. (Note:
-    Network time is NEVER used for cryptographic authorization boundaries, as it
-    is manipulable by attackers backdating nodes).
+    every node based on the linearized causal history of the DAG. A Trust Path
+    is only valid if it has not been invalidated by a `RevokeDevice` node that
+    is a **topological ancestor** of the node being verified. (Note: Network
+    time is NEVER used for cryptographic authorization boundaries, as it is
+    manipulable by attackers backdating nodes).
 
 5.  **Limits**: See `merkle-tox.md` for `MAX_PARENTS` and other hard limits.
 
@@ -329,13 +356,35 @@ enum Content {
 
 -   **Immutability:** The original `Content::Text` node is never deleted or
     modified on disk.
--   **Authorization:** The `author_pk` of the `Edit` node MUST exactly match the
+-   **Authorization:** The `author_pk` of the `Edit` node MUST match the
     `author_pk` of the target node.
+-   **Target Restriction:** The `target_hash` MUST reference a `Content::Text`
+    node specifically. Edits targeting other content types (including other
+    `Edit` nodes) are invalid.
 -   **Materialized View:** UIs SHOULD render the message at its original
     topological position but display the `new_text` from the latest valid `Edit`
     node (with an indicator like "(edited)").
+-   **Concurrent Edits:** If multiple valid `Edit` nodes target the same
+    `Content::Text` node and are DAG-concurrent (neither is an ancestor of the
+    other), the UI MUST display the one with the lexicographically smaller
+    `NodeHash`.
+-   **Redaction Precedence:** A `Redaction` node takes precedence over any
+    `Edit` targeting the same node. Once redacted, subsequent `Edit`s are
+    accepted into the DAG but MUST NOT restore the content to display.
 -   **Referential Integrity:** Replies made prior to the edit continue to
     reference the original message hash.
+
+**Unknown Content Rules (Forward Compatibility)**:
+
+-   **Unrecognized IDs:** If a client receives a `MerkleNode` with an
+    unrecognized `Content` ID (e.g., ID 12 from a newer protocol version), the
+    client **MUST** cryptographically verify the node's signature, store the
+    node in its local database, and actively relay it to peers just like any
+    known content.
+-   **Display:** The UI **SHOULD** display the node as an "Unsupported message".
+    It **MUST NOT** reject the node or drop the connection, provided the
+    signature and DAG requirements are valid. This ensures the Merkle-DAG
+    structure remains intact and can be synced across older relays.
 
 ## 4. Control Actions
 
@@ -350,6 +399,8 @@ enum ControlAction {
         permissions: u32,
         flags: u64,
         created_at: i64,
+        /// Proof of Work nonce, ground before the node is signed.
+        pow_nonce: u64,
     },
 
     /// Room Settings
@@ -447,13 +498,17 @@ enum EmojiSource {
 }
 
 struct DelegationCertificate {
+    /// Format version (currently 1).
+    version: u32,
+    /// The specific conversation this certificate applies to.
+    conversation_id: [u8; 32],
     /// Tox Public Key of the device being authorized.
     device_pk: [u8; 32],
     /// Bitmask of permissions (ADMIN, MESSAGE, SYNC).
     permissions: u32,
     /// Network Time (ms) when this authorization expires.
     expires_at: i64,
-    /// Signature of the above by a higher-level key (Master or Admin).
+    /// Signature of the above fields by a higher-level key (Master or Admin).
     signature: [u8; 64],
 }
 
@@ -544,26 +599,29 @@ The Genesis Node is created by the founder and contains:
     -   `0x01`: `FLAG_ADMIN_ONLY_INVITE` (Only Admins can invite).
     -   `0x02`: `FLAG_MEMBER_INVITE` (Any member can invite).
 -   `created_at`: The Genesis timestamp (Network Time, ms).
+-   `pow_nonce`: A 64-bit integer ground to satisfy the Proof-of-Work
+    constraint.
 -   **Authentication**: Must be **signed** by the creator's Master Seed OR a
     Level 1 Admin Device.
 
-**Contextual Proof-of-Work (Hashcash)**: To prevent Genesis spam, the room
-creator must compute a PoW. To prevent network fragmentation (where a relay
-grinds a new nonce to clone a room), the PoW nonce is explicitly **excluded**
-from the `WireNode` and its resulting `NodeHash`.
+**Contextual Proof-of-Work**: To prevent Genesis spam, the room creator must
+compute a PoW before signing the Genesis node.
 
 -   **Target Difficulty**: 20 bits (requires ~1,048,576 attempts on average).
--   **PoW Scope**: The creator serializes and signs the complete `WireNode`
-    (fields 1–8), calculating its `NodeHash`. They then grind an external
-    `nonce` (u64) until `Blake3(CreatorPK || NodeHash || nonce)` has 20 leading
-    zeros.
--   **Transmission**: When broadcasting the Genesis node, the client appends the
-    `nonce` to the end of the `DATA` transport packet, *outside* the MessagePack
-    `WireNode` structure.
--   **Validation**: Relays and clients MUST verify this external PoW before
-    accepting the node. Because the `nonce` is external, grinding a new one
-    leaves the `NodeHash` and `ConversationID` untouched, defeating network
-    fragmentation.
--   **Cost Model**: At ~1M Blake3 hashes/sec on a smartphone and ~5–10M/sec on a
-    laptop, the expected cost is **~1–2s on a smartphone** and **~0.1–0.2s on a
-    laptop**.
+-   **PoW Scope**: The creator constructs the `ControlAction::Genesis` structure
+    and grinds its internal `pow_nonce` field such that `Blake3(creator_pk ||
+    ToxProto::serialize(genesis_action))` has 20 leading zeros. This ensures the
+    PoW is robustly bound to all Genesis parameters.
+-   **Pre-Signature Grinding**: Because the `pow_nonce` is inside the payload,
+    it is ground *before* the Ed25519 `NodeAuth::Signature` is computed. The
+    creator then embeds this `pow_nonce` directly into the
+    `ControlAction::Genesis` struct, serializes the complete `WireNode`, and
+    applies the signature once.
+-   **Security**: A malicious relay cannot alter the `pow_nonce` to fragment the
+    room because it is covered by the creator's signature. `NodeHash` and
+    `ConversationID` remain identical.
+-   **Validation**: Relays and clients MUST verify both the Ed25519 signature
+    and the PoW before accepting the node.
+-   **Cost Model**: Grinding uses pure Blake3 hashing over a few bytes. At ~1M
+    Blake3 hashes/sec on a smartphone, the expected cost is **~1 second**, while
+    maintaining resistance to relay tampering.

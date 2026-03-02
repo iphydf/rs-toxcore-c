@@ -2,10 +2,9 @@
 
 ## Overview
 
-To provide granular **Forward Secrecy (FS)** for every message without the
-complexity of DAG-merge races, Merkle-Tox uses **Per-Sender Linear Ratchets**.
-Each physical device in a conversation maintains a strictly linear hash chain
-that is independent of other devices' branches.
+To provide **Forward Secrecy (FS)** for every message without DAG-merge races,
+Merkle-Tox uses **Per-Sender Linear Ratchets**. Each physical device maintains a
+linear hash chain independent of other devices.
 
 ## 1. The Per-Sender Hash Chain
 
@@ -51,15 +50,21 @@ Piggybacking**:
 
 ### C. Step Function
 
-For every message authored by the device, the chain advances:
+For every message authored by the device that requires payload encryption via
+$K_{msg, i}$ (i.e., standard Content nodes), the chain advances:
 
-*   $K_{chain, i+1} = ext{Blake3-KDF}( ext{context: "merkle-tox v1
-    ratchet-step"}, K_{chain, i})$
-*   $K_{msg, i} = ext{Blake3-KDF}( ext{context: "merkle-tox v1 message-key"},
-    K_{chain, i})$
+*   $K_{chain, i+1} = \text{Blake3-KDF}(\text{context: "merkle-tox v1
+    ratchet-step"},\; K_{chain, i})$
+*   $K_{msg, i} = \text{Blake3-KDF}(\text{context: "merkle-tox v1
+    message-key"},\; K_{chain, i})$
 
 The message is encrypted with $K_{msg, i}$. After the step, $K_{chain, i}$ is
 immediately deleted.
+
+**Exception Nodes**: Nodes that are sent in cleartext or use dedicated room-wide
+keys (Admin, `KeyWrap`, `SenderKeyDistribution`, `HistoryExport`, and
+`SoftAnchor` nodes) do NOT consume a ratchet step or advance the
+`sequence_number`. The chain only advances when $K_{msg, i}$ is required.
 
 ## 2. Decoupling Encryption from DAG Merges
 

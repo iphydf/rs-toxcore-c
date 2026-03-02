@@ -12,7 +12,7 @@ Persistence backends implement traits in `merkle-tox-core`:
 
 ### `NodeStore` (DAG Index)
 
-Handles the storage and retrieval of Merkle nodes and their relationships.
+Handles storage and retrieval of Merkle nodes and relationships.
 
 -   `put_node(conv_id, node, verified)`: Persists a node and its metadata.
 -   `get_node(hash)`: Retrieves a full node.
@@ -22,8 +22,8 @@ Handles the storage and retrieval of Merkle nodes and their relationships.
 
 ### `ObjectStore` (Content-Addressable Storage)
 
-Handles both large binary assets (Blobs) and undecryptable encrypted nodes
-(Opaque Nodes).
+Handles large binary assets (Blobs) and undecryptable encrypted nodes (Opaque
+Nodes).
 
 -   `put_object(hash, data, status)`: Writes raw bytes to the store.
 -   `get_object(hash)`: Retrieves raw bytes.
@@ -43,7 +43,7 @@ Vouch state is split into two layers:
     the SQLite backend, this is a column on the opaque nodes table.
 -   **Runtime (in-memory)**: The bounded voucher set per hash (up to
     `MAX_VOUCHERS_PER_HASH = 3`) used for multi-peer request routing is
-    maintained purely in memory and rebuilt from `SYNC_HEADS` exchanges upon
+    maintained in memory and rebuilt from `SYNC_HEADS` exchanges upon
     reconnection. It is not persisted.
 
 ### `BlacklistRegistry` (Escalation Index)
@@ -94,8 +94,7 @@ handling.
 
 #### Packed Objects ("Cold" Store)
 
-To avoid millions of tiny files, the FS backend MUST "bake" loose nodes into
-immutable pack files.
+The FS backend MUST "bake" loose nodes into immutable pack files.
 
 -   **`pack-<id>.data`**: Concatenated raw node data.
 -   **`pack-<id>.idx`**: A sorted binary index mapping `Hash -> Offset`.
@@ -110,9 +109,8 @@ immutable pack files.
 
 Since FS lacks SQL indices, it maintains a **Volatile Index** in memory:
 
--   **Lazy Loading**: To ensure fast startup with thousands of conversations,
-    the volatile index for a specific conversation is only populated upon
-    **first access**.
+-   **Lazy Loading**: To ensure fast startup, the volatile index for a specific
+    conversation is populated upon **first access**.
 -   The `loose/` and `.idx` files are scanned to populate a lightweight
     `HashMap<Hash, (Rank, NodeType)>`. The `.idx` file stores the `NodeType` and
     `Rank` alongside the `Hash` to allow single-pass indexing without reading

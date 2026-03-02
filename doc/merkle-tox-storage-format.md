@@ -1,6 +1,6 @@
 # Merkle-Tox File-Based Storage Specification (v1)
 
-This document defines a filesystem-based storage format for Merkle-Tox.
+Defines a filesystem-based storage format for Merkle-Tox.
 
 ## Design Principles
 
@@ -55,8 +55,7 @@ The storage root is a directory (e.g., `~/.merkle-tox/storage/`).
 
 ## 2. Binary Encoding
 
-Merkle-Tox uses two encoding styles depending on the performance requirements of
-the file:
+Merkle-Tox uses two encoding styles:
 
 1.  **Positional MessagePack**: Metadata files with variable-length fields
     (`state.bin`, `permissions.bin`, `global.bin`) use the **Positional Array**
@@ -80,8 +79,7 @@ the file:
 
 ## 3. Concurrency & Locking
 
-To prevent lost updates when multiple threads or processes access the storage
-root, the following locking strategy is mandated:
+Locking strategy to prevent lost updates:
 
 ### 3.1. Thread-Level Concurrency (Same Process)
 
@@ -376,7 +374,7 @@ The Vouch Registry has two layers:
     legitimately vouched nodes from junk.
 2.  **Runtime Layer (In-Memory)**: The bounded voucher set per hash
     (`MAX_VOUCHERS_PER_HASH = 3`) used for multi-peer request routing is
-    maintained purely in memory and rebuilt from `SYNC_HEADS` exchanges upon
+    maintained in memory and rebuilt from `SYNC_HEADS` exchanges upon
     reconnection. The data is ephemeral and not persisted.
 
 ### 5.5. Blacklist Registries
@@ -398,8 +396,7 @@ The Vouch Registry has two layers:
 To support historical decryption after group key rotations, implementations
 **MUST** persist the conversation keys ($K_{conv}$) for each generation.
 
-*   **Format**: `[generation_hex].key` containing exactly 32 bytes of raw key
-    data.
+*   **Format**: `[generation_hex].key` containing 32 bytes of raw key data.
 *   **Security**: These keys **MUST** be treated with the same forensic care as
     Ratchet Keys (Section 7).
 
@@ -437,7 +434,7 @@ the Exclusive Lock. Maintenance follows the **Shadow Write Pattern**:
         `active_journal_id = N+1` (write-temp + fsync + rename), representing
         the single point of no return.
     *   **Finalize**: Rename `journal.bin.new` → `journal.bin`, replacing the
-        old journal whose records are now fully in the cold tier.
+        old journal whose records are now in the cold tier.
     *   Release `LOCK_EX`.
     *   **Crash Safety**: If a crash occurs before the Commit Point, `state.bin`
         is unchanged and `journal.bin.new` is an orphan (cleaned up on next
@@ -567,10 +564,10 @@ Optimizations rejected in favor of the **Simplicity First** principle:
     during compaction.
 *   **Decision:** Vouches are stored **per-node** in the Opaque Index
     (`voucher_pk` field, Section 4.3) and naturally discarded on promotion or
-    eviction. The runtime voucher set for multi-peer routing is purely
-    in-memory, rebuilt from `SYNC_HEADS` on reconnection. Blacklists are
-    persisted in the journal (hot path) and migrated to Index Record flags (cold
-    path) during compaction.
+    eviction. The runtime voucher set for multi-peer routing is in-memory,
+    rebuilt from `SYNC_HEADS` on reconnection. Blacklists are persisted in the
+    journal (hot path) and migrated to Index Record flags (cold path) during
+    compaction.
 
 ### 9.3. Linear Scavenging (Resynchronization)
 
@@ -632,8 +629,8 @@ Optimizations rejected in favor of the **Simplicity First** principle:
 *   **Decision:** Used **Oldest-Arrival First** with **Bounded Root
     Carry-Forward**. Legitimate nodes are promoted quickly; stagnant data is
     purged. Protocol deadlocks are prevented by explicitly preserving `Admin`
-    and `KeyWrap` anchors during eviction, but strictly bounded by a 20MB quota
-    to prevent attackers from permanently wedging the Opaque Store with fake
+    and `KeyWrap` anchors during eviction, but bounded by a 20MB quota to
+    prevent attackers from permanently wedging the Opaque Store with fake
     anchors.
 
 ### 9.9. Atomic Rename for High-Frequency Files

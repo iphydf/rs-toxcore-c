@@ -10,8 +10,8 @@ Servers".
 
 ## 1. Announcement Nodes
 
-Every user MUST author a new **Announcement Node** in the DAG at a strictly
-defined interval (`ANNOUNCEMENT_ROTATION_INTERVAL = 30 days` or
+Every user MUST author a new **Announcement Node** in the DAG at a defined
+interval (`ANNOUNCEMENT_ROTATION_INTERVAL = 30 days` or
 `ANNOUNCEMENT_MAX_HANDSHAKES = 100`).
 
 ### A. Structure
@@ -51,8 +51,10 @@ strictness of the handshake depends on the conversation type.
 2.  **Select**:
     -   If valid `pre_keys` exist, User A uses one and performs the ECIES
         exchange.
-    -   If only the `last_resort_key` exists, User A **MAY** proceed but
-        **MUST** attach a `HandshakePulse` to their first message.
+    -   If the initiator uses the `last_resort_key` **OR** performs an SPK-only
+        handshake (where no One-Time Pre-Key was available or consumed), they
+        **MAY** proceed but **MUST** attach a `HandshakePulse` to their first
+        message.
 3.  **Delivery Confirmation (OPK Use Only)**: If the initiator used a One-Time
     Pre-Key (OPK), they enter a **KeyWrap Pending** state and MUST NOT author
     content nodes for this conversation until a `KEYWRAP_ACK` is received from
@@ -91,15 +93,22 @@ Groups prioritize security and Post-Compromise Security (PCS).
     existing member's client MUST author a supplementary `SenderKeyDistribution`
     using **Just-In-Time (JIT) Piggybacking** right before they author their
     next message (see `merkle-tox-ratchet.md` §1.B).
-5.  **No Last Resort Keys**: Admins MUST NOT author a `KeyWrap` for a user if
-    that user only has a `last_resort_key` published. Using a Last Resort Key
-    for group onboarding would compromise the entire group's $K_{conv}$ and
-    `SenderKey`s if that long-term key were ever forensically recovered.
-    -   *Operational Resolution*: If an Admin wishes to invite an offline user
-        who lacks fresh keys, the Admin's client SHOULD send an off-DAG 1-on-1
-        `HandshakePulse` to wake the user up. The Admin client automatically
-        buffers the group invite and authors the `KeyWrap` only after the user
-        comes online and publishes fresh ephemeral keys.
+5.  **No Last Resort Keys (with Revocation Exception)**: Admins SHOULD NOT
+    author a `KeyWrap` for a user if that user only has a `last_resort_key`
+    published. Using a Last Resort Key for group onboarding compromises the
+    forward secrecy of the entire group's $K_{conv}$ and `SenderKey`s if that
+    long-term key were ever forensically recovered.
+    -   *Operational Resolution (Invites)*: If an Admin wishes to invite an
+        offline user who lacks fresh keys, the Admin's client SHOULD send an
+        off-DAG 1-on-1 `HandshakePulse` to wake the user up. The Admin client
+        automatically buffers the group invite and authors the `KeyWrap` only
+        after the user comes online and publishes fresh ephemeral keys.
+    -   *Mandatory Key Rotations (Revocation Exception)*: If the `KeyWrap` is
+        being authored to rotate keys following a `RevokeDevice` event, the
+        Admin **MUST** proceed with the rotation immediately, even if some
+        remaining valid members only have a `last_resort_key`. The immediate
+        security threat of a compromised device remaining in the room outweighs
+        the theoretical risk of a long-term key compromise.
 
 ### C. The DH Exchange (Logic)
 
@@ -210,16 +219,16 @@ Security Rationale below).
     Neither can be varied per-collision. An attacker cannot grind their identity
     or retroactively change when they were authorized.
 -   **Determinism & First Seen (The Race Condition Reality)**: The deterministic
-    rules above perfectly resolve collisions for **offline** recipients who
-    receive both KeyWraps simultaneously in a sync batch. However, for
-    **online** recipients, "First Seen" is the ONLY physically enforceable rule:
-    the first KeyWrap to arrive is decrypted and the OPK private key MUST be
-    immediately destroyed for Forward Secrecy. If a KeyWrap arrives later with
-    the same OPK, the recipient MUST discard it (even if it has higher
-    deterministic seniority) because they physically cannot decrypt it. The
-    deterministic tie-breaker applies ONLY to simultaneous batch evaluation. In
-    a First-Seen race, the losing initiator's `KEYWRAP_ACK_TIMEOUT` will force
-    them to retry, resolving the branch naturally.
+    rules above resolve collisions for **offline** recipients who receive both
+    KeyWraps simultaneously in a sync batch. However, for **online** recipients,
+    "First Seen" is the ONLY physically enforceable rule: the first KeyWrap to
+    arrive is decrypted and the OPK private key MUST be immediately destroyed
+    for Forward Secrecy. If a KeyWrap arrives later with the same OPK, the
+    recipient MUST discard it (even if it has higher deterministic seniority)
+    because they physically cannot decrypt it. The deterministic tie-breaker
+    applies ONLY to simultaneous batch evaluation. In a First-Seen race, the
+    losing initiator's `KEYWRAP_ACK_TIMEOUT` will force them to retry, resolving
+    the branch naturally.
 
 ### Losing Entry Handling
 
@@ -234,7 +243,7 @@ invalidated**. Only the specific colliding entry is affected:
 
 **Recovery (Group Chats)**: Both Admins wrap the same $K_{conv}$. The recipient
 gets the key from the winning entry. The losing Admin's messages are encrypted
-with the same $K_{conv}$ and remain fully readable. No recovery action is needed
+with the same $K_{conv}$ and remain readable. No recovery action is needed
 beyond a courtesy re-wrap.
 
 **Recovery (1-on-1 Chats)**: The two `KeyWrap` nodes contain different

@@ -122,6 +122,7 @@ fn bench_sync_messages(c: &mut Criterion) {
         conversation_id: ConversationId::from([9; 32]),
         heads: vec![NodeHash::from([10; 32]); 16],
         flags: 0,
+        anchor_hash: None,
     };
     g.bench_function("serialize_sync_heads_16", |b| {
         b.iter(|| black_box(serialize(black_box(&heads)).unwrap()))

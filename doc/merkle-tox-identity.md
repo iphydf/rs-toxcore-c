@@ -63,15 +63,15 @@ from acting.
 A `MerkleNode` is only valid if its author (the `sender_pk`) was authorized at
 the exact moment of its creation, represented by its **Admin Frontier**.
 
-1.  **Admin Frontier**: Each node evaluates its Admin Frontier (the set of
-    most recent, mutually concurrent Admin nodes in its ancestry) to
-    efficiently compute permissions.
+1.  **Admin Frontier**: Each node evaluates its Admin Frontier (the set of most
+    recent, mutually concurrent Admin nodes in its ancestry) to efficiently
+    compute permissions.
     -   `Frontier(N) = Prune( Union(Frontier(P) for P in N.parents) U {N if N is
         Admin} )`
-    -   **Pruning (Enforcing Chronological Time)**: The `Prune()` operation MUST
-        remove any hash from the set that is a topological ancestor of another
-        hash in the set. This strictly enforces chronological time, ensuring
-        only the absolute latest causal actions remain.
+    -   **Pruning**: The `Prune()` operation MUST remove any hash from the set
+        that is a topological ancestor of another hash in the set. This enforces
+        chronological time, ensuring only the absolute latest causal actions
+        remain.
 2.  **State Lookup**: The client verifies that the `sender_pk` holds a valid
     `DelegationCertificate` within the evaluated state of this Admin Frontier.
 3.  **Concurrent Admin Resolution (Tie-Breaker)**: If a Frontier contains
@@ -130,11 +130,10 @@ revoked branch from future actions.
 
 ### Trust-Restored, Key-Pending State
 
-The **Healing** mechanism (Section 3: Logical vs. Cryptographic Validity) can
-restore a device's trust path after a revocation is overwritten by a Snapshot.
-However, key material does not heal automatically: the revoked device never
-received the $K_{conv}$ rotation that excluded it. A healed device therefore
-enters a distinct **Trust-Restored, Key-Pending** state.
+The **Healing** mechanism can restore a device's trust path after a revocation
+is overwritten by a Snapshot. Key material does not heal automatically: the
+revoked device never received the $K_{conv}$ rotation that excluded it. A healed
+device enters a **Trust-Restored, Key-Pending** state.
 
 ```
 Revoked
@@ -153,9 +152,8 @@ Revoked
 
 #### Re-inclusion Protocol (Device-Initiated, Off-DAG)
 
-Because the healed device lacks the current $K_{conv}$, it cannot produce a
-valid authenticator for a DAG node. The re-inclusion signal is therefore sent
-**off-DAG** via the encrypted `tox-sequenced` transport channel:
+Because the healed device lacks $K_{conv}$, it cannot produce a valid
+authenticator. The re-inclusion signal is sent **off-DAG** via `tox-sequenced`:
 
 1.  The healed device sends a `REINCLUSION_REQUEST` message directly to any
     online Admin it can reach via the Tox transport. The message contains the
@@ -208,16 +206,26 @@ already-decrypted message content in its local database, ensuring Forward
 Secrecy and Post-Compromise Security claims are not undermined by history
 synchronization.
 
-1.  **Export & Re-Encrypt**: When Device A authorizes Device B, Device A
-    compiles the already-decrypted message content from its local database.
-    Device A encrypts this content with a newly generated symmetric
-    $K_{export}$. No historical encryption keys are included. Only plaintext
-    message content, metadata, and DAG structure.
-2.  **CAS Upload**: Device A uploads the encrypted content as a standard Blob to
-    the Content-Addressable Storage (CAS) swarm, deriving a `blob_hash`.
-3.  **Key Distribution**: Device A authors a `HistoryExport` node to the DAG.
-    This node contains the `blob_hash` and $K_{export}$ wrapped for Device B via
-    the standard `WrappedKey` ECIES construction.
+1.  **Periodic Snapshot Generation**: To preserve CAS deduplication and minimize
+    upload bandwidth, the room SHOULD periodically author a generic **Encrypted
+    History Snapshot** blob (e.g., every 5,000 messages). The author compiles
+    the already-decrypted message content from its local database and encrypts
+    it with a random, static $K_{snapshot}$. No historical encryption keys are
+    included.
+2.  **CAS Upload**: The author uploads the snapshot as a standard Blob to the
+    Content-Addressable Storage (CAS) swarm, deriving a `blob_hash`.
+3.  **Key Distribution (Invite/Export)**: When Device A authorizes Device B,
+    Device A does NOT generate a unique blob. Instead, Device A authors a
+    `HistoryExport` node to the DAG referencing the most recent existing
+    snapshot. This node contains the existing `blob_hash` and the existing
+    $K_{snapshot}$ wrapped for Device B via the standard `WrappedKey` ECIES
+    construction. This ensures $O(1)$ CAS deduplication for history exports.
+    -   *Edge Case (Re-inviting Revoked Members)*: If a user was revoked and
+        later re-invited, sending them the generic snapshot might expose
+        messages authored during the period they were revoked. If an Admin
+        wishes to enforce strict cryptoperiod boundaries upon re-inviting a
+        user, the client MUST fall back to generating a bespoke, curated history
+        export blob rather than reusing the generic snapshot.
 4.  **Asynchronous Catch-Up**: Device B syncs the DAG structure instantly, then
     asynchronously downloads the encrypted content blob from blind relays. Once
     decrypted, Device B can display the historical messages. Device B receives
@@ -228,6 +236,13 @@ synchronization.
     exported history lacks cryptographic capabilities. If the CAS blob is
     compromised, the attacker gains message content but no cryptographic
     capabilities (cannot derive future keys, verify MACs, or forge messages).
+6.  **Forward Secrecy of Snapshots**: The $K_{snapshot}$ key distributed in the
+    `HistoryExport` node is wrapped using ECIES against the recipient's Signed
+    Pre-Key (SPK). When the recipient rotates their SPK (every 30 days) and
+    securely deletes the old private key, they can no longer decrypt the
+    `HistoryExport` node to recover $K_{snapshot}$. Therefore, if a device is
+    seized months later, the historical CAS blob remains cryptographically
+    protected, preserving the 30-day bounded forward secrecy.
 
 --------------------------------------------------------------------------------
 

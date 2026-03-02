@@ -329,6 +329,10 @@ pub enum ValidationError {
     SoftAnchorInvalidParent,
     #[error("SoftAnchor chaining cap exceeded: {actual} (max {max})")]
     SoftAnchorChainingCapExceeded { actual: u64, max: u64 },
+    #[error("Edit target must reference a Text node")]
+    InvalidEditTarget,
+    #[error("Edit author must match target author")]
+    EditAuthorMismatch,
 }
 
 /// Wire-format fields 1 to 6 of WireNode, used as signature input.
@@ -911,6 +915,20 @@ pub fn remove_padding(data: &mut Vec<u8>) -> Result<(), String> {
     } else {
         Err("No non-zero bytes found (invalid padding)".to_string())
     }
+}
+
+/// Computes effective timestamp per spec §3 (clock.md).
+/// `T_eff(N) = max(N.network_timestamp, max(T_eff(parents)))`
+/// Presentation-layer only; not persisted.
+pub fn effective_timestamp(node: &MerkleNode, store: &dyn crate::sync::NodeStore) -> i64 {
+    let mut t_eff = node.network_timestamp;
+    for parent_hash in &node.parents {
+        if let Some(parent) = store.get_node(parent_hash) {
+            let parent_t_eff = effective_timestamp(&parent, store);
+            t_eff = t_eff.max(parent_t_eff);
+        }
+    }
+    t_eff
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
