@@ -68,6 +68,10 @@ pub const MIN_PADDING_BIN: usize = 128;
 /// in a single conversation. Prevents resource exhaustion via delegation spam.
 pub const MAX_DEVICES_PER_IDENTITY: usize = 32;
 
+/// Maximum number of authorized devices across all identities in a single
+/// conversation. Prevents group-level resource exhaustion.
+pub const MAX_GROUP_DEVICES: usize = 4096;
+
 /// Maximum byte size of a single MerkleNode's serialized content + metadata.
 /// 1 MiB provides ample room for text and blob references while capping
 /// memory consumption for in-flight nodes.
@@ -96,3 +100,7 @@ pub const SKETCH_CPU_BUDGET_MS: u32 = 500;
 
 /// Sliding window (ms) for sketch CPU budget accounting.
 pub const SKETCH_CPU_WINDOW_MS: u32 = 60_000;
+
+/// Maximum number of opaque (unreadable) nodes that may be stored per sender
+/// per conversation. Prevents resource exhaustion via targeted flooding.
+pub const MAX_OPAQUE_REQUESTS_PER_VOUCHER: usize = 500;

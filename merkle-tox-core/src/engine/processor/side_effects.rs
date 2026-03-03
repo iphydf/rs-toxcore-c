@@ -103,6 +103,12 @@ impl MerkleToxEngine {
                     node_ref.network_timestamp,
                     node.hash(),
                 );
+                // Purge vouches from revoked device (§5: immediate purge)
+                if let Some(conv) = self.conversations.get_mut(&conversation_id) {
+                    for vouch_set in conv.vouchers_mut().values_mut() {
+                        vouch_set.remove(target_device_pk);
+                    }
+                }
                 // Membership change triggers immediate K_conv rotation, but only
                 // on admin who authored revocation. Other devices processing
                 // this node should not auto-rotate (prevents

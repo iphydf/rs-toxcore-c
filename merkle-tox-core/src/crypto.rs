@@ -409,3 +409,30 @@ pub fn derive_k_iblt(k_conv: &KConv, conversation_id: &crate::dag::ConversationI
     material[32..64].copy_from_slice(conversation_id.as_bytes());
     derive_key("merkle-tox v1 iblt-conv-key", &material)
 }
+
+/// Derives K_header_export from K_conv for HistoryExport room-wide encryption.
+pub fn derive_k_header_export(k_conv: &KConv) -> HeaderKey {
+    HeaderKey::from(derive_key("merkle-tox v1 header-export", k_conv.as_bytes()))
+}
+
+/// Derives K_payload_export from K_conv for HistoryExport room-wide encryption.
+pub fn derive_k_payload_export(k_conv: &KConv) -> EncryptionKey {
+    EncryptionKey::from(derive_key(
+        "merkle-tox v1 payload-export",
+        k_conv.as_bytes(),
+    ))
+}
+
+/// Derives deterministic dedup_id for LegacyBridge nodes.
+/// dedup_id = Blake3-KDF("merkle-tox v1 legacy-bridge-dedup", source_pk || text || timestamp)
+pub fn derive_legacy_bridge_dedup_id(
+    source_pk: &PhysicalDevicePk,
+    text: &str,
+    timestamp: i64,
+) -> crate::dag::NodeHash {
+    let mut material = Vec::new();
+    material.extend_from_slice(source_pk.as_bytes());
+    material.extend_from_slice(text.as_bytes());
+    material.extend_from_slice(&timestamp.to_be_bytes());
+    crate::dag::NodeHash::from(derive_key("merkle-tox v1 legacy-bridge-dedup", &material))
+}

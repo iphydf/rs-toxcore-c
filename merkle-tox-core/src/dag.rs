@@ -71,6 +71,10 @@ pub struct DelegationCertificate {
     pub permissions: Permissions,
     pub expires_at: i64,
     pub signature: Ed25519Signature,
+    /// Protocol version at time of signing. Prevents replay across versions.
+    pub version: u32,
+    /// Conversation this certificate is scoped to. Prevents cross-conversation replay.
+    pub conversation_id: ConversationId,
 }
 
 #[derive(Debug, Clone, ToxProto, PartialEq, Eq)]
@@ -203,6 +207,12 @@ pub enum Content {
         message_type: u8,
         dedup_id: NodeHash,
     },
+    // 12: Unknown — forward compatibility catch-all for unrecognized content types.
+    // Passes validation but triggers no side effects.
+    Unknown {
+        discriminant: u32,
+        data: Vec<u8>,
+    },
 }
 
 /// Logical representation of Merkle node.
@@ -333,6 +343,12 @@ pub enum ValidationError {
     InvalidEditTarget,
     #[error("Edit author must match target author")]
     EditAuthorMismatch,
+    #[error("Redaction permission denied: not original author and lacks ADMIN")]
+    RedactionPermissionDenied,
+    #[error("Reaction target must reference a content node")]
+    InvalidReactionTarget,
+    #[error("LegacyBridge dedup_id does not match derivation")]
+    InvalidLegacyBridgeDedup,
 }
 
 /// Wire-format fields 1 to 6 of WireNode, used as signature input.

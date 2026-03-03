@@ -194,7 +194,13 @@ async fn test_client_membership_and_auth() {
             .add_member(conversation_id, self_master_pk, 1, 0); // role 1 = admin
 
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&self_sk);
-        let cert = sign_delegation(&signing_key, self_device_pk, Permissions::ALL, i64::MAX);
+        let cert = sign_delegation(
+            &signing_key,
+            self_device_pk,
+            Permissions::ALL,
+            i64::MAX,
+            conversation_id,
+        );
 
         let ctx = merkle_tox_core::identity::CausalContext::global();
         node_lock
@@ -271,7 +277,13 @@ async fn test_client_membership_and_auth() {
         let mut node_lock = node.lock().await;
         let node_ref = &mut *node_lock;
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&self_sk);
-        let cert = sign_delegation(&signing_key, alice_dev_pk, Permissions::MESSAGE, i64::MAX);
+        let cert = sign_delegation(
+            &signing_key,
+            alice_dev_pk,
+            Permissions::MESSAGE,
+            i64::MAX,
+            conversation_id,
+        );
         let effects = node_ref
             .engine
             .author_node(
@@ -478,6 +490,7 @@ async fn test_client_automated_x3dh_onboarding() {
             alice_device_pk,
             Permissions::ALL,
             i64::MAX,
+            conversation_id,
         );
         let ctx = merkle_tox_core::identity::CausalContext::global();
         engine

@@ -23,6 +23,8 @@ pub enum IdentityError {
     PermissionEscalation,
     #[error("Too many devices for this identity (max {0})")]
     TooManyDevices(usize),
+    #[error("Too many devices in group (max {0})")]
+    TooManyGroupDevices(usize),
 }
 
 #[derive(ToxProto)]
@@ -30,7 +32,12 @@ pub struct DelegationSignData {
     pub device_pk: PhysicalDevicePk,
     pub permissions: Permissions,
     pub expires_at: i64,
+    pub version: u32,
+    pub conversation_id: ConversationId,
 }
+
+/// Current delegation certificate protocol version.
+pub const DELEGATION_VERSION: u32 = 1;
 
 /// Signs delegation certificate.
 pub fn sign_delegation(
@@ -38,11 +45,14 @@ pub fn sign_delegation(
     device_pk: PhysicalDevicePk,
     permissions: Permissions,
     expires_at: i64,
+    conversation_id: ConversationId,
 ) -> DelegationCertificate {
     let sign_data = DelegationSignData {
         device_pk,
         permissions,
         expires_at,
+        version: DELEGATION_VERSION,
+        conversation_id,
     };
     let signed_data = tox_proto::serialize(&sign_data).expect("Failed to serialize sign data");
     let signature = Ed25519Signature::from(signing_key.sign(&signed_data).to_bytes());
@@ -52,6 +62,8 @@ pub fn sign_delegation(
         permissions,
         expires_at,
         signature,
+        version: DELEGATION_VERSION,
+        conversation_id,
     }
 }
 
@@ -74,6 +86,8 @@ pub fn verify_delegation<P: AsRef<[u8; 32]>>(
         device_pk: cert.device_pk,
         permissions: cert.permissions,
         expires_at: cert.expires_at,
+        version: cert.version,
+        conversation_id: cert.conversation_id,
     };
     let signed_data =
         tox_proto::serialize(&sign_data).map_err(|_| IdentityError::InvalidSignature)?;
@@ -520,6 +534,18 @@ impl IdentityManager {
                 .count();
             if device_count >= MAX_DEVICES_PER_IDENTITY {
                 return Err(IdentityError::TooManyDevices(MAX_DEVICES_PER_IDENTITY));
+            }
+
+            // Group-level device count protection (§ MAX_GROUP_DEVICES):
+            let total_devices = self
+                .authorized_devices
+                .iter()
+                .filter(|((cid, _), _)| *cid == conversation_id)
+                .count();
+            if total_devices >= tox_proto::constants::MAX_GROUP_DEVICES {
+                return Err(IdentityError::TooManyGroupDevices(
+                    tox_proto::constants::MAX_GROUP_DEVICES,
+                ));
             }
 
             let records = self

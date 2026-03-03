@@ -213,7 +213,13 @@ fn test_permission_intersection_chain() {
     csprng.fill_bytes(&mut a1_bytes);
     let a1_sk = SigningKey::from_bytes(&a1_bytes);
     let a1_pk = PhysicalDevicePk::from(a1_sk.verifying_key().to_bytes());
-    let cert1 = merkle_tox_core::identity::sign_delegation(&root_sk, a1_pk, Permissions::ALL, 2000);
+    let cert1 = merkle_tox_core::identity::sign_delegation(
+        &root_sk,
+        a1_pk,
+        Permissions::ALL,
+        2000,
+        sync_key,
+    );
     let ctx = merkle_tox_core::identity::CausalContext::global();
     manager
         .authorize_device(
@@ -237,6 +243,7 @@ fn test_permission_intersection_chain() {
         a2_pk,
         Permissions::ADMIN | Permissions::SYNC,
         2000,
+        sync_key,
     );
     manager
         .authorize_device(
@@ -262,6 +269,7 @@ fn test_permission_intersection_chain() {
         a3_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         2000,
+        sync_key,
     );
     let res = manager.authorize_device(
         &ctx,
@@ -275,8 +283,13 @@ fn test_permission_intersection_chain() {
     assert!(res.is_err(), "A2 cannot delegate MESSAGE");
 
     // A2 delegates SYNC
-    let cert3_ok =
-        merkle_tox_core::identity::sign_delegation(&a2_sk, a3_pk, Permissions::SYNC, 2000);
+    let cert3_ok = merkle_tox_core::identity::sign_delegation(
+        &a2_sk,
+        a3_pk,
+        Permissions::SYNC,
+        2000,
+        sync_key,
+    );
     manager
         .authorize_device(
             &ctx,

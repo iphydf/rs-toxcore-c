@@ -74,6 +74,7 @@ fn format_node_label(hash: &NodeHash, node: &MerkleNode) -> String {
         Content::Location { .. } => "Location".to_string(),
         Content::Edit { .. } => "Edit".to_string(),
         Content::Custom { .. } => "Custom".to_string(),
+        Content::Unknown { discriminant, .. } => format!("Unknown({})", discriminant),
     };
 
     format!(

@@ -210,6 +210,62 @@ impl MerkleToxEngine {
                 // If target not found, allow speculatively (parents may arrive later)
             }
 
+            // Redaction validation: redactor must be original author or ADMIN
+            if let Content::Redaction { target_hash, .. } = &node.content
+                && let Some(target_node) = overlay.get_node(target_hash)
+            {
+                let is_author = target_node.author_pk == node.author_pk;
+                if !is_author {
+                    let perms = self
+                        .identity_manager
+                        .get_permissions(
+                            &ctx,
+                            conversation_id,
+                            &node.sender_pk,
+                            &node.author_pk,
+                            node.network_timestamp,
+                            node.topological_rank,
+                        )
+                        .unwrap_or(Permissions::NONE);
+                    if !perms.contains(Permissions::ADMIN) {
+                        return Err(MerkleToxError::Validation(
+                            crate::dag::ValidationError::RedactionPermissionDenied,
+                        ));
+                    }
+                }
+                // If target not found, allow speculatively (parents may arrive later)
+            }
+
+            // Reaction validation: target must be a content node (not admin)
+            if let Content::Reaction { target_hash, .. } = &node.content
+                && let Some(target_node) = overlay.get_node(target_hash)
+                && target_node.node_type() == NodeType::Admin
+            {
+                return Err(MerkleToxError::Validation(
+                    crate::dag::ValidationError::InvalidReactionTarget,
+                ));
+            }
+
+            // LegacyBridge dedup_id validation: must match deterministic derivation
+            if let Content::LegacyBridge {
+                source_pk,
+                text,
+                dedup_id,
+                ..
+            } = &node.content
+            {
+                let expected = crate::crypto::derive_legacy_bridge_dedup_id(
+                    source_pk,
+                    text,
+                    node.network_timestamp,
+                );
+                if *dedup_id != expected {
+                    return Err(MerkleToxError::Validation(
+                        crate::dag::ValidationError::InvalidLegacyBridgeDedup,
+                    ));
+                }
+            }
+
             if is_authorized {
                 let last_verified_seq =
                     overlay.get_last_sequence_number(&conversation_id, &node.sender_pk);
@@ -219,6 +275,22 @@ impl MerkleToxEngine {
                     hex::encode(node_hash.as_bytes()),
                     last_verified_seq
                 );
+
+                // Equivocation detection: flag same (sender, seq) with different hash.
+                // Runs before replay check so equivocation is always detected
+                // even if the node is subsequently rejected.
+                let seq_key = (conversation_id, node.sender_pk, node.sequence_number);
+                if let Some(&existing_hash) = self.verified_node_seqs.get(&seq_key)
+                    && existing_hash != node_hash
+                {
+                    self.equivocations.push((
+                        conversation_id,
+                        node.sender_pk,
+                        node.sequence_number,
+                        existing_hash,
+                        node_hash,
+                    ));
+                }
 
                 if node.sequence_number <= last_verified_seq {
                     // Check ratchet state to distinguish legitimate
@@ -796,6 +868,14 @@ impl MerkleToxEngine {
         );
         effects.push(Effect::WriteStore(conversation_id, node.clone(), verified));
 
+        // Record (conversation, sender, seq) → hash for equivocation detection.
+        if verified {
+            self.verified_node_seqs.insert(
+                (conversation_id, node.sender_pk, node.sequence_number),
+                node_hash,
+            );
+        }
+
         if verified || (authentic && is_bootstrap) {
             let verified_node = VerifiedNode::new(node.clone(), node.content.clone());
             let side_effects = self.apply_side_effects(conversation_id, &verified_node, store)?;
@@ -922,7 +1002,8 @@ impl MerkleToxEngine {
             | Content::Custom { .. }
             | Content::HistoryExport { .. }
             | Content::LegacyBridge { .. }
-            | Content::SenderKeyDistribution { .. } => Permissions::MESSAGE,
+            | Content::SenderKeyDistribution { .. }
+            | Content::Unknown { .. } => Permissions::MESSAGE,
             Content::Control(action) => match action {
                 ControlAction::AuthorizeDevice { .. }
                 | ControlAction::RevokeDevice { .. }
@@ -1417,7 +1498,7 @@ impl MerkleToxEngine {
                     // Remove from opaque store usage tracker when promoted
                     if let Some((total, entries)) =
                         self.opaque_store_usage.get_mut(&conversation_id)
-                        && let Some(pos) = entries.iter().position(|(h, _, _)| *h == hash)
+                        && let Some(pos) = entries.iter().position(|(h, _, _, _)| *h == hash)
                     {
                         *total -= entries[pos].1;
                         entries.swap_remove(pos);

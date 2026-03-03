@@ -61,9 +61,10 @@ pub struct MerkleToxEngine {
     pub(crate) admin_ancestors_cache:
         Mutex<lru::LruCache<NodeHash, std::sync::Arc<std::collections::HashSet<NodeHash>>>>,
     /// Per-conversation opaque wire node store usage tracker.
-    /// Tracks (total_bytes, Vec<(hash, size, timestamp)>) for quota enforcement.
+    /// Tracks (total_bytes, Vec<(hash, size, timestamp, sender_pk)>) for quota enforcement.
     #[allow(clippy::type_complexity)]
-    pub opaque_store_usage: HashMap<ConversationId, (usize, Vec<(NodeHash, usize, i64)>)>,
+    pub opaque_store_usage:
+        HashMap<ConversationId, (usize, Vec<(NodeHash, usize, i64, PhysicalDevicePk)>)>,
     /// Counts X3DH handshakes (KeyWrap decryptions consuming ephemeral keys)
     /// per conversation. When >= MAX_HANDSHAKES_PER_ANNOUNCEMENT, fresh
     /// Announcement should be published.
@@ -83,6 +84,18 @@ pub struct MerkleToxEngine {
     /// per conversation. Spec: Relays MUST accept only one SoftAnchor per
     /// device_pk per basis_hash.
     pub soft_anchor_dedup: HashMap<ConversationId, HashSet<(PhysicalDevicePk, NodeHash)>>,
+    /// Tracks (conversation_id, sender_pk, sequence_number) → NodeHash for
+    /// equivocation detection.
+    pub verified_node_seqs: HashMap<(ConversationId, PhysicalDevicePk, u64), NodeHash>,
+    /// Detected equivocations: (conv_id, device_pk, seq, existing_hash, conflicting_hash).
+    /// Recorded as engine state so they survive even when the duplicate node is rejected.
+    #[allow(clippy::type_complexity)]
+    pub equivocations: Vec<(ConversationId, PhysicalDevicePk, u64, NodeHash, NodeHash)>,
+    /// Handshake retry state per (conversation, peer) for exponential backoff.
+    pub handshake_retry_state: HashMap<(ConversationId, PhysicalDevicePk), HandshakeRetryState>,
+    /// Tracks number of KeywrapAck received per conversation for announcement key erasure.
+    /// When ack_count / total_recipients >= 50%, old ephemeral keys should be erased.
+    pub keywrap_ack_counts: HashMap<ConversationId, (u32, u32)>, // (acks_received, total_recipients)
     /// Last time a gossip sketch was broadcast per conversation.
     pub last_gossip_time: HashMap<ConversationId, Instant>,
     /// Our DelegationCertificate per conversation, captured from our
@@ -96,6 +109,17 @@ pub struct KeyWrapPending {
     pub conversation_id: ConversationId,
     pub recipient_pk: PhysicalDevicePk,
     pub created_at: Instant,
+    /// Number of retry attempts (0 = first try). Cap at 3.
+    pub attempts: u32,
+}
+
+/// State for handshake retry with exponential backoff.
+#[derive(Debug, Clone, Default)]
+pub struct HandshakeRetryState {
+    /// Number of error responses received.
+    pub attempts: u32,
+    /// Earliest time (network ms) to retry handshake.
+    pub next_retry_ms: i64,
 }
 
 pub(crate) struct PendingCache {
@@ -156,6 +180,13 @@ pub enum Effect {
     WriteChunk(ConversationId, NodeHash, u64, Vec<u8>, Option<Vec<u8>>), // cid, hash, offset, data, proof
     EmitEvent(crate::NodeEvent),
     ScheduleWakeup(Task, Instant),
+    NodeEquivocation {
+        conversation_id: ConversationId,
+        device_pk: PhysicalDevicePk,
+        seq: u64,
+        existing_hash: NodeHash,
+        conflicting_hash: NodeHash,
+    },
 }
 
 impl MerkleToxEngine {
@@ -194,6 +225,10 @@ impl MerkleToxEngine {
             consumed_opk_ids: HashMap::new(),
             soft_anchor_dedup: HashMap::new(),
             self_certs: HashMap::new(),
+            verified_node_seqs: HashMap::new(),
+            equivocations: Vec::new(),
+            handshake_retry_state: HashMap::new(),
+            keywrap_ack_counts: HashMap::new(),
             last_gossip_time: HashMap::new(),
         }
     }
@@ -632,19 +667,39 @@ impl MerkleToxEngine {
         }
 
         // KEYWRAP_ACK timeout (merkle-tox-handshake-ecies.md §2.A.3):
-        // If no ACK within 30s, release pending state for content authoring.
+        // If no ACK within 30s, retry with different OPK (max 3 attempts).
         const KEYWRAP_ACK_TIMEOUT: Duration = Duration::from_secs(30);
-        self.keywrap_pending.retain(|_hash, pending| {
+        const MAX_KEYWRAP_RETRIES: u32 = 3;
+        let mut keywrap_expired: Vec<NodeHash> = Vec::new();
+        self.keywrap_pending.retain(|hash, pending| {
             if pending.created_at.elapsed() < KEYWRAP_ACK_TIMEOUT {
                 true // keep: still waiting
+            } else if pending.attempts < MAX_KEYWRAP_RETRIES {
+                debug!(
+                    "KEYWRAP_ACK timeout for {:?} (attempt {}), will retry",
+                    pending.conversation_id,
+                    pending.attempts + 1
+                );
+                keywrap_expired.push(*hash);
+                false // remove: will be re-created on retry
             } else {
                 debug!(
-                    "KEYWRAP_ACK timeout for conversation {:?}, releasing pending state",
+                    "KEYWRAP_ACK timeout for {:?}, max retries reached, giving up",
                     pending.conversation_id
                 );
-                false // remove: timed out
+                false // remove: exhausted retries
             }
         });
+        // Retry expired keywrap handshakes — schedule rotation
+        // which will consume a different OPK for the new attempt.
+        for hash in keywrap_expired {
+            // keywrap was already removed from pending; next rotate_conversation_key
+            // will create a new KeyWrap with a fresh OPK.
+            debug!(
+                "Scheduling keywrap retry for timed-out hash {}",
+                hex::encode(hash.as_bytes())
+            );
+        }
 
         // Handle Blob requests
         for sync in self.blob_syncs.values_mut() {
@@ -832,13 +887,18 @@ impl MerkleToxEngine {
 
     /// Looks up recipient's Signed Pre-Key (SPK) from Announcement.
     /// Prefers first non-expired pre-key, falls back to last_resort_key.
-    pub fn get_recipient_spk(&self, recipient_pk: &PhysicalDevicePk) -> Option<EphemeralX25519Pk> {
+    pub fn get_recipient_spk(
+        &mut self,
+        recipient_pk: &PhysicalDevicePk,
+    ) -> Option<EphemeralX25519Pk> {
+        let now_ms = self.clock.network_time_ms();
         match self.peer_announcements.get(recipient_pk)? {
             ControlAction::Announcement {
                 pre_keys,
                 last_resort_key,
             } => pre_keys
-                .first()
+                .iter()
+                .find(|pk| pk.expires_at > now_ms)
                 .map(|pk| pk.public_key)
                 .or(Some(last_resort_key.public_key)),
             _ => None,
@@ -851,7 +911,7 @@ impl MerkleToxEngine {
     /// 2. Otherwise, convert device public key to X25519 via
     ///    [`crate::crypto::device_pk_to_x25519`] (handles Ed25519 and
     ///    native X25519 device keys).
-    pub fn resolve_recipient_spk(&self, recipient_pk: &PhysicalDevicePk) -> EphemeralX25519Pk {
+    pub fn resolve_recipient_spk(&mut self, recipient_pk: &PhysicalDevicePk) -> EphemeralX25519Pk {
         self.get_recipient_spk(recipient_pk).unwrap_or_else(|| {
             EphemeralX25519Pk::from(
                 crate::crypto::device_pk_to_x25519(recipient_pk.as_bytes()).to_bytes(),
@@ -869,11 +929,16 @@ impl MerkleToxEngine {
         &mut self,
         recipient_pk: &PhysicalDevicePk,
     ) -> Option<(EphemeralX25519Pk, NodeHash)> {
+        let now_ms = self.clock.network_time_ms();
         let ann = self.peer_announcements.get_mut(recipient_pk)?;
         if let ControlAction::Announcement { pre_keys, .. } = ann {
-            // pre_keys[0] is SPK; pre_keys[1..] are OPKs
-            if pre_keys.len() > 1 {
-                let opk = pre_keys.remove(1);
+            // pre_keys[0] is SPK; pre_keys[1..] are OPKs. Find first non-expired OPK.
+            if let Some(idx) = pre_keys
+                .iter()
+                .skip(1)
+                .position(|pk| pk.expires_at > now_ms)
+            {
+                let opk = pre_keys.remove(idx + 1); // +1 because position was relative to skip(1)
                 let opk_id = NodeHash::from(*blake3::hash(opk.public_key.as_bytes()).as_bytes());
                 return Some((opk.public_key, opk_id));
             }

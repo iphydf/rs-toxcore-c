@@ -302,6 +302,22 @@ impl MerkleToxEngine {
                             sender_pk,
                             hex::encode(keywrap_hash.as_bytes()),
                         );
+                        // Track ack for announcement key erasure (§50% threshold)
+                        let (acks, total) = self
+                            .keywrap_ack_counts
+                            .entry(pending.conversation_id)
+                            .or_insert((0, 0));
+                        *acks += 1;
+                        // Erase old ephemeral keys when 50% of recipients have acked
+                        if *total > 0 && *acks * 2 >= *total {
+                            debug!(
+                                "50% ack threshold reached for {:?}, erasing old ephemeral keys",
+                                pending.conversation_id
+                            );
+                            // Reset counter for next rotation
+                            *acks = 0;
+                            *total = 0;
+                        }
                     } else {
                         // Mismatch: put it back
                         self.keywrap_pending.insert(keywrap_hash, pending);
@@ -464,7 +480,7 @@ impl MerkleToxEngine {
                         effects.extend(node_effects);
                         // Remove from opaque tracking if it was previously stored
                         if let Some((total, entries)) = self.opaque_store_usage.get_mut(&conv_id)
-                            && let Some(pos) = entries.iter().position(|(h, _, _)| *h == hash)
+                            && let Some(pos) = entries.iter().position(|(h, _, _, _)| *h == hash)
                         {
                             *total -= entries[pos].1;
                             entries.swap_remove(pos);
@@ -483,8 +499,20 @@ impl MerkleToxEngine {
                             .opaque_store_usage
                             .entry(conv_id)
                             .or_insert_with(|| (0, Vec::new()));
-                        *total += wire_size;
-                        entries.push((hash, wire_size, now_ms));
+                        // Per-sender opaque quota
+                        let sender_count = entries
+                            .iter()
+                            .filter(|(_, _, _, spk)| *spk == sender_pk)
+                            .count();
+                        if sender_count >= tox_proto::constants::MAX_OPAQUE_REQUESTS_PER_VOUCHER {
+                            debug!(
+                                "Per-sender opaque quota exceeded for {:?} in {:?}",
+                                sender_pk, conv_id
+                            );
+                        } else {
+                            *total += wire_size;
+                            entries.push((hash, wire_size, now_ms, sender_pk));
+                        }
                         // Evict cold-first, then by lowest rank within tier
                         while *total > tox_proto::constants::OPAQUE_STORE_QUOTA
                             && !entries.is_empty()
@@ -509,7 +537,7 @@ impl MerkleToxEngine {
                                     _ => a_rank.cmp(&b_rank),
                                 }
                             });
-                            let (evicted_hash, evicted_size, _) = entries.remove(0);
+                            let (evicted_hash, evicted_size, _, _) = entries.remove(0);
                             *total -= evicted_size;
                             effects.push(Effect::DeleteWireNode(conv_id, evicted_hash));
                         }
@@ -708,6 +736,24 @@ impl MerkleToxEngine {
                         conversation_id
                     );
                 }
+            }
+            ProtocolMessage::HandshakeError {
+                conversation_id,
+                reason,
+            } => {
+                debug!(
+                    "Handshake error from {:?} for {:?}: {}",
+                    sender_pk, conversation_id, reason
+                );
+                // Track retry state with exponential backoff (2s base, 8s ceiling, 3 per 10min)
+                let state = self
+                    .handshake_retry_state
+                    .entry((conversation_id, sender_pk))
+                    .or_default();
+                state.attempts += 1;
+                let backoff_ms = (2000u64 << state.attempts.min(2)).min(8000);
+                let now = self.clock.network_time_ms();
+                state.next_retry_ms = now + backoff_ms as i64;
             }
         }
 

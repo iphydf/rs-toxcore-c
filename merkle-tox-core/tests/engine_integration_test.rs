@@ -1803,11 +1803,12 @@ fn test_opaque_store_quota_eviction() {
     // OPAQUE_STORE_QUOTA = 100 * 1024 * 1024 = 104,857,600 bytes
     let quota = 100 * 1024 * 1024;
     let entry_size = quota / 5; // ~20 MB each
+    let dummy_sender = PhysicalDevicePk::from([0xFFu8; 32]);
     let mut entries = Vec::new();
     for i in 0u8..6 {
         let hash = NodeHash::from([i; 32]);
         let ts = 1000 + i as i64 * 100; // increasing timestamps
-        entries.push((hash, entry_size, ts));
+        entries.push((hash, entry_size, ts, dummy_sender));
     }
     let total = entry_size * 6; // 120 MB, exceeds quota
     engine.opaque_store_usage.insert(conv_id, (total, entries));
@@ -1827,8 +1828,8 @@ fn test_opaque_store_quota_eviction() {
     // we can manually run the eviction loop that matches the handler logic.
     let (total, entries) = engine.opaque_store_usage.get_mut(&conv_id).unwrap();
     while *total > quota && !entries.is_empty() {
-        entries.sort_by_key(|&(_, _, ts)| ts);
-        let (_evicted_hash, evicted_size, _) = entries.remove(0);
+        entries.sort_by_key(|&(_, _, ts, _)| ts);
+        let (_evicted_hash, evicted_size, _, _) = entries.remove(0);
         *total -= evicted_size;
     }
 

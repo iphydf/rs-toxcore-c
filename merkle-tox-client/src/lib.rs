@@ -462,7 +462,7 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
 
         let cert = if let Some(sk_bytes) = &node_lock.engine.self_sk {
             let signing_key = SigningKey::from_bytes(sk_bytes.as_bytes());
-            sign_delegation(&signing_key, device_pk, permissions, expires_at)
+            sign_delegation(&signing_key, device_pk, permissions, expires_at, cid)
         } else {
             return Err(MerkleToxError::Crypto("Missing signing key".to_string()));
         };

@@ -350,6 +350,9 @@ impl<T: Transport, S: NodeStore + BlobStore> MerkleToxNode<T, S> {
             Effect::ScheduleWakeup(_task, time) => {
                 *next_wakeup = (*next_wakeup).min(time);
             }
+            Effect::NodeEquivocation { .. } => {
+                // Equivocation events are informational; no store action needed.
+            }
         }
         Ok(())
     }
@@ -403,5 +406,6 @@ fn get_message_type(msg: &ProtocolMessage) -> MessageType {
         ProtocolMessage::ReconPowSolution { .. } => MessageType::ReconPowSolution,
         ProtocolMessage::ReinclusionRequest { .. } => MessageType::ReinclusionRequest,
         ProtocolMessage::ReinclusionResponse { .. } => MessageType::ReinclusionResponse,
+        ProtocolMessage::HandshakeError { .. } => MessageType::HandshakeError,
     }
 }

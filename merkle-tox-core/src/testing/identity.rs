@@ -35,8 +35,25 @@ impl TestIdentity {
     }
 
     /// Creates an authorization certificate for the device signed by the master key.
+    /// Uses a zero conversation_id (suitable for tests that don't check scoping).
     pub fn make_device_cert(&self, perms: Permissions, expires: i64) -> DelegationCertificate {
         make_cert(&self.master_sk, self.device_pk, perms, expires)
+    }
+
+    /// Creates an authorization certificate scoped to a specific conversation.
+    pub fn make_device_cert_for(
+        &self,
+        perms: Permissions,
+        expires: i64,
+        conversation_id: ConversationId,
+    ) -> DelegationCertificate {
+        make_cert_for(
+            &self.master_sk,
+            self.device_pk,
+            perms,
+            expires,
+            conversation_id,
+        )
     }
 
     /// Authorizes the device in the given engine.
@@ -169,13 +186,31 @@ impl TestRoom {
 }
 
 /// Helper to create a delegation certificate signed by an issuer.
+/// Uses a zero conversation_id (suitable for tests that don't check scoping).
 pub fn make_cert(
     issuer: &SigningKey,
     device_pk: PhysicalDevicePk,
     perms: Permissions,
     expires: i64,
 ) -> DelegationCertificate {
-    sign_delegation(issuer, device_pk, perms, expires)
+    sign_delegation(
+        issuer,
+        device_pk,
+        perms,
+        expires,
+        ConversationId::from([0u8; 32]),
+    )
+}
+
+/// Helper to create a delegation certificate scoped to a specific conversation.
+pub fn make_cert_for(
+    issuer: &SigningKey,
+    device_pk: PhysicalDevicePk,
+    perms: Permissions,
+    expires: i64,
+    conversation_id: ConversationId,
+) -> DelegationCertificate {
+    sign_delegation(issuer, device_pk, perms, expires, conversation_id)
 }
 
 /// Signs an administrative node using the provided signing key.

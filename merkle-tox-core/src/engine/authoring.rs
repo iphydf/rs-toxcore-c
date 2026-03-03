@@ -133,6 +133,7 @@ impl MerkleToxEngine {
                         conversation_id,
                         recipient_pk: peer_pk,
                         created_at: self.clock.time_provider().now_instant(),
+                        attempts: 0,
                     },
                 );
             }

@@ -100,6 +100,11 @@ pub enum ProtocolMessage {
         conversation_id: ConversationId,
         accepted: bool,
     },
+    /// Off-DAG error during handshake (e.g. OPK exhausted, bad cert).
+    HandshakeError {
+        conversation_id: ConversationId,
+        reason: String,
+    },
 }
 
 /// Events emitted by Merkle-Tox engine/node for orchestration.

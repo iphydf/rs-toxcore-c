@@ -422,7 +422,10 @@ fn test_cold_first_eviction() {
         conv_id,
         (
             entry_size * 2,
-            vec![(cold_hash, entry_size, 100), (hot_hash, entry_size, 200)],
+            vec![
+                (cold_hash, entry_size, 100, peer_pk),
+                (hot_hash, entry_size, 200, peer_pk),
+            ],
         ),
     );
 
