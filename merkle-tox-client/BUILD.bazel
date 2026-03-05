@@ -38,11 +38,30 @@ rust_test(
     ],
 )
 
+rust_test(
+    name = "integration-test",
+    size = "small",
+    srcs = ["tests/integration_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":merkle-tox-client",
+        "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/merkle-tox-sqlite",
+        "@crates//:blake3",
+        "@crates//:ed25519-dalek",
+        "@crates//:rand",
+        "@crates//:tokio",
+        "@crates//:tracing-subscriber",
+    ],
+)
+
 rust_clippy(
     name = "clippy",
     testonly = True,
     deps = [
         ":merkle-tox-client",
         ":client-test",
+        ":integration-test",
     ],
 )

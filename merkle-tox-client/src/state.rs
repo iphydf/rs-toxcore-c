@@ -3,6 +3,84 @@ use merkle_tox_core::dag::{
 };
 use std::collections::{HashMap, HashSet};
 
+/// Application-level events emitted by the client for UI/app consumption.
+#[derive(Debug, Clone)]
+pub enum ClientEvent {
+    MessageReceived {
+        conversation_id: ConversationId,
+        hash: NodeHash,
+        author_pk: LogicalIdentityPk,
+        timestamp: i64,
+        content: Content,
+    },
+    MessageRedacted {
+        conversation_id: ConversationId,
+        target_hash: NodeHash,
+    },
+    ReactionAdded {
+        conversation_id: ConversationId,
+        target_hash: NodeHash,
+        emoji: String,
+        reactor_pk: LogicalIdentityPk,
+    },
+    TitleChanged {
+        conversation_id: ConversationId,
+        title: String,
+    },
+    TopicChanged {
+        conversation_id: ConversationId,
+        topic: String,
+    },
+    MemberJoined {
+        conversation_id: ConversationId,
+        member_pk: LogicalIdentityPk,
+        role: MemberRole,
+    },
+    DeviceAuthorized {
+        conversation_id: ConversationId,
+        device_pk: PhysicalDevicePk,
+    },
+    DeviceRevoked {
+        conversation_id: ConversationId,
+        device_pk: PhysicalDevicePk,
+    },
+    NodeInvalidated {
+        conversation_id: ConversationId,
+        hash: NodeHash,
+    },
+    SpeculativeMessage {
+        conversation_id: ConversationId,
+        hash: NodeHash,
+        author_pk: LogicalIdentityPk,
+        content: Content,
+    },
+    IdentityPendingMessage {
+        conversation_id: ConversationId,
+        hash: NodeHash,
+        author_pk: LogicalIdentityPk,
+        content: Content,
+    },
+    EquivocationDetected {
+        conversation_id: ConversationId,
+        device_pk: PhysicalDevicePk,
+        seq: u64,
+        existing_hash: NodeHash,
+        conflicting_hash: NodeHash,
+    },
+    BlobAvailable {
+        hash: NodeHash,
+    },
+    PeerConnected {
+        peer_pk: PhysicalDevicePk,
+    },
+    PeerDisconnected {
+        peer_pk: PhysicalDevicePk,
+    },
+    HistorySnapshotNeeded {
+        conversation_id: ConversationId,
+    },
+}
+
 /// The current materialized state of a conversation.
 #[derive(Debug, Clone)]
 pub struct ChatState {
@@ -17,6 +95,10 @@ pub struct ChatState {
     pub announcements: HashMap<PhysicalDevicePk, (Vec<SignedPreKey>, SignedPreKey)>,
     /// Recent messages in the conversation
     pub messages: Vec<ChatMessage>,
+    /// Messages received speculatively (not yet fully verified)
+    pub speculative_messages: Vec<ChatMessage>,
+    /// Messages from identity-pending conversations
+    pub identity_pending_messages: Vec<ChatMessage>,
     /// The hashes of the current DAG heads
     pub heads: Vec<NodeHash>,
     /// The topological rank of the highest verified node processed
@@ -33,6 +115,8 @@ impl Default for ChatState {
             authorized_devices: HashSet::new(),
             announcements: HashMap::new(),
             messages: Vec::new(),
+            speculative_messages: Vec::new(),
+            identity_pending_messages: Vec::new(),
             heads: Vec::new(),
             max_verified_rank: 0,
         }

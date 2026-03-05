@@ -350,12 +350,29 @@ impl<T: Transport, S: NodeStore + BlobStore> MerkleToxNode<T, S> {
             Effect::ScheduleWakeup(_task, time) => {
                 *next_wakeup = (*next_wakeup).min(time);
             }
-            Effect::NodeEquivocation { .. } => {
-                // Equivocation events are informational; no store action needed.
+            Effect::NodeEquivocation {
+                conversation_id,
+                device_pk,
+                seq,
+                existing_hash,
+                conflicting_hash,
+            } => {
+                if let Some(handler) = &self.event_handler {
+                    handler.handle_event(crate::NodeEvent::EquivocationDetected {
+                        conversation_id,
+                        device_pk,
+                        seq,
+                        existing_hash,
+                        conflicting_hash,
+                    });
+                }
             }
-            Effect::HistorySnapshotNeeded(_cid) => {
-                // Application-layer trigger: caller should compile history snapshot,
-                // encrypt, upload to CAS, and call author_history_key_export().
+            Effect::HistorySnapshotNeeded(cid) => {
+                if let Some(handler) = &self.event_handler {
+                    handler.handle_event(crate::NodeEvent::HistorySnapshotNeeded {
+                        conversation_id: cid,
+                    });
+                }
             }
         }
         Ok(())

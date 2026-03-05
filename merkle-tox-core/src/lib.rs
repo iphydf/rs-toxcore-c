@@ -143,6 +143,16 @@ pub enum NodeEvent {
     PeerHandshakeComplete { peer_pk: PhysicalDevicePk },
     /// Blob downloaded and verified.
     BlobAvailable { hash: NodeHash },
+    /// Equivocation detected: same device authored two nodes at same sequence number.
+    EquivocationDetected {
+        conversation_id: ConversationId,
+        device_pk: PhysicalDevicePk,
+        seq: u64,
+        existing_hash: NodeHash,
+        conflicting_hash: NodeHash,
+    },
+    /// Application should create a history snapshot for CAS upload.
+    HistorySnapshotNeeded { conversation_id: ConversationId },
 }
 
 /// Trait for receiving engine events.
