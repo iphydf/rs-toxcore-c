@@ -242,6 +242,8 @@ impl MerkleToxEngine {
         if self.check_rotation_triggers(conversation_id) {
             let effects = self.rotate_conversation_key(conversation_id, store)?;
             all_effects.extend(effects);
+            // Signal application layer to create history snapshot at epoch boundary.
+            all_effects.push(Effect::HistorySnapshotNeeded(conversation_id));
         }
 
         // Per-device Sender Rekey (any device, not just admin).
@@ -822,6 +824,23 @@ impl MerkleToxEngine {
             hash: node_hash,
             node: node.clone(),
         }));
+
+        // Admin gossip: multicast admin node hash to all peers for priority fetch.
+        if node.node_type() == NodeType::Admin {
+            for ((peer_pk, cid), session) in &self.sessions {
+                if *cid == conversation_id
+                    && let crate::engine::session::PeerSession::Active(_) = session
+                {
+                    effects.push(Effect::SendPacket(
+                        *peer_pk,
+                        crate::ProtocolMessage::AdminGossip {
+                            conversation_id,
+                            hash: node_hash,
+                        },
+                    ));
+                }
+            }
+        }
 
         Ok(effects)
     }
@@ -1570,6 +1589,8 @@ impl MerkleToxEngine {
         &mut self,
         conversation_id: ConversationId,
         blob_hash: NodeHash,
+        blob_size: u64,
+        bao_root: Option<[u8; 32]>,
         store: &dyn NodeStore,
     ) -> MerkleToxResult<Vec<Effect>> {
         match self.conversations.get(&conversation_id) {
@@ -1628,6 +1649,8 @@ impl MerkleToxEngine {
 
         let content = Content::HistoryExport {
             blob_hash,
+            blob_size,
+            bao_root,
             ephemeral_pk: he_pk,
             wrapped_keys,
         };

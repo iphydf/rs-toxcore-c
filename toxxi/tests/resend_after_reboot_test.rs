@@ -39,14 +39,7 @@ async fn test_resend_pending_message_after_reboot() {
     };
 
     let json = serde_json::to_string(&msg).unwrap();
-    fs::write(
-        log_path,
-        format!(
-            "{}\n",
-            json
-        ),
-    )
-    .unwrap();
+    fs::write(log_path, format!("{}\n", json)).unwrap();
 
     // 2. Re-initialize the model
     let self_info = ToxSelfInfo {

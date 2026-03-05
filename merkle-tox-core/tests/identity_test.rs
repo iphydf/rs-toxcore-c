@@ -13,9 +13,8 @@ fn test_identity_authorization() {
     let expires_at: i64 = 2000000000000;
     let permissions = Permissions::ALL;
 
-    let cert = make_cert(&logical_sk, device_pk, permissions, expires_at);
-
     let conv_id = ConversationId::from([0xAAu8; 32]);
+    let cert = make_cert(&logical_sk, device_pk, permissions, expires_at, conv_id);
     let mut manager = IdentityManager::new();
     let ctx = merkle_tox_core::identity::CausalContext::global();
     manager

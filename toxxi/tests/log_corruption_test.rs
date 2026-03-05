@@ -42,14 +42,7 @@ async fn test_load_corrupted_log_recovery() {
     let json_received = serde_json::to_string(&msg_received).unwrap();
 
     // Create a corrupted line: two JSON objects smashed together
-    fs::write(
-        log_path,
-        format!(
-            "{}{}\n",
-            json_pending, json_received
-        ),
-    )
-    .unwrap();
+    fs::write(log_path, format!("{}{}\n", json_pending, json_received)).unwrap();
 
     let self_info = ToxSelfInfo {
         tox_id,

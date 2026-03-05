@@ -198,7 +198,18 @@ impl SyncSession<Active> {
 
     pub fn next_fetch_batch(&mut self, batch_size: usize) -> Option<FetchBatchReq> {
         let mut hashes = Vec::with_capacity(batch_size);
-        // Hot first
+        // Admin-priority first
+        while hashes.len() < batch_size {
+            if let Some(hash) = self.common.missing_admin_nodes.pop_front() {
+                if !self.common.in_flight_fetches.contains(&hash) {
+                    hashes.push(hash);
+                    self.common.in_flight_fetches.insert(hash);
+                }
+            } else {
+                break;
+            }
+        }
+        // Hot second
         while hashes.len() < batch_size {
             if let Some(hash) = self.common.missing_nodes_hot.pop_front() {
                 if !self.common.in_flight_fetches.contains(&hash) {
@@ -408,8 +419,9 @@ impl SyncSession<Active> {
 
         let has_fetchable_missing = self
             .common
-            .missing_nodes_hot
+            .missing_admin_nodes
             .iter()
+            .chain(self.common.missing_nodes_hot.iter())
             .chain(self.common.missing_nodes_cold.iter())
             .any(|h| !self.common.in_flight_fetches.contains(h));
 

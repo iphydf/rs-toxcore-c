@@ -37,7 +37,13 @@ impl TestIdentity {
     /// Creates an authorization certificate for the device signed by the master key.
     /// Uses a zero conversation_id (suitable for tests that don't check scoping).
     pub fn make_device_cert(&self, perms: Permissions, expires: i64) -> DelegationCertificate {
-        make_cert(&self.master_sk, self.device_pk, perms, expires)
+        make_cert(
+            &self.master_sk,
+            self.device_pk,
+            perms,
+            expires,
+            ConversationId::from([0u8; 32]),
+        )
     }
 
     /// Creates an authorization certificate scoped to a specific conversation.
@@ -64,7 +70,7 @@ impl TestIdentity {
         perms: Permissions,
         expires: i64,
     ) {
-        let cert = self.make_device_cert(perms, expires);
+        let cert = self.make_device_cert_for(perms, expires, conversation_id);
         let ctx = crate::identity::CausalContext {
             evaluating_node_hash: crate::dag::NodeHash::from([0u8; 32]),
             admin_ancestor_hashes: std::collections::HashSet::new(),
@@ -153,7 +159,7 @@ impl TestRoom {
                 .identity_manager
                 .add_member(self.conv_id, id.master_pk, 1, 0);
 
-            let cert = id.make_device_cert(Permissions::ALL, i64::MAX);
+            let cert = id.make_device_cert_for(Permissions::ALL, i64::MAX, self.conv_id);
             let auth_node = crate::testing::create_admin_node(
                 &self.conv_id,
                 id.master_pk,
@@ -185,25 +191,9 @@ impl TestRoom {
     }
 }
 
-/// Helper to create a delegation certificate signed by an issuer.
-/// Uses a zero conversation_id (suitable for tests that don't check scoping).
+/// Helper to create a delegation certificate signed by an issuer,
+/// scoped to a specific conversation.
 pub fn make_cert(
-    issuer: &SigningKey,
-    device_pk: PhysicalDevicePk,
-    perms: Permissions,
-    expires: i64,
-) -> DelegationCertificate {
-    sign_delegation(
-        issuer,
-        device_pk,
-        perms,
-        expires,
-        ConversationId::from([0u8; 32]),
-    )
-}
-
-/// Helper to create a delegation certificate scoped to a specific conversation.
-pub fn make_cert_for(
     issuer: &SigningKey,
     device_pk: PhysicalDevicePk,
     perms: Permissions,
@@ -211,6 +201,17 @@ pub fn make_cert_for(
     conversation_id: ConversationId,
 ) -> DelegationCertificate {
     sign_delegation(issuer, device_pk, perms, expires, conversation_id)
+}
+
+/// Alias for `make_cert` (kept for backward compatibility).
+pub fn make_cert_for(
+    issuer: &SigningKey,
+    device_pk: PhysicalDevicePk,
+    perms: Permissions,
+    expires: i64,
+    conversation_id: ConversationId,
+) -> DelegationCertificate {
+    make_cert(issuer, device_pk, perms, expires, conversation_id)
 }
 
 /// Signs an administrative node using the provided signing key.

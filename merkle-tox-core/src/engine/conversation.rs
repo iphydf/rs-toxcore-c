@@ -14,7 +14,7 @@ pub const FLAG_MEMBER_INVITE: u64 = 0x02;
 #[derive(Clone)]
 pub struct Pending {
     pub speculative_nodes: HashSet<NodeHash>,
-    pub vouchers: HashMap<NodeHash, HashSet<PhysicalDevicePk>>,
+    pub vouchers: HashMap<NodeHash, HashMap<PhysicalDevicePk, i64>>,
     /// Genesis flags from the conversation's Genesis node.
     pub genesis_flags: u64,
 }
@@ -27,7 +27,7 @@ pub struct Established {
     pub current_epoch: u64,
     pub message_count: u32,
     pub last_rotation_time_ms: i64,
-    pub vouchers: HashMap<NodeHash, HashSet<PhysicalDevicePk>>,
+    pub vouchers: HashMap<NodeHash, HashMap<PhysicalDevicePk, i64>>,
     /// Per-sender SenderKeys received via SenderKeyDistribution.
     /// (sender_pk, epoch) → random SenderKey used to seed the ratchet.
     pub sender_keys: HashMap<(PhysicalDevicePk, u64), SenderKey>,
@@ -88,14 +88,14 @@ impl Conversation {
         }
     }
 
-    pub fn vouchers(&self) -> &HashMap<NodeHash, HashSet<PhysicalDevicePk>> {
+    pub fn vouchers(&self) -> &HashMap<NodeHash, HashMap<PhysicalDevicePk, i64>> {
         match self {
             Conversation::Pending(c) => &c.state.vouchers,
             Conversation::Established(c) => &c.state.vouchers,
         }
     }
 
-    pub fn vouchers_mut(&mut self) -> &mut HashMap<NodeHash, HashSet<PhysicalDevicePk>> {
+    pub fn vouchers_mut(&mut self) -> &mut HashMap<NodeHash, HashMap<PhysicalDevicePk, i64>> {
         match self {
             Conversation::Pending(c) => &mut c.state.vouchers,
             Conversation::Established(c) => &mut c.state.vouchers,

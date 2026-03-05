@@ -16,6 +16,8 @@ pub struct SessionCommon {
     pub min_timestamp: i64,
     pub local_heads: HashSet<NodeHash>,
     pub remote_heads: HashSet<NodeHash>,
+    /// Admin node hashes needing priority fetch (drained before hot).
+    pub missing_admin_nodes: VecDeque<NodeHash>,
     /// Hot-window missing nodes (priority). Fetched before cold.
     pub missing_nodes_hot: VecDeque<NodeHash>,
     /// Cold-window missing nodes.

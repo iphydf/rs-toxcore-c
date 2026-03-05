@@ -50,7 +50,7 @@ fn test_partitioned_swarm_convergence() {
                 .identity_manager
                 .add_member(conv_id, id.master_pk, 1, 0);
             // Authorize each device
-            let cert = id.make_device_cert(Permissions::ALL, i64::MAX);
+            let cert = id.make_device_cert_for(Permissions::ALL, i64::MAX, conv_id);
             let ctx = merkle_tox_core::identity::CausalContext::global();
             engine
                 .identity_manager

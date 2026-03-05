@@ -48,11 +48,6 @@ impl MerkleToxEngine {
             admin_ancestor_hashes,
         };
 
-        // Special case: HistoryExport for self-recovery (Not implemented in mock)
-        if let Content::HistoryExport { .. } = content {
-            tracing::debug!("Received HistoryExport, fetching from CAS is not implemented.");
-        }
-
         // Apply Administrative Actions
         match content {
             Content::Control(ControlAction::Genesis {

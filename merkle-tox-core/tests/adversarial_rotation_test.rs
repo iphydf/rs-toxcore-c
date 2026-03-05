@@ -174,6 +174,7 @@ fn test_zombie_device_rotation_exclusion() {
         admin_a.device_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         i64::MAX,
+        room.conv_id,
     );
     let admin_heads = store.get_admin_heads(&room.conv_id);
     let auth_a_node = create_admin_node(
@@ -198,6 +199,7 @@ fn test_zombie_device_rotation_exclusion() {
         device_b.device_pk,
         Permissions::MESSAGE,
         i64::MAX,
+        room.conv_id,
     );
     let auth_b_node = create_admin_node(
         &room.conv_id,

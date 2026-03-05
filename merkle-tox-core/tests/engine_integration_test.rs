@@ -95,7 +95,7 @@ fn test_engine_conversation_flow() {
 
     // 2. Authorize Alice's device
     let expires_at = bob_engine.clock.network_time_ms() + 10000000000;
-    let cert = alice.make_device_cert(Permissions::ALL, expires_at);
+    let cert = alice.make_device_cert_for(Permissions::ALL, expires_at, sync_key);
 
     let auth_node = create_admin_node(
         &sync_key,
@@ -264,6 +264,7 @@ fn test_rekeying_flow() {
         alice_device_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         expires_at,
+        sync_key,
     );
 
     let ctx = merkle_tox_core::identity::CausalContext::global();
@@ -395,6 +396,7 @@ fn test_actual_reverification_trigger() {
         alice_device_pk,
         Permissions::MESSAGE,
         2000000000000,
+        sync_key,
     );
     let auth_node = create_admin_node(
         &sync_key,
@@ -502,6 +504,7 @@ fn test_vouching_lazy_consensus() {
         bob_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         2000000000000,
+        sync_key,
     );
     let ctx = merkle_tox_core::identity::CausalContext::global();
     charlie_engine
@@ -1491,6 +1494,7 @@ fn test_anchor_snapshot_speculative() {
         alice.device_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         2000,
+        conv_id,
     );
 
     let anchor_snapshot = create_admin_node(
@@ -1580,6 +1584,7 @@ fn test_anchor_snapshot_applies_member_data() {
         alice.device_pk,
         Permissions::all(),
         9_999_999,
+        conv_id,
     );
     let anchor = create_admin_node(
         &conv_id,
@@ -1659,6 +1664,7 @@ fn test_message_count_triggers_anchor_snapshot() {
         alice.device_pk,
         Permissions::all(),
         9_999_999,
+        conv_id,
     );
     let auth_alice = create_admin_node(
         &conv_id,
@@ -1756,7 +1762,7 @@ fn test_history_key_export_registers_blob_sync() {
     // Alice exports history referencing a specific blob.
     let blob_hash = NodeHash::from([0xBB_u8; 32]);
     let hke_effects = alice_engine
-        .author_history_key_export(room.conv_id, blob_hash, &alice_store)
+        .author_history_key_export(room.conv_id, blob_hash, 1024, None, &alice_store)
         .unwrap();
     apply_effects(hke_effects.clone(), &alice_store);
 
@@ -1892,6 +1898,7 @@ fn test_identity_pending_on_keywrap_without_genesis() {
         alice.device_pk,
         Permissions::all(),
         i64::MAX,
+        conv_id,
     );
     let auth_node = create_admin_node(
         &conv_id,

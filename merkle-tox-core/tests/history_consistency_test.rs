@@ -47,6 +47,7 @@ fn test_revalidation_preserves_history() {
         new_device.device_pk,
         Permissions::MESSAGE,
         i64::MAX,
+        room.conv_id,
     );
 
     let admin_heads = store.get_admin_heads(&room.conv_id);
@@ -97,6 +98,7 @@ fn test_historical_authorization_verification() {
         historical_device.device_pk,
         Permissions::MESSAGE,
         1500,
+        room.conv_id,
     );
 
     let auth_node = merkle_tox_core::testing::create_admin_node(

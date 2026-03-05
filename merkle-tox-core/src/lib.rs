@@ -105,6 +105,11 @@ pub enum ProtocolMessage {
         conversation_id: ConversationId,
         reason: String,
     },
+    /// Immediate notification of a new admin node hash for priority fetch.
+    AdminGossip {
+        conversation_id: ConversationId,
+        hash: NodeHash,
+    },
 }
 
 /// Events emitted by Merkle-Tox engine/node for orchestration.

@@ -202,6 +202,7 @@ pub enum MessageType {
     ReinclusionResponse = 0x11,
     ReconPowChallenge = 0x12,
     ReconPowSolution = 0x13,
+    AdminGossip = 0x14,
 }
 
 impl MessageType {
@@ -220,6 +221,7 @@ impl MessageType {
             MessageType::BlobQuery | MessageType::BlobAvail | MessageType::BlobReq => Priority::Low,
             MessageType::BlobData => Priority::Bulk,
             MessageType::ReinclusionRequest | MessageType::ReinclusionResponse => Priority::High,
+            MessageType::AdminGossip => Priority::High,
         }
     }
 }

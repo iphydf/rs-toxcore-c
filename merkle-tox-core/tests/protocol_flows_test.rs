@@ -107,8 +107,8 @@ fn test_x3dh_and_ratchet_bridge() {
         .identity_manager
         .add_member(conv_id, bob.master_pk, 1, 0);
 
-    let cert_a = alice.make_device_cert(Permissions::ALL, i64::MAX);
-    let cert_b = bob.make_device_cert(Permissions::ALL, i64::MAX);
+    let cert_a = alice.make_device_cert_for(Permissions::ALL, i64::MAX, conv_id);
+    let cert_b = bob.make_device_cert_for(Permissions::ALL, i64::MAX, conv_id);
 
     let ctx = merkle_tox_core::identity::CausalContext::global();
     alice_engine
@@ -283,7 +283,7 @@ fn test_ratchet_snapshot_recovery() {
     apply_effects(effects, &alice_store);
 
     // cert for A1
-    let cert_a1 = alice.make_device_cert(Permissions::ALL, i64::MAX);
+    let cert_a1 = alice.make_device_cert_for(Permissions::ALL, i64::MAX, conv_id);
     alice_engine
         .identity_manager
         .add_member(conv_id, alice.master_pk, 1, 0);
@@ -309,7 +309,13 @@ fn test_ratchet_snapshot_recovery() {
     let alice2_pk = alice2.device_pk;
 
     // Authorize A2 device in Alice's engine using her master key
-    let cert_a2 = make_cert(&alice.master_sk, alice2_pk, Permissions::ALL, i64::MAX);
+    let cert_a2 = make_cert(
+        &alice.master_sk,
+        alice2_pk,
+        Permissions::ALL,
+        i64::MAX,
+        conv_id,
+    );
     alice_engine
         .identity_manager
         .authorize_device(
@@ -353,6 +359,8 @@ fn test_ratchet_snapshot_recovery() {
         .author_history_key_export(
             conv_id,
             merkle_tox_core::dag::NodeHash::from([0u8; 32]),
+            0,
+            None,
             &alice_store,
         )
         .unwrap();
@@ -481,7 +489,7 @@ fn test_epoch_rotation_ratchet_continuity() {
     engine
         .identity_manager
         .add_member(conv_id, alice.master_pk, 1, 0); // Master is Admin
-    let cert = alice.make_device_cert(Permissions::ALL, i64::MAX);
+    let cert = alice.make_device_cert_for(Permissions::ALL, i64::MAX, conv_id);
     let ctx = merkle_tox_core::identity::CausalContext::global();
     engine
         .identity_manager
@@ -501,6 +509,7 @@ fn test_epoch_rotation_ratchet_continuity() {
         alice2.device_pk,
         Permissions::ALL,
         i64::MAX,
+        conv_id,
     );
     engine
         .identity_manager
@@ -813,7 +822,7 @@ fn test_x3dh_last_resort_blocking() {
     alice_engine
         .identity_manager
         .add_member(conv_id, bob.master_pk, 1, 0);
-    let cert_b = bob.make_device_cert(Permissions::ALL, i64::MAX);
+    let cert_b = bob.make_device_cert_for(Permissions::ALL, i64::MAX, conv_id);
     let ctx = merkle_tox_core::identity::CausalContext::global();
     alice_engine
         .identity_manager
@@ -890,7 +899,13 @@ fn test_handshake_pulse_debounce() {
     apply_effects(effects, &alice_store);
 
     // Authorize Alice's own device (signed with master key so sender_pk == master_pk.to_physical())
-    let alice_cert = make_cert(&alice.master_sk, alice.device_pk, Permissions::all(), 2000);
+    let alice_cert = make_cert(
+        &alice.master_sk,
+        alice.device_pk,
+        Permissions::all(),
+        2000,
+        conv_id,
+    );
     let auth_alice = create_admin_node(
         &conv_id,
         alice.master_pk,
@@ -908,7 +923,13 @@ fn test_handshake_pulse_debounce() {
 
     // Bob self-authorizes his device (author_pk=bob.master_pk so his device is
     // registered under his own logical identity, not Alice's)
-    let bob_cert = make_cert(&bob.master_sk, bob.device_pk, Permissions::all(), 2000);
+    let bob_cert = make_cert(
+        &bob.master_sk,
+        bob.device_pk,
+        Permissions::all(),
+        2000,
+        conv_id,
+    );
     let auth_bob = create_admin_node(
         &conv_id,
         bob.master_pk,
@@ -1034,6 +1055,7 @@ fn test_announcement_rejects_invalid_prekey_signature() {
         alice.device_pk,
         Permissions::all(),
         9_999_999,
+        conv_id,
     );
     let auth_alice = create_admin_node(
         &conv_id,
@@ -1050,7 +1072,13 @@ fn test_announcement_rejects_invalid_prekey_signature() {
         .unwrap();
     apply_effects(effects, &store);
 
-    let bob_cert = make_cert(&bob.master_sk, bob.device_pk, Permissions::all(), 9_999_999);
+    let bob_cert = make_cert(
+        &bob.master_sk,
+        bob.device_pk,
+        Permissions::all(),
+        9_999_999,
+        conv_id,
+    );
     let auth_bob = create_admin_node(
         &conv_id,
         bob.master_pk,
@@ -1266,6 +1294,7 @@ fn test_reinclusion_request_protocol() {
         alice.device_pk,
         Permissions::all(),
         i64::MAX,
+        conv_id,
     );
     let auth_node = create_admin_node(
         &conv_id,

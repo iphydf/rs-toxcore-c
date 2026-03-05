@@ -24,6 +24,7 @@ impl SyncSession<Handshake> {
                 min_timestamp: 0,
                 local_heads: heads.into_iter().collect(),
                 remote_heads: HashSet::new(),
+                missing_admin_nodes: VecDeque::new(),
                 missing_nodes_hot: VecDeque::new(),
                 missing_nodes_cold: VecDeque::new(),
                 in_flight_fetches: HashSet::new(),

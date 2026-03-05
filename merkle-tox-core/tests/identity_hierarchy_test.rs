@@ -49,6 +49,7 @@ fn test_hierarchical_delegation_and_revocation() {
         admin_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         2000,
+        sync_key,
     );
     manager
         .authorize_device(
@@ -63,7 +64,7 @@ fn test_hierarchical_delegation_and_revocation() {
         .expect("Master should auth Admin");
 
     // 2. Authorize User from Admin
-    let cert2 = make_cert(&admin_sk, user_pk, Permissions::MESSAGE, 2000);
+    let cert2 = make_cert(&admin_sk, user_pk, Permissions::MESSAGE, 2000, sync_key);
     manager
         .authorize_device(
             &ctx,
@@ -132,6 +133,7 @@ fn test_long_authorization_chain() {
             next_pk,
             Permissions::ADMIN | Permissions::MESSAGE,
             2000000000000,
+            sync_key,
         );
         manager
             .authorize_device(
@@ -157,7 +159,13 @@ fn test_long_authorization_chain() {
             .verifying_key()
             .to_bytes(),
     );
-    let end_cert = make_cert(&current_sk, end_pk, Permissions::MESSAGE, 2000000000000);
+    let end_cert = make_cert(
+        &current_sk,
+        end_pk,
+        Permissions::MESSAGE,
+        2000000000000,
+        sync_key,
+    );
     manager
         .authorize_device(
             &ctx,
@@ -334,7 +342,7 @@ fn test_unauthorized_issuer() {
     let ctx = merkle_tox_core::identity::CausalContext::global();
 
     // Rogue device (not authorized) tries to authorize User
-    let cert = make_cert(&rogue_sk, user_pk, Permissions::MESSAGE, 2000);
+    let cert = make_cert(&rogue_sk, user_pk, Permissions::MESSAGE, 2000, sync_key);
     let res = manager.authorize_device(
         &ctx,
         sync_key,
@@ -373,7 +381,7 @@ fn test_permission_escalation() {
     let ctx = merkle_tox_core::identity::CausalContext::global();
 
     // 1. Authorize Admin with only MESSAGE permission (no ADMIN)
-    let cert1 = make_cert(&master_sk, admin_pk, Permissions::MESSAGE, 2000);
+    let cert1 = make_cert(&master_sk, admin_pk, Permissions::MESSAGE, 2000, sync_key);
     manager
         .authorize_device(
             &ctx,
@@ -387,7 +395,7 @@ fn test_permission_escalation() {
         .expect("Master should auth Admin");
 
     // 2. Admin tries to authorize User (should fail because Admin doesn't have ADMIN)
-    let cert2 = make_cert(&admin_sk, user_pk, Permissions::MESSAGE, 2000);
+    let cert2 = make_cert(&admin_sk, user_pk, Permissions::MESSAGE, 2000, sync_key);
     let res = manager.authorize_device(
         &ctx,
         sync_key,
@@ -405,6 +413,7 @@ fn test_permission_escalation() {
         admin_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         2000,
+        sync_key,
     );
     manager
         .authorize_device(
@@ -424,6 +433,7 @@ fn test_permission_escalation() {
         user_pk,
         Permissions::MESSAGE | Permissions::SYNC,
         2000,
+        sync_key,
     );
     let res = manager.authorize_device(
         &ctx,
@@ -468,6 +478,7 @@ fn test_auth_depth_limit() {
             next_pk,
             Permissions::ADMIN | Permissions::MESSAGE,
             2000000000000,
+            sync_key,
         );
         manager
             .authorize_device(
@@ -495,6 +506,7 @@ fn test_auth_depth_limit() {
         too_deep_pk,
         Permissions::MESSAGE,
         2000000000000,
+        sync_key,
     );
     let res = manager.authorize_device(
         &ctx,
@@ -553,6 +565,7 @@ fn test_identity_multi_path_authorization() {
         a_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         5000,
+        sync_key,
     );
     manager
         .authorize_device(
@@ -571,6 +584,7 @@ fn test_identity_multi_path_authorization() {
         b_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         5000,
+        sync_key,
     );
     manager
         .authorize_device(
@@ -585,7 +599,7 @@ fn test_identity_multi_path_authorization() {
         .unwrap();
 
     // 2. Admin A authorizes Device D
-    let cert_ad = make_cert(&a_sk, d_pk, Permissions::MESSAGE, 5000);
+    let cert_ad = make_cert(&a_sk, d_pk, Permissions::MESSAGE, 5000, sync_key);
     manager
         .authorize_device(
             &ctx,
@@ -599,7 +613,7 @@ fn test_identity_multi_path_authorization() {
         .unwrap();
 
     // 3. Admin B also authorizes Device D
-    let cert_bd = make_cert(&b_sk, d_pk, Permissions::MESSAGE, 5000);
+    let cert_bd = make_cert(&b_sk, d_pk, Permissions::MESSAGE, 5000, sync_key);
     manager
         .authorize_device(
             &ctx,
@@ -682,6 +696,7 @@ fn test_identity_circular_delegation() {
         a_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         5000,
+        sync_key,
     );
     manager
         .authorize_device(
@@ -696,7 +711,13 @@ fn test_identity_circular_delegation() {
         .unwrap();
 
     // 2. A -> B
-    let cert_ab = make_cert(&a_sk, b_pk, Permissions::ADMIN | Permissions::MESSAGE, 5000);
+    let cert_ab = make_cert(
+        &a_sk,
+        b_pk,
+        Permissions::ADMIN | Permissions::MESSAGE,
+        5000,
+        sync_key,
+    );
     manager
         .authorize_device(
             &ctx,
@@ -710,7 +731,13 @@ fn test_identity_circular_delegation() {
         .unwrap();
 
     // 3. B -> A (Circular!)
-    let cert_ba = make_cert(&b_sk, a_pk, Permissions::ADMIN | Permissions::MESSAGE, 5000);
+    let cert_ba = make_cert(
+        &b_sk,
+        a_pk,
+        Permissions::ADMIN | Permissions::MESSAGE,
+        5000,
+        sync_key,
+    );
     manager
         .authorize_device(
             &ctx,
@@ -739,7 +766,7 @@ fn test_identity_circular_delegation() {
     let mut c_bytes = [0u8; 32];
     csprng.fill_bytes(&mut c_bytes);
     let c_pk = PhysicalDevicePk::from(SigningKey::from_bytes(&c_bytes).verifying_key().to_bytes());
-    let cert_ac = make_cert(&a_sk, c_pk, Permissions::MESSAGE, 5000);
+    let cert_ac = make_cert(&a_sk, c_pk, Permissions::MESSAGE, 5000, sync_key);
     let res_ac = manager.authorize_device(
         &ctx,
         sync_key,
@@ -781,7 +808,7 @@ fn test_identity_expired_certificate() {
     let a_pk = PhysicalDevicePk::from(SigningKey::from_bytes(&a_bytes).verifying_key().to_bytes());
 
     // Expired certificate (expires_at < now)
-    let cert = make_cert(&master_sk, a_pk, Permissions::MESSAGE, 500);
+    let cert = make_cert(&master_sk, a_pk, Permissions::MESSAGE, 500, sync_key);
     let ctx = merkle_tox_core::identity::CausalContext::global();
     let res = manager.authorize_device(
         &ctx,
@@ -835,6 +862,7 @@ fn test_concurrent_mad_revocation_respects_seniority_hash() {
         alice.device_pk,
         Permissions::all(),
         9_999_999,
+        conv_id,
     );
     let auth_alice = create_admin_node(
         &conv_id,
@@ -851,7 +879,13 @@ fn test_concurrent_mad_revocation_respects_seniority_hash() {
         .unwrap();
     apply_effects(effects, &store);
 
-    let bob_cert = make_cert(&bob.master_sk, bob.device_pk, Permissions::all(), 9_999_999);
+    let bob_cert = make_cert(
+        &bob.master_sk,
+        bob.device_pk,
+        Permissions::all(),
+        9_999_999,
+        conv_id,
+    );
     let auth_bob = create_admin_node(
         &conv_id,
         bob.master_pk,
@@ -983,7 +1017,7 @@ fn test_max_devices_per_identity_enforced() {
     // Authorize one admin device via Level 1 (master key). This always succeeds.
     let admin_sk = merkle_tox_core::testing::random_signing_key();
     let admin_pk = PhysicalDevicePk::from(admin_sk.verifying_key().to_bytes());
-    let admin_cert = make_cert(&master_sk, admin_pk, Permissions::all(), i64::MAX);
+    let admin_cert = make_cert(&master_sk, admin_pk, Permissions::all(), i64::MAX, conv_id);
     id_mgr
         .authorize_device(
             &ctx,
@@ -1002,7 +1036,7 @@ fn test_max_devices_per_identity_enforced() {
     for i in 1u32..32 {
         let dev_sk = merkle_tox_core::testing::random_signing_key();
         let dev_pk = PhysicalDevicePk::from(dev_sk.verifying_key().to_bytes());
-        let cert = make_cert(&master_sk, dev_pk, Permissions::all(), i64::MAX);
+        let cert = make_cert(&master_sk, dev_pk, Permissions::all(), i64::MAX, conv_id);
         let auth_hash = NodeHash::from({
             let mut h = [0u8; 32];
             h[0..4].copy_from_slice(&i.to_le_bytes());
@@ -1018,7 +1052,7 @@ fn test_max_devices_per_identity_enforced() {
     // The Level 2 path enforces the MAX_DEVICES_PER_IDENTITY check.
     let dev_sk_33 = merkle_tox_core::testing::random_signing_key();
     let dev_pk_33 = PhysicalDevicePk::from(dev_sk_33.verifying_key().to_bytes());
-    let cert_33 = make_cert(&admin_sk, dev_pk_33, Permissions::all(), i64::MAX);
+    let cert_33 = make_cert(&admin_sk, dev_pk_33, Permissions::all(), i64::MAX, conv_id);
     let result = id_mgr.authorize_device(
         &ctx,
         conv_id,

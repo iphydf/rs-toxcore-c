@@ -174,6 +174,10 @@ impl CpuBudget {
 pub const HANDSHAKE_RETRY_CAP: u32 = 3;
 /// Duration of the handshake retry window (10 minutes in ms).
 pub const HANDSHAKE_RETRY_WINDOW_MS: i64 = 600_000;
+/// Base delay for exponential backoff on handshake retries (2 seconds).
+pub const HANDSHAKE_RETRY_BASE_MS: u64 = 2000;
+/// Maximum delay for exponential backoff on handshake retries (8 seconds).
+pub const HANDSHAKE_RETRY_MAX_MS: u64 = 8000;
 
 /// Blacklist state for a peer with 3-tier exponential escalation.
 #[derive(Debug, Clone)]
@@ -271,6 +275,8 @@ pub enum Effect {
         existing_hash: NodeHash,
         conflicting_hash: NodeHash,
     },
+    /// Signal application layer to create a history snapshot for CAS upload.
+    HistorySnapshotNeeded(ConversationId),
 }
 
 impl MerkleToxEngine {
@@ -666,6 +672,15 @@ impl MerkleToxEngine {
                     .skipped_keys
                     .retain(|_, &mut (_, timestamp)| now_ms - timestamp <= 86_400_000);
             }
+        }
+
+        // Evict stale vouchers (VOUCHER_TIMEOUT_MS = 10s).
+        for conv in self.conversations.values_mut() {
+            for vouch_map in conv.vouchers_mut().values_mut() {
+                vouch_map
+                    .retain(|_, &mut ts| now_ms - ts <= tox_proto::constants::VOUCHER_TIMEOUT_MS);
+            }
+            conv.vouchers_mut().retain(|_, v| !v.is_empty());
         }
 
         // Check trust-restored devices for 30-day expiry.

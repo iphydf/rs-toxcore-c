@@ -609,6 +609,8 @@ impl MerkleToxEngine {
                     }
                 } else if let Content::HistoryExport {
                     blob_hash,
+                    blob_size,
+                    bao_root,
                     ephemeral_pk: he_ephemeral_pk,
                     wrapped_keys,
                 } = &node.content
@@ -649,14 +651,26 @@ impl MerkleToxEngine {
                                 opk_ids_to_consume.push(wrapped.opk_id);
                                 let info = crate::cas::BlobInfo {
                                     hash: *blob_hash,
-                                    size: 0,
-                                    bao_root: None,
+                                    size: *blob_size,
+                                    bao_root: *bao_root,
                                     status: crate::cas::BlobStatus::Pending,
                                     received_mask: None,
                                     decryption_key: k_export,
                                 };
                                 self.blob_syncs
                                     .insert(*blob_hash, crate::cas::SwarmSync::new(info));
+                                // Trigger immediate blob fetch from peers
+                                for ((pk, cid), session) in &self.sessions {
+                                    if *cid == conversation_id
+                                        && let crate::engine::session::PeerSession::Active(_) =
+                                            session
+                                    {
+                                        effects.push(Effect::SendPacket(
+                                            *pk,
+                                            crate::ProtocolMessage::BlobQuery(*blob_hash),
+                                        ));
+                                    }
+                                }
                             }
                             break;
                         }
@@ -777,7 +791,8 @@ impl MerkleToxEngine {
                     .is_ok();
                     let has_admin = cert.permissions.contains(crate::dag::Permissions::ADMIN);
                     let device_bound = cert.device_pk == node.sender_pk;
-                    if sig_ok && has_admin && device_bound {
+                    let conv_id_ok = cert.conversation_id == conversation_id;
+                    if sig_ok && has_admin && device_bound && conv_id_ok {
                         verified = true;
                         tracing::debug!(
                             "AnchorSnapshot verified against Genesis founder's key. Speculative 'Identity Pending' mode active."
@@ -805,7 +820,8 @@ impl MerkleToxEngine {
                         .is_ok();
                 let has_message = cert.permissions.contains(crate::dag::Permissions::MESSAGE);
                 let device_bound = cert.device_pk == node.sender_pk;
-                if sig_ok && has_message && device_bound {
+                let conv_id_ok = cert.conversation_id == conversation_id;
+                if sig_ok && has_message && device_bound && conv_id_ok {
                     verified = true;
                     tracing::debug!("SoftAnchor verified against Genesis founder's key.");
                 }
@@ -878,7 +894,7 @@ impl MerkleToxEngine {
             for parent_hash in &node.parents {
                 let set = conv.vouchers_mut().entry(*parent_hash).or_default();
                 if set.len() < tox_proto::constants::MAX_VOUCHERS_PER_HASH {
-                    set.insert(node.sender_pk);
+                    set.insert(node.sender_pk, now);
                 }
             }
         }
@@ -922,6 +938,23 @@ impl MerkleToxEngine {
             // quarantined speculative nodes.
             effects.extend(self.reverify_opaque_nodes(conversation_id, store));
             effects.extend(self.reverify_speculative_for_conversation(conversation_id, store));
+        }
+
+        // Admin gossip: multicast admin node hash to all peers for priority fetch.
+        if verified && node.node_type() == NodeType::Admin {
+            for ((peer_pk, cid), session) in &self.sessions {
+                if *cid == conversation_id
+                    && let crate::engine::session::PeerSession::Active(_) = session
+                {
+                    effects.push(Effect::SendPacket(
+                        *peer_pk,
+                        crate::ProtocolMessage::AdminGossip {
+                            conversation_id,
+                            hash: node_hash,
+                        },
+                    ));
+                }
+            }
         }
 
         if verified {

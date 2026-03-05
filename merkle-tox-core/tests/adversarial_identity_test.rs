@@ -35,6 +35,7 @@ fn test_retroactive_revocation_validation() {
         admin_a.device_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         10000,
+        room.conv_id,
     );
 
     let admin_heads = store.get_admin_heads(&room.conv_id);
@@ -61,6 +62,7 @@ fn test_retroactive_revocation_validation() {
         device_b.device_pk,
         Permissions::MESSAGE,
         10000,
+        room.conv_id,
     );
     let auth_b_node = create_admin_node(
         &room.conv_id,

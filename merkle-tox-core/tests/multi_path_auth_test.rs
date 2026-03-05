@@ -40,6 +40,7 @@ fn test_multi_path_authorization_resilience() {
         admin_a.device_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         2000,
+        room.conv_id,
     );
     let admin_heads = store.get_admin_heads(&room.conv_id);
     let auth_a_node = create_admin_node(
@@ -64,6 +65,7 @@ fn test_multi_path_authorization_resilience() {
         admin_b.device_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         2000,
+        room.conv_id,
     );
     let admin_heads_b = store.get_admin_heads(&room.conv_id);
     let auth_b_node = create_admin_node(
@@ -88,6 +90,7 @@ fn test_multi_path_authorization_resilience() {
         device_c.device_pk,
         Permissions::MESSAGE,
         2000,
+        room.conv_id,
     );
     let admin_heads_c1 = store.get_admin_heads(&room.conv_id);
     let auth_c1_node = create_admin_node(
@@ -111,6 +114,7 @@ fn test_multi_path_authorization_resilience() {
         device_c.device_pk,
         Permissions::MESSAGE,
         2000,
+        room.conv_id,
     );
     let admin_heads_c2 = store.get_admin_heads(&room.conv_id);
     let auth_c2_node = create_admin_node(

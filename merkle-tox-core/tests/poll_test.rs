@@ -636,4 +636,112 @@ fn test_peek_keys_evicts_stale_skipped_keys() {
     }
 }
 
-// end of file
+// ── Voucher TTL eviction ─────────────────────────────────────────────────
+
+#[test]
+fn test_poll_evicts_stale_vouchers() {
+    let _ = tracing_subscriber::fmt::try_init();
+    let rng = rand::rngs::StdRng::seed_from_u64(42);
+
+    let base_instant = Instant::now();
+    let tp = Arc::new(ManualTimeProvider::new(base_instant, 0i64));
+
+    let room = TestRoom::new(2);
+    let alice_id = &room.identities[0];
+
+    let mut alice_engine = MerkleToxEngine::with_sk(
+        alice_id.device_pk,
+        alice_id.master_pk,
+        PhysicalDeviceSk::from(alice_id.device_sk.to_bytes()),
+        rng.clone(),
+        tp.clone(),
+    );
+    let alice_store = InMemoryStore::new();
+    room.setup_engine(&mut alice_engine, &alice_store);
+
+    // Insert a voucher with timestamp 0 (stale) and one at 5000 (fresh after 10s advance).
+    let dummy_hash = NodeHash::from([0x42u8; 32]);
+    let stale_device = PhysicalDevicePk::from([0x01u8; 32]);
+    let fresh_device = PhysicalDevicePk::from([0x02u8; 32]);
+
+    if let Some(conv) = alice_engine.conversations.get_mut(&room.conv_id) {
+        let map = conv.vouchers_mut().entry(dummy_hash).or_default();
+        map.insert(stale_device, 0); // timestamp 0 → stale after 10s
+        map.insert(fresh_device, 5000); // timestamp 5000 → still valid at t=10001
+    }
+
+    // Advance time by 10001ms (just past VOUCHER_TIMEOUT_MS=10000).
+    tp.advance(Duration::from_millis(10_001));
+
+    let poll_instant = base_instant + Duration::from_millis(10_001);
+    let _effects = alice_engine.poll(poll_instant, &alice_store).unwrap();
+
+    let vouchers = alice_engine
+        .conversations
+        .get(&room.conv_id)
+        .map(|c| c.vouchers().get(&dummy_hash).cloned())
+        .unwrap_or(None);
+
+    // Stale voucher (ts=0) must be evicted; fresh voucher (ts=5000) must remain.
+    if let Some(map) = &vouchers {
+        assert!(
+            !map.contains_key(&stale_device),
+            "Voucher from ts=0 should be evicted after 10001ms"
+        );
+        assert!(
+            map.contains_key(&fresh_device),
+            "Voucher from ts=5000 should still be valid at ts=10001"
+        );
+    } else {
+        panic!("Voucher map for hash should still exist (fresh entry remains)");
+    }
+}
+
+#[test]
+fn test_poll_removes_empty_voucher_entries() {
+    let _ = tracing_subscriber::fmt::try_init();
+    let rng = rand::rngs::StdRng::seed_from_u64(42);
+
+    let base_instant = Instant::now();
+    let tp = Arc::new(ManualTimeProvider::new(base_instant, 0i64));
+
+    let room = TestRoom::new(2);
+    let alice_id = &room.identities[0];
+
+    let mut alice_engine = MerkleToxEngine::with_sk(
+        alice_id.device_pk,
+        alice_id.master_pk,
+        PhysicalDeviceSk::from(alice_id.device_sk.to_bytes()),
+        rng.clone(),
+        tp.clone(),
+    );
+    let alice_store = InMemoryStore::new();
+    room.setup_engine(&mut alice_engine, &alice_store);
+
+    // Insert a single stale voucher.
+    let dummy_hash = NodeHash::from([0x43u8; 32]);
+    let stale_device = PhysicalDevicePk::from([0x01u8; 32]);
+
+    if let Some(conv) = alice_engine.conversations.get_mut(&room.conv_id) {
+        conv.vouchers_mut()
+            .entry(dummy_hash)
+            .or_default()
+            .insert(stale_device, 0);
+    }
+
+    // Advance past TTL.
+    tp.advance(Duration::from_millis(10_001));
+    let poll_instant = base_instant + Duration::from_millis(10_001);
+    let _effects = alice_engine.poll(poll_instant, &alice_store).unwrap();
+
+    // The entire hash entry should be cleaned up (no empty maps left).
+    let has_entry = alice_engine
+        .conversations
+        .get(&room.conv_id)
+        .map(|c| c.vouchers().contains_key(&dummy_hash))
+        .unwrap_or(false);
+    assert!(
+        !has_entry,
+        "Empty voucher map entry should be removed after all vouchers expire"
+    );
+}

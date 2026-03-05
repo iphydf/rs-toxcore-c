@@ -45,7 +45,7 @@ fn test_identity_reconstruction() {
         store.put_node(&conv_id, genesis, true).unwrap();
 
         // Auth node for Alice's device
-        let cert = alice.make_device_cert(Permissions::MESSAGE, 2000000);
+        let cert = alice.make_device_cert_for(Permissions::MESSAGE, 2000000, conv_id);
         let auth_node = create_admin_node(
             &conv_id,
             alice.master_pk,
@@ -59,7 +59,13 @@ fn test_identity_reconstruction() {
         store.put_node(&conv_id, auth_node, true).unwrap();
 
         // Auth node for Bob's device (issued by Alice)
-        let cert_bob = make_cert(&alice.master_sk, bob_pk, Permissions::MESSAGE, 2000000);
+        let cert_bob = make_cert(
+            &alice.master_sk,
+            bob_pk,
+            Permissions::MESSAGE,
+            2000000,
+            conv_id,
+        );
         let auth_bob = create_admin_node(
             &conv_id,
             alice.master_pk,

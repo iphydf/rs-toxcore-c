@@ -1439,6 +1439,7 @@ fn peek_message_type(data: &[u8]) -> Option<MessageType> {
         0x11 => Some(MessageType::ReinclusionResponse),
         0x12 => Some(MessageType::ReconPowChallenge),
         0x13 => Some(MessageType::ReconPowSolution),
+        0x14 => Some(MessageType::AdminGossip),
         _ => None,
     }
 }

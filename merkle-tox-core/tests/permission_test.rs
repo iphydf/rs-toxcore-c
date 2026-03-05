@@ -45,6 +45,7 @@ fn test_permission_denied_message() {
         alice_device_pk,
         Permissions::ADMIN,
         2000000000000,
+        sync_key,
     );
     let ctx = merkle_tox_core::identity::CausalContext::global();
     engine
@@ -116,6 +117,7 @@ fn test_permission_granted_message() {
         alice_device_pk,
         Permissions::MESSAGE,
         2000000000000,
+        sync_key,
     );
     let ctx = merkle_tox_core::identity::CausalContext::global();
     engine
@@ -176,6 +178,7 @@ fn test_revocation_enforcement() {
         alice_device_pk,
         Permissions::MESSAGE | Permissions::ADMIN,
         2000000000000,
+        sync_key,
     );
     let ctx = merkle_tox_core::identity::CausalContext::global();
     engine
@@ -255,6 +258,7 @@ fn test_self_authorization() {
         alice_device_pk,
         Permissions::MESSAGE,
         2000000000000,
+        sync_key,
     );
 
     // Authorization node signed by the DEVICE itself (which is NOT YET authorized)
@@ -345,6 +349,7 @@ fn test_self_authorization_invalid_signature() {
         alice_device_pk,
         Permissions::MESSAGE,
         2000000000000,
+        sync_key,
     );
 
     // Authorization node where sender_pk is alice_device_pk, but it's signed by rogue_sk
@@ -403,6 +408,7 @@ fn test_unauthorized_leave_bug() {
         alice_device_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         2000000000000,
+        sync_key,
     );
     let ctx = merkle_tox_core::identity::CausalContext::global();
     engine
@@ -424,6 +430,7 @@ fn test_unauthorized_leave_bug() {
         bob_device_pk,
         Permissions::MESSAGE,
         2000000000000,
+        sync_key,
     );
     let ctx = merkle_tox_core::identity::CausalContext::global();
     engine
@@ -489,6 +496,7 @@ fn test_authorized_self_leave() {
         alice_device_pk,
         Permissions::MESSAGE, // No ADMIN
         2000000000000,
+        sync_key,
     );
     let ctx = merkle_tox_core::identity::CausalContext::global();
     engine

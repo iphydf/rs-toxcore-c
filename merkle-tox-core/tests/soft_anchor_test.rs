@@ -26,6 +26,7 @@ fn make_soft_anchor(
         identity.device_pk,
         Permissions::ALL,
         i64::MAX,
+        *conv_id,
     );
     create_admin_node(
         conv_id,
@@ -89,6 +90,7 @@ fn test_soft_anchor_single_parent() {
         alice.device_pk,
         Permissions::ALL,
         i64::MAX,
+        conv_id,
     );
     let mut node = test_node();
     node.author_pk = alice.master_pk;
@@ -113,6 +115,7 @@ fn test_soft_anchor_single_parent() {
         alice.device_pk,
         Permissions::ALL,
         i64::MAX,
+        conv_id,
     );
     let mut node2 = test_node();
     node2.author_pk = alice.master_pk;
@@ -137,6 +140,7 @@ fn test_soft_anchor_single_parent() {
         alice.device_pk,
         Permissions::ALL,
         i64::MAX,
+        conv_id,
     );
     let mut node3 = test_node();
     node3.author_pk = alice.master_pk;
@@ -406,6 +410,7 @@ fn test_soft_anchor_authoring() {
         alice.device_pk,
         Permissions::MESSAGE,
         i64::MAX,
+        room.conv_id,
     );
     engine.self_certs.insert(room.conv_id, cert);
 
@@ -541,6 +546,7 @@ fn test_soft_anchor_auto_trigger() {
         alice.device_pk,
         Permissions::MESSAGE,
         i64::MAX,
+        room.conv_id,
     );
     engine.self_certs.insert(room.conv_id, cert);
 

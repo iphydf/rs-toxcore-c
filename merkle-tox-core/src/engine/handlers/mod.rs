@@ -821,6 +821,25 @@ impl MerkleToxEngine {
                     );
                 }
             }
+            ProtocolMessage::AdminGossip {
+                conversation_id,
+                hash,
+            } => {
+                // Priority-fetch admin node if not already known.
+                let overlay = EngineStore {
+                    store,
+                    cache: &self.pending_cache,
+                };
+                if !overlay.has_node(&hash)
+                    && let Some(PeerSession::Active(session)) =
+                        self.sessions.get_mut(&(sender_pk, conversation_id))
+                    && !session.common.in_flight_fetches.contains(&hash)
+                    && !session.common.missing_admin_nodes.contains(&hash)
+                {
+                    session.common.missing_admin_nodes.push_back(hash);
+                    session.common.heads_dirty = true;
+                }
+            }
             ProtocolMessage::HandshakeError {
                 conversation_id,
                 reason,
@@ -839,7 +858,8 @@ impl MerkleToxEngine {
                     state.window_start_ms = now;
                 }
                 state.attempts += 1;
-                let backoff_ms = (2000u64 << state.attempts.min(2)).min(8000);
+                let backoff_ms = (super::HANDSHAKE_RETRY_BASE_MS << state.attempts.min(2))
+                    .min(super::HANDSHAKE_RETRY_MAX_MS);
                 state.next_retry_ms = now + backoff_ms as i64;
             }
         }

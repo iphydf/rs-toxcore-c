@@ -45,6 +45,7 @@ fn test_strict_permission_intersection_enforcement() {
         admin_a.device_pk,
         Permissions::ADMIN,
         2000,
+        room.conv_id,
     );
     let admin_heads = store.get_admin_heads(&room.conv_id);
     let auth_a_node = create_admin_node(
@@ -71,6 +72,7 @@ fn test_strict_permission_intersection_enforcement() {
         device_b.device_pk,
         Permissions::MESSAGE,
         2000,
+        room.conv_id,
     );
     let auth_b_node = create_admin_node(
         &room.conv_id,
@@ -131,6 +133,7 @@ fn test_circular_delegation_denial() {
         admin_a.device_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         2000,
+        room.conv_id,
     );
     let admin_heads = store.get_admin_heads(&room.conv_id);
     let node_ma = create_admin_node(
@@ -156,6 +159,7 @@ fn test_circular_delegation_denial() {
         admin_b.device_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         2000,
+        room.conv_id,
     );
     let node_ab = create_admin_node(
         &room.conv_id,
@@ -179,6 +183,7 @@ fn test_circular_delegation_denial() {
         admin_a.device_pk,
         Permissions::ADMIN | Permissions::MESSAGE,
         2000,
+        room.conv_id,
     );
     let node_ba = create_admin_node(
         &room.conv_id,
@@ -289,6 +294,7 @@ fn test_anchor_snapshot_rejects_message_only_cert() {
         alice.device_pk,
         Permissions::MESSAGE, // not ADMIN
         9_999_999,
+        conv_id,
     );
     let anchor_snapshot = create_admin_node(
         &conv_id,
@@ -383,5 +389,133 @@ fn test_pending_conversation_blocks_admin_authoring() {
         !authored_admin,
         "author_node must not produce a verified WriteStore for admin nodes when the \
          conversation is in Pending state; Identity-Pending devices must not author admin actions"
+    );
+}
+
+// ── DelegationCertificate conversation_id scoping (speculative paths) ────
+
+#[test]
+fn test_anchor_snapshot_rejects_wrong_conv_id_cert() {
+    let _ = tracing_subscriber::fmt::try_init();
+    let rng = StdRng::seed_from_u64(42);
+    let tp = Arc::new(ManualTimeProvider::new(Instant::now(), 1000));
+    let alice = TestIdentity::new();
+    let bob = TestIdentity::new();
+    let conv_id = ConversationId::from([3u8; 32]);
+    let wrong_conv_id = ConversationId::from([4u8; 32]);
+
+    let genesis_node = create_genesis_pow(&conv_id, &alice, "AnchorSnapshot ConvId Test");
+
+    // Bob's engine: shallow sync (only genesis), so AnchorSnapshot uses speculative path.
+    let mut bob_engine = MerkleToxEngine::with_sk(
+        bob.device_pk,
+        bob.master_pk,
+        PhysicalDeviceSk::from(bob.device_sk.to_bytes()),
+        rng.clone(),
+        tp.clone(),
+    );
+    let bob_store = InMemoryStore::new();
+    let effects = bob_engine
+        .handle_node(conv_id, genesis_node.clone(), &bob_store, None)
+        .unwrap();
+    apply_effects(effects, &bob_store);
+
+    // Alice creates an AnchorSnapshot with ADMIN cert but scoped to WRONG conversation.
+    let wrong_cert = make_cert(
+        &alice.master_sk,
+        alice.device_pk,
+        Permissions::ADMIN | Permissions::MESSAGE,
+        9_999_999,
+        wrong_conv_id,
+    );
+    let anchor_snapshot = create_admin_node(
+        &conv_id,
+        alice.master_pk,
+        &alice.device_sk,
+        vec![genesis_node.hash()],
+        ControlAction::AnchorSnapshot {
+            data: SnapshotData {
+                basis_hash: genesis_node.hash(),
+                members: vec![],
+                last_seq_numbers: vec![],
+            },
+            cert: wrong_cert,
+        },
+        1,
+        2,
+        1000,
+    );
+
+    let effects = bob_engine
+        .handle_node(conv_id, anchor_snapshot, &bob_store, None)
+        .unwrap();
+
+    let verified = effects
+        .iter()
+        .any(|e| matches!(e, Effect::WriteStore(_, _, true)));
+    assert!(
+        !verified,
+        "AnchorSnapshot with cert scoped to a different conversation must be rejected"
+    );
+}
+
+#[test]
+fn test_soft_anchor_rejects_wrong_conv_id_cert() {
+    let _ = tracing_subscriber::fmt::try_init();
+    let rng = StdRng::seed_from_u64(42);
+    let tp = Arc::new(ManualTimeProvider::new(Instant::now(), 1000));
+    let alice = TestIdentity::new();
+    let bob = TestIdentity::new();
+    let conv_id = ConversationId::from([5u8; 32]);
+    let wrong_conv_id = ConversationId::from([6u8; 32]);
+
+    let genesis_node = create_genesis_pow(&conv_id, &alice, "SoftAnchor ConvId Test");
+
+    // Bob's engine: shallow sync (only genesis), so SoftAnchor uses speculative path.
+    let mut bob_engine = MerkleToxEngine::with_sk(
+        bob.device_pk,
+        bob.master_pk,
+        PhysicalDeviceSk::from(bob.device_sk.to_bytes()),
+        rng.clone(),
+        tp.clone(),
+    );
+    let bob_store = InMemoryStore::new();
+    let effects = bob_engine
+        .handle_node(conv_id, genesis_node.clone(), &bob_store, None)
+        .unwrap();
+    apply_effects(effects, &bob_store);
+
+    // Alice creates a SoftAnchor with MESSAGE cert scoped to WRONG conversation.
+    let wrong_cert = make_cert(
+        &alice.master_sk,
+        alice.device_pk,
+        Permissions::MESSAGE,
+        9_999_999,
+        wrong_conv_id,
+    );
+    let soft_anchor = create_admin_node(
+        &conv_id,
+        alice.master_pk,
+        &alice.device_sk,
+        vec![genesis_node.hash()],
+        ControlAction::SoftAnchor {
+            basis_hash: genesis_node.hash(),
+            cert: wrong_cert,
+        },
+        1,
+        2,
+        1000,
+    );
+
+    let effects = bob_engine
+        .handle_node(conv_id, soft_anchor, &bob_store, None)
+        .unwrap();
+
+    let verified = effects
+        .iter()
+        .any(|e| matches!(e, Effect::WriteStore(_, _, true)));
+    assert!(
+        !verified,
+        "SoftAnchor with cert scoped to a different conversation must be rejected"
     );
 }

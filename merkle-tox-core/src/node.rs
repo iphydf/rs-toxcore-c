@@ -353,6 +353,10 @@ impl<T: Transport, S: NodeStore + BlobStore> MerkleToxNode<T, S> {
             Effect::NodeEquivocation { .. } => {
                 // Equivocation events are informational; no store action needed.
             }
+            Effect::HistorySnapshotNeeded(_cid) => {
+                // Application-layer trigger: caller should compile history snapshot,
+                // encrypt, upload to CAS, and call author_history_key_export().
+            }
         }
         Ok(())
     }
@@ -407,5 +411,6 @@ fn get_message_type(msg: &ProtocolMessage) -> MessageType {
         ProtocolMessage::ReinclusionRequest { .. } => MessageType::ReinclusionRequest,
         ProtocolMessage::ReinclusionResponse { .. } => MessageType::ReinclusionResponse,
         ProtocolMessage::HandshakeError { .. } => MessageType::HandshakeError,
+        ProtocolMessage::AdminGossip { .. } => MessageType::AdminGossip,
     }
 }

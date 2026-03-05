@@ -167,6 +167,8 @@ pub enum Content {
     // 3: HistoryExport
     HistoryExport {
         blob_hash: NodeHash,
+        blob_size: u64,
+        bao_root: Option<[u8; 32]>,
         ephemeral_pk: EphemeralX25519Pk,
         wrapped_keys: Vec<WrappedKey>,
     },

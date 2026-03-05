@@ -113,6 +113,13 @@ pub const MAX_OPAQUE_REQUESTS_PER_VOUCHER: usize = 500;
 /// Prevents unbounded memory growth from voucher accumulation.
 pub const MAX_VOUCHERS_PER_HASH: usize = 3;
 
+/// Voucher expiry timeout in milliseconds. Vouchers older than this are
+/// evicted during poll(). Spec §5: 10 seconds.
+pub const VOUCHER_TIMEOUT_MS: i64 = 10_000;
+
+/// Maximum thumbnail size for inline blob previews (32 KiB).
+pub const MAX_THUMBNAIL_SIZE: usize = 32_768;
+
 /// Blacklist tier 1 duration: 10 minutes.
 pub const BLACKLIST_TIER1_MS: i64 = 10 * 60 * 1000;
 /// Blacklist tier 2 duration: 1 hour.

@@ -25,6 +25,8 @@ pub enum IdentityError {
     TooManyDevices(usize),
     #[error("Too many devices in group (max {0})")]
     TooManyGroupDevices(usize),
+    #[error("Certificate conversation_id mismatch")]
+    ConversationIdMismatch,
 }
 
 #[derive(ToxProto)]
@@ -407,6 +409,11 @@ impl IdentityManager {
         auth_hash: NodeHash,
     ) -> Result<(), IdentityError> {
         self.path_cache.lock().clear(); // Clear cache on authorization
+
+        // Validate certificate is scoped to this conversation.
+        if cert.conversation_id != conversation_id {
+            return Err(IdentityError::ConversationIdMismatch);
+        }
 
         // 1. Level 1 delegation if issuer is logical_pk (Master Seed).
         if let Err(e) = verify_delegation(cert, logical_pk, now_ms) {

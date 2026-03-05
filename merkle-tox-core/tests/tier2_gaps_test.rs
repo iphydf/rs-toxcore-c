@@ -89,7 +89,7 @@ fn test_vouch_purged_on_revocation() {
         conv.vouchers_mut()
             .entry(bob_hash)
             .or_default()
-            .insert(bob.device_pk);
+            .insert(bob.device_pk, 1000);
     }
 
     // Verify vouch exists
@@ -99,7 +99,7 @@ fn test_vouch_purged_on_revocation() {
         .map(|c| {
             c.vouchers()
                 .get(&bob_hash)
-                .is_some_and(|v| v.contains(&bob.device_pk))
+                .is_some_and(|v| v.contains_key(&bob.device_pk))
         })
         .unwrap_or(false);
     assert!(vouch_exists, "Bob's vouch should exist before revocation");
@@ -137,7 +137,7 @@ fn test_vouch_purged_on_revocation() {
         .map(|c| {
             c.vouchers()
                 .get(&bob_hash)
-                .is_some_and(|v| v.contains(&bob.device_pk))
+                .is_some_and(|v| v.contains_key(&bob.device_pk))
         })
         .unwrap_or(false);
     assert!(
@@ -402,6 +402,7 @@ fn test_max_group_devices_enforced() {
         PhysicalDevicePk::from(master_sk.verifying_key().to_bytes()),
         Permissions::ALL,
         i64::MAX,
+        conv_id,
     );
     manager
         .authorize_device(
@@ -424,8 +425,13 @@ fn test_max_group_devices_enforced() {
     for i in 0..3u32 {
         let dev_sk = merkle_tox_core::testing::random_signing_key();
         let dev_pk = PhysicalDevicePk::from(dev_sk.verifying_key().to_bytes());
-        let dev_cert =
-            merkle_tox_core::testing::make_cert(&ident2_sk, dev_pk, Permissions::MESSAGE, i64::MAX);
+        let dev_cert = merkle_tox_core::testing::make_cert(
+            &ident2_sk,
+            dev_pk,
+            Permissions::MESSAGE,
+            i64::MAX,
+            conv_id,
+        );
         manager
             .authorize_device(
                 &ctx,
@@ -965,9 +971,9 @@ fn test_bounded_voucher_sets() {
     // Manually insert 3 vouchers for that hash (MAX_VOUCHERS_PER_HASH)
     if let Some(conv) = engine.conversations.get_mut(&room.conv_id) {
         let set = conv.vouchers_mut().entry(msg_hash).or_default();
-        set.insert(PhysicalDevicePk::from([0x01; 32]));
-        set.insert(PhysicalDevicePk::from([0x02; 32]));
-        set.insert(PhysicalDevicePk::from([0x03; 32]));
+        set.insert(PhysicalDevicePk::from([0x01; 32]), 2000);
+        set.insert(PhysicalDevicePk::from([0x02; 32]), 2000);
+        set.insert(PhysicalDevicePk::from([0x03; 32]), 2000);
     }
 
     // Verify we have 3 vouchers
@@ -1337,6 +1343,8 @@ fn test_history_export_wire_encrypted() {
         network_timestamp: 1000,
         content: Content::HistoryExport {
             blob_hash: NodeHash::from([0xBB; 32]),
+            blob_size: 0,
+            bao_root: None,
             ephemeral_pk: merkle_tox_core::dag::EphemeralX25519Pk::from([0xCC; 32]),
             wrapped_keys: vec![],
         },
@@ -1409,5 +1417,71 @@ fn test_history_export_wire_encrypted() {
         k_header_export.as_bytes(),
         k_header_export_other.as_bytes(),
         "Different k_conv should produce different export keys"
+    );
+}
+
+// ── DelegationCertificate conversation_id scoping ────────────────────────
+
+#[test]
+fn test_delegation_cert_conversation_id_mismatch() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let conv_a = ConversationId::from([0xAAu8; 32]);
+    let conv_b = ConversationId::from([0xBBu8; 32]);
+
+    let mut mgr = merkle_tox_core::identity::IdentityManager::new();
+
+    let master_sk = merkle_tox_core::testing::random_signing_key();
+    let master_pk = LogicalIdentityPk::from(master_sk.verifying_key().to_bytes());
+    let device_sk = merkle_tox_core::testing::random_signing_key();
+    let device_pk = PhysicalDevicePk::from(device_sk.verifying_key().to_bytes());
+
+    mgr.add_member(conv_a, master_pk, 0, 0);
+    mgr.add_member(conv_b, master_pk, 0, 0);
+
+    // Create cert scoped to conv_A
+    let cert = merkle_tox_core::testing::make_cert(
+        &master_sk,
+        device_pk,
+        Permissions::ALL,
+        i64::MAX,
+        conv_a,
+    );
+
+    let ctx = merkle_tox_core::identity::CausalContext::global();
+
+    // Should succeed for conv_A
+    assert!(
+        mgr.authorize_device(
+            &ctx,
+            conv_a,
+            master_pk,
+            &cert,
+            0,
+            0,
+            NodeHash::from([0u8; 32])
+        )
+        .is_ok(),
+        "Cert scoped to conv_A should work for conv_A"
+    );
+
+    // Should FAIL for conv_B
+    let err = mgr
+        .authorize_device(
+            &ctx,
+            conv_b,
+            master_pk,
+            &cert,
+            0,
+            0,
+            NodeHash::from([0u8; 32]),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            merkle_tox_core::identity::IdentityError::ConversationIdMismatch
+        ),
+        "Cert scoped to conv_A must be rejected for conv_B, got: {err:?}"
     );
 }

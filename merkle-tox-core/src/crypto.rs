@@ -9,6 +9,7 @@ use curve25519_dalek::edwards::CompressedEdwardsY;
 use sha2::{Digest, Sha512};
 use subtle::ConstantTimeEq;
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret};
+use zeroize::Zeroize;
 
 /// Keys to pack content node into wire format.
 pub struct PackContentKeys {
@@ -31,7 +32,9 @@ pub fn derive_k_header_epoch(k_conv: &KConv, sender_key_n: &SenderKey) -> Header
     let mut material = [0u8; 64];
     material[0..32].copy_from_slice(k_conv.as_bytes());
     material[32..64].copy_from_slice(sender_key_n.as_bytes());
-    HeaderKey::from(derive_key("merkle-tox v1 header-key", &material))
+    let result = HeaderKey::from(derive_key("merkle-tox v1 header-key", &material));
+    material.zeroize();
+    result
 }
 
 /// sender_hint = Blake3-KDF("merkle-tox v1 hint", K_msg)[0..4]
@@ -89,7 +92,7 @@ pub fn decrypt_routing_aead(
     Some(seq)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Zeroize)]
 pub struct ConversationKeys {
     pub k_conv: KConv,
     pub k_enc: EncryptionKey,
@@ -126,9 +129,10 @@ pub fn ed25519_public_key_from_seed(seed: &[u8; 32]) -> [u8; 32] {
 pub fn ed25519_sk_to_x25519(ed_sk: &[u8; 32]) -> [u8; 32] {
     let mut hasher = Sha512::new();
     hasher.update(ed_sk);
-    let hash = hasher.finalize();
+    let mut hash = hasher.finalize();
     let mut x_sk = [0u8; 32];
     x_sk.copy_from_slice(&hash[0..32]);
+    hash.as_mut_slice().zeroize();
 
     // Clamping
     x_sk[0] &= 248;
@@ -164,9 +168,11 @@ pub fn ecies_wrap(
         material.extend_from_slice(auth);
     }
 
-    let k_wrap = derive_key("merkle-tox v1 keywrap", &material);
+    let mut k_wrap = derive_key("merkle-tox v1 keywrap", &material);
+    material.zeroize();
     // ChaCha20-Poly1305 with zero nonce (safe: key is unique per entry)
     let cipher = ChaCha20Poly1305::new(&k_wrap.into());
+    k_wrap.zeroize();
     cipher
         .encrypt(&[0u8; 12].into(), plaintext.as_ref())
         .expect("ECIES wrap should not fail")
@@ -202,8 +208,10 @@ pub fn ecies_unwrap(
         material.extend_from_slice(auth);
     }
 
-    let k_wrap = derive_key("merkle-tox v1 keywrap", &material);
+    let mut k_wrap = derive_key("merkle-tox v1 keywrap", &material);
+    material.zeroize();
     let cipher = ChaCha20Poly1305::new(&k_wrap.into());
+    k_wrap.zeroize();
     cipher.decrypt(&[0u8; 12].into(), ciphertext).ok()
 }
 
@@ -334,10 +342,9 @@ pub fn x3dh_derive_secret_initiator(
         material.extend_from_slice(dh4.as_bytes());
     }
 
-    Some(SharedSecretKey::from(derive_key(
-        "merkle-tox v1 x3dh-shared",
-        &material,
-    )))
+    let result = SharedSecretKey::from(derive_key("merkle-tox v1 x3dh-shared", &material));
+    material.zeroize();
+    Some(result)
 }
 
 /// Computes X3DH shared secret for recipient.
@@ -371,10 +378,9 @@ pub fn x3dh_derive_secret_recipient(
         material.extend_from_slice(dh4.as_bytes());
     }
 
-    Some(SharedSecretKey::from(derive_key(
-        "merkle-tox v1 x3dh-shared",
-        &material,
-    )))
+    let result = SharedSecretKey::from(derive_key("merkle-tox v1 x3dh-shared", &material));
+    material.zeroize();
+    Some(result)
 }
 
 /// Initializes ratchet chain key for sender from conversation key.
@@ -382,7 +388,9 @@ pub fn ratchet_init_sender(k_conv: &KConv, sender_pk: &PhysicalDevicePk) -> Chai
     let mut material = [0u8; 64];
     material[0..32].copy_from_slice(k_conv.as_bytes());
     material[32..64].copy_from_slice(sender_pk.as_bytes());
-    ChainKey::from(derive_key("merkle-tox v1 sender-seed", &material))
+    let result = ChainKey::from(derive_key("merkle-tox v1 sender-seed", &material));
+    material.zeroize();
+    result
 }
 
 /// Derives next chain key from current.
@@ -407,7 +415,9 @@ pub fn derive_k_iblt(k_conv: &KConv, conversation_id: &crate::dag::ConversationI
     let mut material = [0u8; 64];
     material[0..32].copy_from_slice(k_conv.as_bytes());
     material[32..64].copy_from_slice(conversation_id.as_bytes());
-    derive_key("merkle-tox v1 iblt-conv-key", &material)
+    let result = derive_key("merkle-tox v1 iblt-conv-key", &material);
+    material.zeroize();
+    result
 }
 
 /// Derives K_header_export from K_conv for HistoryExport room-wide encryption.

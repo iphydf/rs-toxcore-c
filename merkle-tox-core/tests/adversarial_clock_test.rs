@@ -89,7 +89,8 @@ fn test_quarantine_stability() {
     engine
         .identity_manager
         .add_member(conv_id, remote.master_pk, 0, 0);
-    let cert = remote.make_device_cert(merkle_tox_core::dag::Permissions::ALL, i64::MAX);
+    let cert =
+        remote.make_device_cert_for(merkle_tox_core::dag::Permissions::ALL, i64::MAX, conv_id);
     let ctx = merkle_tox_core::identity::CausalContext::global();
     engine
         .identity_manager

@@ -61,6 +61,7 @@ rust_library(
         "@crates//:thiserror",
         "@crates//:tracing",
         "@crates//:x25519-dalek",
+        "@crates//:zeroize",
         "@crates//:zstd",
     ],
 )

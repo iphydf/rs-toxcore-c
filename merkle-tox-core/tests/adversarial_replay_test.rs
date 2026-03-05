@@ -109,7 +109,7 @@ fn test_cross_room_auth_replay() {
     room_b.setup_engine(&mut engine_b, &store_b);
 
     // Alice authorizes a helper in Room A
-    let cert = alice.make_device_cert(Permissions::ALL, 5000);
+    let cert = alice.make_device_cert_for(Permissions::ALL, 5000, room_a.conv_id);
     let auth_node_a = create_admin_node(
         &room_a.conv_id,
         alice.master_pk,
@@ -382,6 +382,7 @@ fn test_speculative_node_replay_is_deduplicated() {
         charlie.device_pk,
         Permissions::all(),
         9_999_999,
+        conv_id,
     );
     let speculative_snap = create_admin_node(
         &conv_id,

@@ -196,6 +196,7 @@ fn test_key_wrap_distribution_and_unwrapping() {
         bob_device_pk,
         Permissions::MESSAGE,
         2000000000000,
+        sync_key,
     );
     let ctx = merkle_tox_core::identity::CausalContext::global();
     alice_engine
@@ -314,6 +315,7 @@ fn test_key_rotation_skips_last_resort_only_members() {
         alice.device_pk,
         Permissions::all(),
         9_999_999,
+        conv_id,
     );
     let auth_alice = create_admin_node(
         &conv_id,
@@ -351,7 +353,13 @@ fn test_key_rotation_skips_last_resort_only_members() {
         .unwrap();
     apply_effects(effects, &store);
 
-    let bob_cert = make_cert(&bob.master_sk, bob.device_pk, Permissions::all(), 9_999_999);
+    let bob_cert = make_cert(
+        &bob.master_sk,
+        bob.device_pk,
+        Permissions::all(),
+        9_999_999,
+        conv_id,
+    );
     // auth_bob references auth_alice (last Admin head), not invite_bob (now Content).
     // Invite is Content-type under the new classification, so Admin chain isolation
     // prevents Admin nodes from referencing it.
@@ -520,6 +528,7 @@ fn test_sender_key_distribution_establishes_conversation() {
         alice.device_pk,
         Permissions::all(),
         9_999_999,
+        conv_id,
     );
     let auth_alice = create_admin_node(
         &conv_id,
@@ -1433,6 +1442,7 @@ fn test_announcement_rotation_after_100_handshakes() {
         alice.device_pk,
         Permissions::all(),
         i64::MAX,
+        conv_id,
     );
     let auth_node = create_admin_node(
         &conv_id,
