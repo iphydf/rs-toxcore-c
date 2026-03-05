@@ -1,6 +1,6 @@
 use crate::error::MerkleToxError;
 use bitflags::bitflags;
-use ed25519_dalek::{Signature as DalekSignature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature as DalekSignature, VerifyingKey};
 use std::collections::HashSet;
 use std::io::Cursor;
 pub use tox_proto::{
@@ -97,11 +97,21 @@ pub struct WrappedKey {
     pub ciphertext: Vec<u8>,
 }
 
+/// Snapshot of a conversation's authorized membership at a given DAG
+/// basis. `members` and `last_seq_numbers` are length-capped at
+/// `MAX_GROUP_DEVICES` at the type level: any peer-supplied wire
+/// payload claiming more entries is rejected by `BoundedVec`'s
+/// deserialiser before allocating. Without the cap, an admin (or
+/// anyone able to author a Snapshot node) could ship arbitrarily
+/// large membership lists and force every recipient through that
+/// many identity-table operations before signature validation could
+/// reject the node.
 #[derive(Debug, Clone, ToxProto, PartialEq, Eq)]
 pub struct SnapshotData {
     pub basis_hash: NodeHash,
-    pub members: Vec<MemberInfo>,
-    pub last_seq_numbers: Vec<(PhysicalDevicePk, u64)>,
+    pub members: tox_proto::BoundedVec<MemberInfo, { tox_proto::constants::MAX_GROUP_DEVICES }>,
+    pub last_seq_numbers:
+        tox_proto::BoundedVec<(PhysicalDevicePk, u64), { tox_proto::constants::MAX_GROUP_DEVICES }>,
 }
 
 #[derive(Debug, Clone, ToxProto, PartialEq, Eq)]
@@ -128,7 +138,14 @@ pub enum ControlAction {
         reason: String,
     },
     Announcement {
-        pre_keys: Vec<SignedPreKey>,
+        /// X3DH one-time prekeys this device publishes for incoming
+        /// handshakes. Capped at `MAX_HANDSHAKES_PER_ANNOUNCEMENT`
+        /// at the type level — that's the protocol limit on inbound
+        /// handshakes before a fresh Announcement must be authored.
+        pre_keys: tox_proto::BoundedVec<
+            SignedPreKey,
+            { tox_proto::constants::MAX_HANDSHAKES_PER_ANNOUNCEMENT as usize },
+        >,
         last_resort_key: SignedPreKey,
     },
     HandshakePulse,
@@ -151,38 +168,71 @@ pub enum Content {
         data: Vec<u8>,
     },
     // 1: KeyWrap
+    //
+    // `wrapped_keys` carries one entry per recipient device.  Capped
+    // at `MAX_GROUP_DEVICES` at the type level so a malicious author
+    // cannot ship a node that costs every recipient O(huge) AEAD
+    // attempts before signature verification rejects.
     KeyWrap {
         generation: u64,
         anchor_hash: NodeHash,
         ephemeral_pk: EphemeralX25519Pk,
-        wrapped_keys: Vec<WrappedKey>,
+        wrapped_keys:
+            tox_proto::BoundedVec<WrappedKey, { tox_proto::constants::MAX_GROUP_DEVICES }>,
     },
     // 2: SenderKeyDistribution
+    //
+    // Both `wrapped_keys` (one per recipient) and `disclosed_keys`
+    // (one per device whose history this device discloses) are
+    // capped at `MAX_GROUP_DEVICES`.
     SenderKeyDistribution {
         ephemeral_pk: EphemeralX25519Pk,
-        wrapped_keys: Vec<WrappedKey>,
+        wrapped_keys:
+            tox_proto::BoundedVec<WrappedKey, { tox_proto::constants::MAX_GROUP_DEVICES }>,
         ephemeral_signing_pk: EphemeralSigningPk,
-        disclosed_keys: Vec<EphemeralSigningSk>,
+        disclosed_keys:
+            tox_proto::BoundedVec<EphemeralSigningSk, { tox_proto::constants::MAX_GROUP_DEVICES }>,
     },
     // 3: HistoryExport
+    //
+    // `blob_hash` is the chunk-Merkle root (same scheme as Content::Blob)
+    // and serves as both the CAS identity of the encrypted export blob
+    // AND the verification root for its chunk-boundary proofs. Receivers
+    // authenticate each chunk against `blob_hash` directly — no separate
+    // verification root is needed.
     HistoryExport {
         blob_hash: NodeHash,
-        blob_size: u64,
-        bao_root: Option<[u8; 32]>,
+        /// Peer-supplied (admin-asserted) byte size of the encrypted
+        /// export blob. Bounded by `tox_proto::constants::MAX_BLOB_SIZE`
+        /// at the receiver before it can drive any allocation. The
+        /// type wrap is the syntactic gate; without it a compromised
+        /// admin could OOM every peer in their conversation by
+        /// authoring a single HistoryExport with `blob_size = u64::MAX`.
+        blob_size: tox_proto::Untrusted<u64>,
         ephemeral_pk: EphemeralX25519Pk,
-        wrapped_keys: Vec<WrappedKey>,
+        /// One wrapped key per recipient device. Capped at
+        /// `MAX_GROUP_DEVICES` — same rationale as `KeyWrap`.
+        wrapped_keys:
+            tox_proto::BoundedVec<WrappedKey, { tox_proto::constants::MAX_GROUP_DEVICES }>,
     },
     // 4: Control
     Control(ControlAction),
     // 5: Text
     Text(String),
     // 6: Blob
+    //
+    // `metadata` is the per-blob description ride-along (legitimately
+    // small — the structured fields above carry the load). Capped at
+    // `MAX_METADATA_SIZE` (32 KiB) at the type level, same as
+    // `MerkleNode.metadata`, so a peer cannot ship a blob node with
+    // megabyte-scale metadata padding to drive memory cost on every
+    // recipient.
     Blob {
         hash: NodeHash,
         name: String,
         mime_type: String,
         size: u64,
-        metadata: Vec<u8>,
+        metadata: tox_proto::BoundedBytes<MAX_METADATA_SIZE>,
     },
     // 7: Location
     Location {
@@ -244,14 +294,28 @@ impl Content {
 /// Logical representation of Merkle node.
 #[derive(Debug, Clone, ToxProto, PartialEq)]
 pub struct MerkleNode {
-    pub parents: Vec<NodeHash>,
+    /// DAG parent hashes. Length-capped at `MAX_PARENTS` at the type
+    /// level so a peer cannot ship a node whose `parents` array
+    /// exceeds the cap — the deserialiser rejects the whole node
+    /// before any signature or hash work is done. `validate()` keeps
+    /// the same length check as a defence-in-depth guard for in-memory
+    /// constructions, but the wire path can no longer reach it with
+    /// an oversize value.
+    pub parents: tox_proto::BoundedVec<NodeHash, MAX_PARENTS>,
     pub author_pk: LogicalIdentityPk,
     pub sender_pk: PhysicalDevicePk,
     pub sequence_number: u64,
     pub topological_rank: u64,
     pub network_timestamp: i64,
     pub content: Content,
-    pub metadata: Vec<u8>,
+    /// Free-form metadata. Length-capped at `MAX_METADATA_SIZE`
+    /// (32 KiB) at the type level — same value the previous
+    /// `validate(metadata.len() > MAX_METADATA_SIZE)` check guarded.
+    /// The structural cap closes the wire-side gap: peer-supplied
+    /// metadata up to 1 MiB used to deserialise successfully and
+    /// only get rejected at validation; now the deserialiser rejects
+    /// over-cap values before any allocation past the cap.
+    pub metadata: tox_proto::BoundedBytes<MAX_METADATA_SIZE>,
     pub authentication: NodeAuth,
     /// PoW nonce for Genesis nodes. External to serialized content so
     /// node hash remains stable regardless of mining effort.
@@ -262,7 +326,8 @@ pub struct MerkleNode {
 /// Wire format for Merkle node, used for Content nodes to obfuscate metadata.
 #[derive(Debug, Clone, ToxProto, PartialEq)]
 pub struct WireNode {
-    pub parents: Vec<NodeHash>,
+    /// See `MerkleNode.parents` — same `MAX_PARENTS` structural cap.
+    pub parents: tox_proto::BoundedVec<NodeHash, MAX_PARENTS>,
     pub sender_hint: [u8; 4],
     pub encrypted_routing: Vec<u8>,
     pub payload_data: Vec<u8>,
@@ -313,7 +378,7 @@ pub trait NodeLookup {
 pub const POW_DIFFICULTY: u32 = 20; // Spec: BASELINE_POW_DIFFICULTY = 20 bits
 pub const MAX_SOFT_ANCHOR_CHAIN: u64 = 3;
 
-pub const MAX_PARENTS: usize = 16;
+pub const MAX_PARENTS: usize = 4096;
 pub const MAX_ANCESTRY_HOPS: u64 = 500;
 pub const MAX_METADATA_SIZE: usize = 32 * 1024; // 32KB
 
@@ -382,7 +447,7 @@ pub enum ValidationError {
 /// plaintext MerkleNode fields.
 #[derive(ToxSerialize)]
 struct WireAuthData {
-    parents: Vec<NodeHash>,
+    parents: tox_proto::BoundedVec<NodeHash, MAX_PARENTS>,
     sender_hint: [u8; 4],
     encrypted_routing: Vec<u8>,
     payload_data: Vec<u8>,
@@ -553,7 +618,16 @@ impl MerkleNode {
             let signature = DalekSignature::from_bytes(sig.as_ref());
             let auth_data = self.serialize_for_auth();
 
-            verifying_key.verify(&auth_data, &signature).is_ok()
+            // `verify_strict` rejects non-canonical (R, s) sibling
+            // signatures permitted by RFC 8032 / ZIP-215 lax
+            // verification. Admin signatures are non-repudiable and
+            // are included in `MerkleNode::hash()`, so the malleable
+            // siblings would otherwise produce two valid distinct
+            // DAG hashes for the same logical Admin payload —
+            // confounding the equivocation detector
+            // (verification.rs records evidence keyed on `node_hash`).
+            // See audit round 9 finding 2(a).
+            verifying_key.verify_strict(&auth_data, &signature).is_ok()
         } else {
             // EXCEPTION: 1-on-1 Genesis nodes use MAC.
             // Authenticity is checked in handle_node via MAC verification.
@@ -571,13 +645,15 @@ impl MerkleNode {
         _conversation_id: &ConversationId,
         lookup: &L,
     ) -> Result<(), ValidationError> {
-        // 0. Hard Limits
-        if self.parents.len() > MAX_PARENTS {
-            return Err(ValidationError::MaxParentsExceeded {
-                actual: self.parents.len(),
-                max: MAX_PARENTS,
-            });
-        }
+        // The `parents.len() > MAX_PARENTS` check that used to live
+        // here is now enforced structurally by the type
+        // (`BoundedVec<NodeHash, MAX_PARENTS>` on the field): any
+        // wire payload claiming more parents than the cap is rejected
+        // by `tox_proto::ToxDeserialize` before reaching this code,
+        // and no in-memory constructor admits over-cap values either.
+        // The `ValidationError::MaxParentsExceeded` variant is kept
+        // for backwards compatibility with downstream code that
+        // matches on it, but is no longer reachable from validation.
 
         // Parent uniqueness check
         let mut unique_parents = HashSet::new();
@@ -929,13 +1005,38 @@ impl MerkleNode {
         }
 
         if wire.flags.contains(WireFlags::COMPRESSED) {
-            payload_data = zstd::decode_all(&payload_data[..]).map_err(|e| {
-                tracing::debug!("Decompression failed: {}", e);
+            use std::io::Read as _;
+            // Decompression bombs: ~1 KB of compressed zeros can expand
+            // to GB. Cap the decompressed output at MAX_MESSAGE_SIZE — the
+            // same ceiling the authoring path respects. `take(cap + 1)`
+            // lets us observe the overflow: if the decoder wrote more
+            // than `cap` bytes we fail with a decompression-cap error.
+            let cap = tox_proto::constants::MAX_MESSAGE_SIZE;
+            let mut decoder = zstd::Decoder::new(&payload_data[..]).map_err(|e| {
                 MerkleToxError::Validation(ValidationError::DecompressionFailed(format!(
                     "Decompression failed: {}",
                     e
                 )))
             })?;
+            let mut out = Vec::with_capacity(4096);
+            let bytes_read = (&mut decoder)
+                .take((cap as u64) + 1)
+                .read_to_end(&mut out)
+                .map_err(|e| {
+                    MerkleToxError::Validation(ValidationError::DecompressionFailed(format!(
+                        "Decompression failed: {}",
+                        e
+                    )))
+                })?;
+            if bytes_read > cap {
+                return Err(MerkleToxError::Validation(
+                    ValidationError::DecompressionFailed(format!(
+                        "Decompression failed: oversized output exceeds MAX_MESSAGE_SIZE ({} bytes)",
+                        cap
+                    )),
+                ));
+            }
+            payload_data = out;
         }
 
         if payload_data.len() < 8 {
@@ -961,7 +1062,13 @@ impl MerkleNode {
             };
 
         let consumed = cursor.position() as usize;
-        let metadata = payload_data[8 + consumed..].to_vec();
+        let metadata_slice = &payload_data[8 + consumed..];
+        let metadata = tox_proto::BoundedBytes::try_from_slice(metadata_slice).map_err(|_| {
+            MerkleToxError::Validation(ValidationError::MaxMetadataExceeded {
+                actual: metadata_slice.len(),
+                max: MAX_METADATA_SIZE,
+            })
+        })?;
 
         Ok(MerkleNode {
             parents: wire.parents.clone(),

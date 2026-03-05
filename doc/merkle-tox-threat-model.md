@@ -17,6 +17,13 @@ Attackers are categorized by capabilities and proximity:
     data, relay invalid nodes, or attempt to manipulate the sync state machine.
 *   **Compromised Participant:** An authorized member of a conversation whose
     device or Master Seed has been compromised by an adversary.
+*   **NGC Peer (Non-Member):** When a Merkle-Tox conversation is transported
+    over an NGC (see [merkle-tox-ngc.md](merkle-tox-ngc.md)), this adversary
+    is a participant in the underlying NGC who has not been authorized at the
+    Merkle-Tox layer (no `LogicalIdentityPk` in `MemberInfo`, or no valid
+    `PeerIntroduction` binding). They observe NGC routing metadata but are
+    gated out of Merkle-Tox sync responses. Specific deltas analysed in
+    [merkle-tox-ngc.md §7](merkle-tox-ngc.md).
 
 ## 3. Attack Analysis
 
@@ -91,6 +98,13 @@ Attackers are categorized by capabilities and proximity:
     2.  **Residual Leakage**: Timing analysis (observing *when* packets are
         sent) remains an open challenge inherent to the underlying Tox
         transport.
+*   **Transport-binding deltas**: For NGC-transported conversations, a passive
+    DHT observer who knows the `chat_id` of a *public* NGC can enumerate
+    currently-announced NGC peer keys; private NGCs do not self-announce. NGC
+    peer keys are per-chat ephemerals unrelated to long-term Tox identity and
+    cannot be linked across NGCs from the keys alone. See
+    [merkle-tox-ngc.md §7](merkle-tox-ngc.md) for the full per-binding
+    threat-model delta.
 
 ### 3.5. Clock Manipulation (Nudging)
 
@@ -146,10 +160,11 @@ Attackers are categorized by capabilities and proximity:
 | **Serialization**     | Positional Arrays      | **Gains**: Maximum wire     |
 :                       :                        : efficiency. **Loses**\:     :
 :                       :                        : Schema flexibility.         :
-| **Blob Verification** | Bao (Merkle Tree)      | **Gains**: Incremental 64KB |
-:                       :                        : verification. **Loses**\:   :
-:                       :                        : CPU overhead for proof      :
-:                       :                        : generation.                 :
+| **Blob Verification** | Chunk-Merkle Tree      | **Gains**: Incremental 64KB |
+:                       : (domain-separated      : chunk verification with     :
+:                       : blake3)                : proofs sized to fit in one  :
+:                       :                        : datagram. **Loses**\:       :
+:                       :                        : Modest CPU for tree build.  :
 | **Permission Eval**   | Dynamic Intersection   | **Gains**: Retroactive      |
 :                       :                        : revocation and escalation   :
 :                       :                        : resistance. **Loses**\:     :
@@ -234,3 +249,161 @@ Attackers are categorized by capabilities and proximity:
     actions are deterministically serialized) and **Transitive Revocation**
     (revoking the compromised admin immediately invalidates all their downstream
     actions and ghost authorizations).
+
+### 3.13. Nonce Reuse / Two-Time Pad in KeyWrap
+
+*   **Status**: **Prevented**
+*   **Description**: If `KeyWrap` AEAD reused a nonce across epoch rotations
+    (for example, a fixed zero nonce combined with a reused `k_wrap`), an
+    attacker could XOR two ciphertexts to recover plaintext via classical
+    two-time-pad analysis.
+*   **Mitigation**: Each `WrappedKey` derives a fresh `k_wrap` from
+    `ECDH(ephemeral_sk, recipient_spk)` (plus an OPK contribution when
+    present). The ephemeral sender key rotates per `KeyWrap` node, so even
+    a zero AEAD nonce is safe — `(k_wrap, nonce)` is unique per entry.
+    Regression-guarded by `adversarial_keywrap_test.rs::test_key_wrap_two_time_pad_vulnerability`.
+
+### 3.14. Skipped-Key Expiry (Forward-Secrecy Window)
+
+*   **Status**: **Prevented**
+*   **Description**: Out-of-order message delivery forces a receiver to retain
+    skipped message keys for later decryption. If those keys were held
+    indefinitely, a late-arriving forgery — or a compromise of the storage
+    — could decrypt messages well outside the intended forward-secrecy
+    window.
+*   **Mitigation**: Skipped keys are tagged with a wall-clock timestamp and
+    evicted proactively during `poll()` once they exceed 24 hours
+    (`86_400_000` ms). A message arriving after TTL expiry is rejected even
+    if its sequence number falls within the recorded skip range.
+    Regression-guarded by `adversarial_auth_test.rs::test_skipped_key_ttl_expiry_rejects_late_message`.
+
+### 3.15. Membership Poisoning via `Snapshot`
+
+*   **Status**: **Prevented**
+*   **Description**: A compromised admin authors a `Snapshot` node with a
+    tampered `members` field (for example, an empty list or a list that
+    omits specific targets). A receiver that imported the `members` list
+    blindly could be tricked into dropping authorized members, breaking
+    sync or silently denying them access.
+*   **Mitigation**: `ControlAction::Snapshot` side-effects only update
+    `latest_anchor_hashes`; they do NOT import `data.members`. Member-list
+    updates are restricted to `ControlAction::AnchorSnapshot`, which
+    requires a founder-signed delegation certificate with `ADMIN`
+    permission (checked via the `skip_generic_path` gate in the
+    verification phase). A plain `Snapshot` therefore cannot mutate the
+    membership view.
+    Regression-guarded by `adversarial_identity_test.rs::test_malicious_snapshot_poisoning`.
+
+### 3.16. Ratchet Key Persistence Leak
+
+*   **Status**: **Prevented**
+*   **Description**: Long-lived retention of ratchet chain keys,
+    `SenderKey`s, or message keys in engine state or on-disk storage
+    would undermine post-compromise security — an attacker who later
+    extracted the state could decrypt historical messages that should be
+    protected by the ratchet step.
+*   **Mitigation**: All secret newtypes (`ChainKey`, `MessageKey`,
+    `KConv`, `HeaderKey`, etc.) derive `ZeroizeOnDrop` via the
+    `merkle_tox_newtype!(...secret)` macro in `tox-proto/src/lib.rs`. On
+    ratchet advance, a `DeleteRatchetKey` effect is emitted
+    (`side_effects.rs`) so the storage layer purges the prior chain key
+    along with the in-memory zeroization. No ratchet key is retained past
+    the step that consumes it.
+    Regression-guarded by `memory_hardening_test.rs::test_engine_ratchet_key_persistence_leak`.
+
+### 3.17. Bootstrap-Exception Trust Hijack
+
+*   **Status**: **Mitigated**
+*   **Description**: Several content types are *bootstrap exceptions* in
+    the verifier — they are admitted via paths that intentionally
+    bypass the parent-not-verified and unauthorized-without-vouches
+    quarantines (`engine/processor/verification.rs`, the `is_bootstrap`
+    set), because a first-of-its-kind node has no verified parents and
+    the authoring device may not yet be in `authorized_devices`. The
+    set is enumerated:
+
+    -   `Content::Control(ControlAction::Genesis { … })`
+    -   `Content::Control(ControlAction::AuthorizeDevice { … })`
+    -   `Content::Control(ControlAction::AnchorSnapshot { … })`
+    -   `Content::KeyWrap { … }`
+    -   `Content::HistoryExport { … }`
+    -   `Content::SenderKeyDistribution { … }`
+
+    Without explicit invariants, each exception is an opportunity for
+    the *speculative-trust path to apply state mutations whose
+    invariants the speculative check doesn't enforce* — a class of
+    bug realized concretely by the second-Genesis injection
+    (`d67212d`) and the AnchorSnapshot member-list founder
+    displacement (`8470145`).
+*   **Invariants enforced**:
+
+    1.  **Genesis uniqueness.** At most one Genesis per conversation.
+        Enforced at the verifier entry (`verification.rs`, top of
+        `handle_node_internal_ext`): a Genesis whose hash differs from
+        the existing `latest_anchor_hashes[conv_id]` is dropped before
+        any state mutation. Without this, any peer who knows a
+        `conversation_id` could mint a second Genesis with themselves
+        as creator (the `is_authorized` self-bind shortcut at
+        `identity.rs:622` admits the self-author binding) and have
+        `apply_side_effects` register them as a co-founder.
+    2.  **Founder slot immutability.** Role=0 is established by
+        Genesis only and cannot be reassigned. Enforced at two
+        layers: (a) verifier rejects any AnchorSnapshot whose
+        `data.members` introduces a new role-0 logical_pk or demotes
+        the existing founder to a different role; (b) defense-in-depth
+        in `IdentityManager::add_member` (`identity.rs`) silently
+        refuses role=0 inserts that conflict with the existing
+        founder, plus refuses non-zero role on the existing founder.
+        Without this, a (legitimate or stale-cert) admin could mint
+        an AnchorSnapshot listing an attacker-controlled
+        `LogicalIdentityPk` with role=0; combined with `get_founder`'s
+        lex-smallest `BTreeMap` selection, the attacker would
+        supplant the founder for every downstream `verify_delegation`
+        check.
+    3.  **`conv_id` is opaque to the wire layer; user opt-in for new
+        conversations.** No wire-level message can introduce a new
+        conversation into `MerkleToxEngine::conversations`. Every
+        handler arm whose state mutation is keyed by `conv_id` —
+        `MerkleNode`, `SyncHeads`, `SyncSketch`, `SyncShardChecksums`,
+        `HandshakeError`, `BlobAvail`, `BlobFetch`, `BlobReq`,
+        `FetchBatchReq` — is gated behind
+        `self.conversations.contains_key(&conv_id)` (or the
+        equivalent `blob_conversations + sessions` check for blob
+        handlers). New conversations enter the engine only via
+        user-initiated paths (`start_sync`,
+        `load_conversation_state`). Consequence: even though
+        `conv_id` has no structural binding to the Genesis hash at
+        the protocol level (it is an application-supplied 32-byte
+        label), an attacker who picks a `conv_id` cannot inject
+        state into a victim's engine for that `conv_id` without the
+        victim's user-level acceptance.
+    4.  **OPK pre-claim closure.** `consumed_opk_ids` records OPK
+        consumption only after a successful ECIES unwrap, with one
+        exception for the §3.8 collision tiebreaker (where the prior
+        entry already proved the OPK was consumable, so a senior-wins
+        overwrite is recorded without the second decryption attempt).
+        Without this, any authorised peer could ship a KeyWrap with
+        junk ciphertext, "consume" any OPK they had observed in an
+        Announcement, and via the seniority tiebreaker deny K_conv
+        distribution from legitimate senders for the same OPK.
+*   **Regression-guarded by**:
+    `tests/adversarial_genesis_injection_test.rs` (§GI-1/2/3),
+    `tests/adversarial_anchor_snapshot_member_test.rs` (§AS-1/2),
+    `tests/adversarial_unknown_conversation_test.rs` (§UC-1/2/3/4/5),
+    `tests/adversarial_keywrap_preclaim_test.rs` (§KW-PRE-1).
+*   **Residual risk / out-of-scope**:
+    -   The protocol layer does *not* bind `conv_id` to the Genesis
+        hash. The application is responsible for managing `conv_id`
+        provenance during invitations (e.g., shipping
+        `(conv_id, k_conv)` together as a single invitation token).
+        Future protocol revisions may consider adopting
+        `conv_id := Genesis.hash()` as a structural invariant; today
+        it is enforced only by user opt-in at the wire boundary.
+    -   `verify_delegation` (`identity.rs`) checks signature +
+        expiry only and does *not* consult `revoked_devices`. A
+        late-joiner who has not yet replayed the admin chain past a
+        revocation may speculatively trust an AnchorSnapshot or
+        SoftAnchor signed by a now-revoked admin. Impact today is
+        bounded to `latest_anchor_hashes` overwrite and the §3.17
+        invariant 2 founder-slot protection limits the worst case;
+        full revocation-aware speculative trust is a separate fix.

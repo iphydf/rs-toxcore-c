@@ -4,7 +4,7 @@ use toxcore::tox::{
     Address, ConferenceNumber, FriendNumber, GroupNumber, ToxConnection, ToxUserStatus,
 };
 
-use toxcore::types::{ChatId, ConferenceId, MessageType, PublicKey};
+use toxcore::types::{GroupChatId, ConferenceId, MessageType, PublicKey};
 use toxxi::config::Config;
 use toxxi::model::{
     ConferenceReconcileInfo, ConsoleMessageType, DomainState, GroupReconcileInfo, MessageContent,
@@ -459,7 +459,7 @@ fn test_initialize_model_preserves_default_names() {
     // Initial state from Tox core with empty names
     let groups = vec![GroupReconcileInfo {
         number: GroupNumber(0),
-        chat_id: ChatId([0u8; 32]),
+        chat_id: GroupChatId([0u8; 32]),
         name: Some("".to_string()),
         role: None,
         self_name: None,
@@ -486,7 +486,7 @@ fn test_initialize_model_preserves_default_names() {
     );
 
     // Verify names are the defaults, not empty strings
-    let chat_id = ChatId([0u8; 32]);
+    let chat_id = GroupChatId([0u8; 32]);
     let group_win = WindowId::Group(chat_id);
     let conf_id = ConferenceId([0u8; 32]);
     let conf_win = WindowId::Conference(conf_id);

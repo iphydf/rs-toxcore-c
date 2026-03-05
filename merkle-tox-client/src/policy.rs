@@ -1,5 +1,6 @@
 use crate::state::ChatState;
-use merkle_tox_core::dag::PublicKey;
+use merkle_tox_core::dag::{PhysicalDevicePk, PublicKey};
+use std::time::Duration;
 
 pub trait PolicyHandler: Send + Sync {
     /// Decide whether to automatically authorize a device.
@@ -10,6 +11,16 @@ pub trait PolicyHandler: Send + Sync {
 
     /// Decide whether to respond to a HandshakePulse by announcing new keys.
     fn should_respond_to_pulse(&self, sender_pk: &PublicKey) -> bool;
+
+    /// Interval between periodic full-sync sweeps with all reachable peers.
+    fn full_sync_interval(&self) -> Duration {
+        Duration::from_secs(300)
+    }
+
+    /// Whether a specific peer should be included in sync operations.
+    fn should_sync_with(&self, _peer_pk: &PhysicalDevicePk) -> bool {
+        true
+    }
 }
 
 pub struct DefaultPolicy;

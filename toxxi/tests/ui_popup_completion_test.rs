@@ -37,7 +37,7 @@ fn test_ui_popup_completion_flow() {
 
     // 1. Setup Group with 5 peers
     let group_number = GroupNumber(1);
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(group_number, chat_id);
     model.ensure_group_window(chat_id);
 

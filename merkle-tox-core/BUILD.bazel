@@ -8,10 +8,10 @@ rust_library(
         "src/clock.rs",
         "src/crypto.rs",
         "src/dag.rs",
-        "src/engine/mod.rs",
         "src/engine/authoring.rs",
         "src/engine/conversation.rs",
         "src/engine/handlers/mod.rs",
+        "src/engine/mod.rs",
         "src/engine/processor/mod.rs",
         "src/engine/processor/side_effects.rs",
         "src/engine/processor/verification.rs",
@@ -38,7 +38,6 @@ rust_library(
         "//rs-toxcore-c/tox-proto",
         "//rs-toxcore-c/tox-reconcile",
         "//rs-toxcore-c/tox-sequenced",
-        "@crates//:bao",
         "@crates//:bitflags",
         "@crates//:blake3",
         "@crates//:chacha20",
@@ -71,9 +70,17 @@ TEST_SRCS = glob(["tests/*.rs"])
 # Tests that mine many PoW nonces need more than the "small" 60s short-timeout.
 _POW_HEAVY_TESTS = [
     "tests/engine_integration_test.rs",
+    "tests/adversarial_anchor_snapshot_member_test.rs",
     "tests/adversarial_convergence_test.rs",
+    "tests/adversarial_genesis_injection_test.rs",
+    "tests/adversarial_keywrap_preclaim_test.rs",
+    "tests/adversarial_opaque_quota_test.rs",
+    "tests/adversarial_reinclusion_test.rs",
+    "tests/engine_permission_test.rs",
+    "tests/identity_hierarchy_test.rs",
     "tests/key_management_test.rs",
     "tests/protocol_flows_test.rs",
+    "tests/tier2_gaps_test.rs",
 ]
 
 [
@@ -88,21 +95,22 @@ _POW_HEAVY_TESTS = [
             "//rs-toxcore-c/merkle-tox-fs",
             "//rs-toxcore-c/tox-proto",
             "//rs-toxcore-c/tox-reconcile",
-            "@crates//:bao",
             "@crates//:blake3",
             "@crates//:chacha20",
-        "@crates//:chacha20poly1305",
+            "@crates//:chacha20poly1305",
+            "@crates//:crossbeam",
             "@crates//:curve25519-dalek",
             "@crates//:ed25519-dalek",
             "@crates//:hex",
-            "@crates//:rand",
             "@crates//:proptest",
+            "@crates//:rand",
             "@crates//:rmp-serde",
             "@crates//:serde",
             "@crates//:serde_bytes",
             "@crates//:tempfile",
             "@crates//:tracing-subscriber",
             "@crates//:x25519-dalek",
+            "@crates//:zstd",
         ],
     )
     for src in TEST_SRCS
@@ -117,7 +125,6 @@ rust_binary(
         ":merkle-tox-core",
         "//rs-toxcore-c/tox-proto",
         "//rs-toxcore-c/tox-reconcile",
-        "@crates//:bao",
         "@crates//:blake3",
         "@crates//:criterion",
     ],
@@ -127,8 +134,8 @@ rust_clippy(
     name = "clippy",
     testonly = True,
     deps = [
-        ":merkle-tox-core",
         ":core_bench",
+        ":merkle-tox-core",
     ] + [
         ":" + src.replace("tests/", "").replace(".rs", "").replace("_", "-")
         for src in TEST_SRCS

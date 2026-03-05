@@ -21,7 +21,14 @@ fn arb_protocol_message() -> impl Strategy<Value = ProtocolMessage> {
         any::<Vec<[u8; 32]>>().prop_map(|heads| ProtocolMessage::SyncHeads(
             merkle_tox_core::sync::SyncHeads {
                 conversation_id: ConversationId::from([0; 32]),
-                heads: heads.into_iter().map(NodeHash::from).collect(),
+                // Truncate at the cap; proptest may generate more.
+                heads: tox_proto::BoundedVec::try_from_iter(
+                    heads
+                        .into_iter()
+                        .map(NodeHash::from)
+                        .take(tox_proto::constants::MAX_HEADS_SYNC),
+                )
+                .expect("take bounds at cap"),
                 flags: 0,
                 anchor_hash: None,
             }

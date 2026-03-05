@@ -1,5 +1,4 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use smallvec::SmallVec;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hint::black_box;
 use tox_proto::{ToxProto, deserialize, serialize};
@@ -68,10 +67,12 @@ fn bench_collections(c: &mut Criterion) {
         b.iter(|| black_box(serialize(black_box(&btree)).unwrap()))
     });
 
-    // SmallVec
-    let sv: SmallVec<u32, 8> = (0..8).collect();
-    g.bench_function("serialize_smallvec_8", |b| {
-        b.iter(|| black_box(serialize(black_box(&sv)).unwrap()))
+    // BoundedVec — replaced the SmallVec bench when SmallVec's
+    // ToxProto impls were removed (commit a277aab).
+    let bv: tox_proto::BoundedVec<u32, 8> =
+        tox_proto::BoundedVec::try_from_iter(0..8).expect("under cap");
+    g.bench_function("serialize_boundedvec_8", |b| {
+        b.iter(|| black_box(serialize(black_box(&bv)).unwrap()))
     });
 
     // VecDeque

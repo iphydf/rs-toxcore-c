@@ -11,14 +11,14 @@ fn test_insert_and_get_node() {
     let conv_id = ConversationId::from([0u8; 32]);
 
     let node = MerkleNode {
-        parents: vec![NodeHash::from([0u8; 32])],
+        parents: tox_proto::bounded_vec![NodeHash::from([0u8; 32])],
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 1,
         network_timestamp: 123456789,
         content: Content::Text("Persistence test".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -39,14 +39,14 @@ fn test_edges_insertion() {
 
     let parent_hash = [1u8; 32];
     let node = MerkleNode {
-        parents: vec![NodeHash::from(parent_hash)],
+        parents: tox_proto::bounded_vec![NodeHash::from(parent_hash)],
         author_pk: LogicalIdentityPk::from([2u8; 32]),
         sender_pk: PhysicalDevicePk::from([2u8; 32]),
         sequence_number: 1,
         topological_rank: 2,
         network_timestamp: 123456789,
         content: Content::Text("Child node".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };

@@ -1,6 +1,6 @@
 use std::fs;
 use toxcore::tox::{GroupNumber, ToxUserStatus};
-use toxcore::types::{Address, ChatId, MessageType, PublicKey};
+use toxcore::types::{Address, GroupChatId, MessageType, PublicKey};
 use toxxi::config::Config;
 use toxxi::model::{MessageStatus, ToxSelfInfo, WindowId, load_or_initialize};
 
@@ -10,7 +10,7 @@ async fn test_load_corrupted_log_recovery() {
     let config_dir = temp_dir.path();
 
     let self_pk = PublicKey([0u8; 32]);
-    let group_id = ChatId([4u8; 32]);
+    let group_id = GroupChatId([4u8; 32]);
     let tox_id = Address([0u8; 38]);
 
     let logs_dir = config_dir.join("logs");

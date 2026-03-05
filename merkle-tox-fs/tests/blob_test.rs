@@ -1,4 +1,4 @@
-use merkle_tox_core::cas::{BlobInfo, BlobStatus, CHUNK_SIZE};
+use merkle_tox_core::cas::{BlobInfo, BlobStatus};
 use merkle_tox_core::dag::{ConversationId, NodeHash};
 use merkle_tox_core::sync::BlobStore;
 use merkle_tox_core::vfs::{MemFileSystem, StdFileSystem};
@@ -25,7 +25,6 @@ fn test_fs_store_put_get_blob_info() {
     let info = BlobInfo {
         hash: blob_hash,
         size: 1024,
-        bao_root: Some([2u8; 32]),
         status: BlobStatus::Pending,
         received_mask: Some(vec![0u8; 1]),
         decryption_key: None,
@@ -49,7 +48,6 @@ fn test_fs_store_put_get_chunk() {
     let info = BlobInfo {
         hash: blob_hash,
         size: chunk_data.len() as u64,
-        bao_root: None,
         status: BlobStatus::Downloading,
         received_mask: None,
         decryption_key: None,
@@ -92,7 +90,6 @@ fn test_fs_store_has_blob() {
     let info = BlobInfo {
         hash: blob_hash,
         size: 1024,
-        bao_root: Some([0u8; 32]),
         status: BlobStatus::Pending,
         received_mask: None,
         decryption_key: None,
@@ -128,7 +125,6 @@ fn test_fs_store_chunk_offset() {
         .put_blob_info(BlobInfo {
             hash: blob_hash,
             size: (chunk1.len() + chunk2.len()) as u64,
-            bao_root: None,
             status: BlobStatus::Downloading,
             received_mask: None,
             decryption_key: None,
@@ -169,7 +165,6 @@ fn test_fs_store_blob_persistence() {
             .put_blob_info(BlobInfo {
                 hash: blob_hash,
                 size: data.len() as u64,
-                bao_root: None,
                 status: BlobStatus::Downloading,
                 received_mask: None,
                 decryption_key: None,
@@ -182,7 +177,6 @@ fn test_fs_store_blob_persistence() {
         let info = BlobInfo {
             hash: blob_hash,
             size: data.len() as u64,
-            bao_root: None,
             status: BlobStatus::Downloading,
             received_mask: None,
             decryption_key: None,
@@ -211,7 +205,6 @@ fn test_fs_store_get_chunk_out_of_bounds() {
         .put_blob_info(BlobInfo {
             hash: blob_hash,
             size: data.len() as u64,
-            bao_root: None,
             status: BlobStatus::Downloading,
             received_mask: None,
             decryption_key: None,
@@ -247,7 +240,6 @@ fn test_fs_store_finalize_updates_info() {
     let info = BlobInfo {
         hash: blob_hash,
         size: data.len() as u64,
-        bao_root: None,
         status: BlobStatus::Downloading,
         received_mask: None,
         decryption_key: None,
@@ -262,7 +254,6 @@ fn test_fs_store_finalize_updates_info() {
 
     let info = store.get_blob_info(&blob_hash).unwrap();
     assert_eq!(info.status, BlobStatus::Available);
-    assert!(info.bao_root.is_some());
     assert!(info.received_mask.is_some());
 }
 
@@ -279,7 +270,6 @@ fn test_fs_store_small_blob_optimization() {
     let info = BlobInfo {
         hash: blob_hash,
         size: data.len() as u64,
-        bao_root: None,
         status: BlobStatus::Downloading,
         received_mask: None,
         decryption_key: None,
@@ -312,7 +302,6 @@ fn test_fs_store_blob_info_sharding() {
     let info = BlobInfo {
         hash: blob_hash,
         size: 123,
-        bao_root: None,
         status: BlobStatus::Pending,
         received_mask: None,
         decryption_key: None,
@@ -328,51 +317,13 @@ fn test_fs_store_blob_info_sharding() {
     assert!(expected_info_path.exists());
 }
 
-#[test]
-fn test_fs_store_bao_outboard_creation() {
-    let tmp_dir = TempDir::new().unwrap();
-    let store = FsStore::new(tmp_dir.path().to_path_buf(), Arc::new(StdFileSystem)).unwrap();
-    let conv_id = ConversationId::from([1u8; 32]);
-
-    let blob_hash = NodeHash::from([11u8; 32]);
-    let data = vec![0u8; (CHUNK_SIZE * 3) as usize]; // 3 chunks
-
-    store
-        .put_blob_info(BlobInfo {
-            hash: blob_hash,
-            size: data.len() as u64,
-            bao_root: None,
-            status: BlobStatus::Downloading,
-            received_mask: None,
-            decryption_key: None,
-        })
-        .unwrap();
-
-    store
-        .put_chunk(&conv_id, &blob_hash, 0, &data, None)
-        .unwrap();
-
-    let info = BlobInfo {
-        hash: blob_hash,
-        size: data.len() as u64,
-        bao_root: None,
-        status: BlobStatus::Downloading,
-        received_mask: None,
-        decryption_key: None,
-    };
-    store.put_blob_info(info).unwrap();
-
-    store.finalize_blob(&blob_hash).unwrap();
-
-    // Bao outboard verify is complex to test here without more traits, but we can check if file exists
-    let hex = encode_hex_32(blob_hash.as_bytes());
-    let expected_bao_path = tmp_dir
-        .path()
-        .join("objects")
-        .join(&hex[0..2])
-        .join(format!("{}.bao", hex));
-    assert!(expected_bao_path.exists());
-}
+// `test_fs_store_bao_outboard_creation` used to live here, asserting
+// that finalize_blob wrote a `.bao` outboard file. Bao-based
+// verification has been replaced by the chunk-Merkle scheme (see
+// doc/merkle-tox-cas.md §3) and FsStore no longer produces outboard
+// files. The test has been removed rather than updated because there
+// is no equivalent artifact to assert on — the chunk-Merkle tree is
+// computed on demand at push-stream creation time, not at finalize.
 
 #[test]
 fn test_fs_store_prune_vault() {
@@ -405,7 +356,6 @@ fn test_fs_store_blob_cross_finalization() {
         .put_blob_info(BlobInfo {
             hash: blob_hash,
             size: data.len() as u64,
-            bao_root: None,
             status: BlobStatus::Downloading,
             received_mask: None,
             decryption_key: None,
@@ -419,7 +369,6 @@ fn test_fs_store_blob_cross_finalization() {
     let info = BlobInfo {
         hash: blob_hash,
         size: data.len() as u64,
-        bao_root: None,
         status: BlobStatus::Downloading,
         received_mask: None,
         decryption_key: None,
@@ -447,7 +396,6 @@ fn test_fs_store_missing_data_no_put_chunk() {
         .put_blob_info(BlobInfo {
             hash: blob_hash,
             size,
-            bao_root: None,
             status: BlobStatus::Downloading,
             received_mask: None,
             decryption_key: None,
@@ -477,7 +425,6 @@ fn test_fs_store_partial_data_with_info() {
         .put_blob_info(BlobInfo {
             hash: blob_hash,
             size,
-            bao_root: None,
             status: BlobStatus::Downloading,
             received_mask: None,
             decryption_key: None,

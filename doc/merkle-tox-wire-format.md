@@ -24,40 +24,44 @@ To minimize overhead within the ~1.3KB Tox packet MTU, Merkle-Tox uses
 ## 2. Transport Layer Framing (`tox-sequenced`)
 
 The transport layer uses a **Flattened Positional Array** to minimize overhead.
-The meaning of fields following the `packet_type` discriminator depends on the
-type.
+The first element is the `packet_type` discriminator; subsequent fields depend
+on the type.
 
 ### `Packet` Variants
 
--   **DATA (0)**: `[0, [message_id, fragment_index, total_fragments, data]]`
--   **ACK (1)**: `[1, [message_id, base_index, bitmask, rwnd]]`
--   **NACK (2)**: `[2, [message_id, missing_ids]]`
--   **PING (3)**: `[3, t1_origin_timestamp]`
--   **PONG (4)**: `[4, [t1_origin_timestamp, t2_receive_timestamp,
-    t3_transmit_timestamp]]`
+-   **DATA (0x00)**: `[0, [seq, msg_type, data]]`
+-   **ACK (0x01)**: `[1, [base_seq, recv_bytes, sack_ranges]]`
+-   **PING (0x02)**: `[2, t1]`
+-   **PONG (0x03)**: `[3, [t1, t2, t3]]`
+-   **FRAGMENT (0x04)**: `[4, [frag_id, frag_index, frag_total, msg_type, data]]`
 
 **Field Definitions:**
 
--   `message_id`: `u32`
--   `fragment_index` / `base_index`: `u16`
--   `total_fragments`: `u16`
--   `bitmask`: `u64`
--   `rwnd`: `u16` (Remaining receive window in fragments)
+-   `seq`: `u32` (Monotonic sequence number for congestion control tracking)
+-   `msg_type`: `u8` (Application-level message type)
+-   `base_seq`: `u32` (Next contiguously-expected sequence number; cumulative ack)
+-   `recv_bytes`: `u64` (Cumulative bytes received, for delivery rate estimation)
+-   `sack_ranges`: `Vec<(u32, u32)>` (List of `(start_seq, length)` pairs reporting non-contiguous receipts above `base_seq`. Capped at 8 ranges; max ~80 bytes on the wire.)
+-   `frag_id`: `u32` (Identifies which message this fragment belongs to)
+-   `frag_index` / `frag_total`: `u16`
 -   `t1, t2, t3`: `i64` (Network time in ms)
 -   `data`: `Vec<u8>` (Raw binary payload)
--   `missing_ids`: `Vec<u16>` (List of missing fragment indices)
+
+See `merkle-tox-transport.md` for the full transport specification.
 
 ## 3. Application Layer Serialization
 
-When a `DATA` message is reassembled, the resulting byte stream is itself a
-MessagePack-encoded object.
+For single-packet messages (DATA), the `data` field contains a
+MessagePack-encoded application message. For multi-packet messages (FRAGMENT),
+the reassembled payload is a MessagePack-encoded application message.
 
-### Reassembled Payload Layout
+### Payload Layout
 
-1.  **Message Type Tag**: The first byte (or MsgPack tag) identifies the
-    `MessageType` (e.g., `MerkleNode`, `SyncHeads`).
-2.  **Payload Data**: The positional array representing the actual message
-    content.
+The `data` field contains the MessagePack-encoded application message
+directly — no additional framing or type tag. The application-level
+message type is identified by the `msg_type` field in the transport
+header (present in every DATA and FRAGMENT packet; see
+`merkle-tox-transport.md`).
 
 ### WireNode Field Index
 

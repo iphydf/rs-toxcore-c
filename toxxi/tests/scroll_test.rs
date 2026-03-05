@@ -235,7 +235,7 @@ fn test_logs_scrolling_with_filters() {
 fn test_scroll_stability_group_conference() {
     let mut model = create_test_model();
     let gid = toxcore::tox::GroupNumber(1);
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
     let cid = toxcore::tox::ConferenceNumber(1);
     let conf_id = toxcore::types::ConferenceId([2u8; 32]);

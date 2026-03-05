@@ -49,6 +49,15 @@ struct Args {
     github_path: String,
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     tor: bool,
+    /// Enable UDP. Off by default (production runs TCP-over-Tor); turn on for a
+    /// clearnet/local lab, optionally alongside `--tor false`.
+    #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+    udp: bool,
+    /// Bootstrap + TCP-relay node(s), each `HOST:PORT:HEXPK`. When given, these
+    /// replace the `--nodes-url` fetch entirely (lets the bot run fully offline
+    /// against a local node). Repeatable.
+    #[arg(long = "bootstrap-node", value_name = "HOST:PORT:HEXPK")]
+    bootstrap_nodes: Vec<String>,
 }
 
 enum BotEvent {
@@ -165,12 +174,21 @@ impl GroupBot {
         let tox_shared = Arc::new(ReentrantMutex::new(tox));
         let transport = ToxTransport {
             tox: tox_shared.clone(),
+            send_ok: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err_sendq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err_not_connected: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err_other: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            recv_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_lock_wait_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_lookup_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_ffi_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
         let self_pk = transport.local_pk();
         let engine = merkle_tox_core::engine::MerkleToxEngine::with_sk(
             self_pk,
             self_pk.to_logical(),
-            PhysicalDeviceSk::from(self_sk),
+            PhysicalDeviceSk::from(self_sk.0),
             rand::SeedableRng::from_entropy(),
             Arc::new(merkle_tox_core::clock::SystemTimeProvider),
         );
@@ -684,6 +702,20 @@ async fn fetch_nodes(url: &str) -> Result<Vec<Node>, Box<dyn Error>> {
     Ok(nodes)
 }
 
+/// Parse a `HOST:PORT:HEXPK` CLI node spec. HEXPK is 64 hex chars; the host may
+/// itself contain colons (IPv6), so split off the key and port from the right.
+fn parse_bootstrap_node(spec: &str) -> Result<Node, String> {
+    let mut it = spec.rsplitn(3, ':');
+    let public_key = it.next().ok_or("missing public key")?.to_string();
+    let port_str = it.next().ok_or("missing port")?;
+    let ipv4 = it.next().ok_or("missing host")?.to_string();
+    if public_key.len() != PUBLIC_KEY_SIZE * 2 || hex::decode(&public_key).is_err() {
+        return Err(format!("public key must be {} hex chars", PUBLIC_KEY_SIZE * 2));
+    }
+    let port: u16 = port_str.parse().map_err(|_| "invalid port".to_string())?;
+    Ok(Node { ipv4, port, public_key, last_ping: 0 })
+}
+
 fn bootstrap(tox: &Tox, nodes: &[Node]) {
     // Select the top 4 most recent nodes like the Python bot
     let selected = nodes.iter().take(4);
@@ -713,7 +745,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     opts.set_experimental_disable_dns(true);
     opts.set_experimental_groups_persistence(true);
     opts.set_local_discovery_enabled(false);
-    opts.set_udp_enabled(false);
+    opts.set_udp_enabled(args.udp);
 
     if args.tor {
         opts.set_proxy_type(ToxProxyType::TOX_PROXY_TYPE_SOCKS5);
@@ -758,7 +790,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .init();
     info!("Bot ID: {}", hex::encode(tox.address().0));
 
-    let nodes = fetch_nodes(&args.nodes_url).await.unwrap_or_default();
+    let nodes = if args.bootstrap_nodes.is_empty() {
+        fetch_nodes(&args.nodes_url).await.unwrap_or_default()
+    } else {
+        args.bootstrap_nodes
+            .iter()
+            .filter_map(|spec| match parse_bootstrap_node(spec) {
+                Ok(node) => Some(node),
+                Err(e) => {
+                    error!("Ignoring --bootstrap-node {spec:?}: {e}");
+                    None
+                }
+            })
+            .collect()
+    };
     bootstrap(&tox, &nodes);
 
     let shutdown = Arc::new(AtomicBool::new(false));

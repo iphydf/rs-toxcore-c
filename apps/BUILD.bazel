@@ -2,7 +2,9 @@ load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_test")
 
 rust_test(
     name = "compliance-test",
-    size = "small",
+    # Sweeps multi-store DAG operations + serialise/deserialise round-
+    # trips; close to the 60 s "large" budget under fastbuild crypto.
+    size = "enormous",
     srcs = ["tests/compliance_test.rs"],
     edition = "2024",
     rustc_flags = [
@@ -13,7 +15,6 @@ rust_test(
         "//rs-toxcore-c/merkle-tox-fs",
         "//rs-toxcore-c/merkle-tox-sqlite",
         "//rs-toxcore-c/tox-proto",
-        "@crates//:bao",
         "@crates//:blake3",
         "@crates//:hex",
         "@crates//:rand",
@@ -26,7 +27,9 @@ rust_test(
 
 rust_test(
     name = "random-compliance-test",
-    size = "small",
+    # Random multi-step compliance under fastbuild crypto runs ~25 s,
+    # over the 5 s small-tier budget.
+    size = "large",
     srcs = ["tests/random_compliance_test.rs"],
     edition = "2024",
     rustc_flags = [
@@ -36,6 +39,7 @@ rust_test(
         "//rs-toxcore-c/merkle-tox-core",
         "//rs-toxcore-c/merkle-tox-fs",
         "//rs-toxcore-c/merkle-tox-sqlite",
+        "//rs-toxcore-c/tox-proto",
         "@crates//:hex",
         "@crates//:rand",
         "@crates//:rmp-serde",
@@ -44,8 +48,6 @@ rust_test(
         "@crates//:tempfile",
     ],
 )
-
-
 
 rust_test(
     name = "persistence-proptest",
@@ -59,6 +61,7 @@ rust_test(
         "//rs-toxcore-c/merkle-tox-core",
         "//rs-toxcore-c/merkle-tox-fs",
         "//rs-toxcore-c/merkle-tox-sqlite",
+        "//rs-toxcore-c/tox-proto",
         "@crates//:hex",
         "@crates//:proptest",
         "@crates//:rand",
@@ -71,7 +74,9 @@ rust_test(
 
 rust_test(
     name = "robustness-test",
-    size = "small",
+    # ~5 s under fastbuild crypto, just over the 5 s "small" budget;
+    # bumping to medium gives a generous margin.
+    size = "medium",
     srcs = ["tests/robustness_test.rs"],
     edition = "2024",
     rustc_flags = [
@@ -81,6 +86,7 @@ rust_test(
         "//rs-toxcore-c/merkle-tox-core",
         "//rs-toxcore-c/merkle-tox-fs",
         "//rs-toxcore-c/merkle-tox-sqlite",
+        "//rs-toxcore-c/tox-proto",
         "@crates//:hex",
         "@crates//:rand",
         "@crates//:rmp-serde",
@@ -95,8 +101,8 @@ rust_clippy(
     testonly = True,
     deps = [
         ":compliance-test",
-        ":random-compliance-test",
         ":persistence-proptest",
+        ":random-compliance-test",
         ":robustness-test",
     ],
 )

@@ -6,7 +6,7 @@ use toxcore::tox::{
     GroupPeerNumber, ToxConferenceType, ToxConnection, ToxUserStatus,
 };
 use toxcore::types::{
-    ChatId, ConferenceId, DhtId, FileId, MessageType, PublicKey, ToxFileControl, ToxGroupModEvent,
+    GroupChatId, ConferenceId, DhtId, FileId, MessageType, PublicKey, ToxFileControl, ToxGroupModEvent,
     ToxGroupRole, ToxLogLevel,
 };
 
@@ -48,7 +48,7 @@ pub enum ToxEvent {
     FriendRequest(PublicKey, String),
     GroupInvite(FriendNumber, String, String),
     ConferenceInvite(FriendNumber, ToxConferenceType, String),
-    GroupCreated(GroupNumber, ChatId, Option<String>),
+    GroupCreated(GroupNumber, GroupChatId, Option<String>),
     ConferenceCreated(ConferenceNumber, ConferenceId),
     GroupTopic(GroupNumber, String),
     GroupName(GroupNumber, String),
@@ -111,7 +111,7 @@ pub enum LogSeverity {
 pub enum LogContext {
     Global,
     Friend(PublicKey),
-    Group(ChatId),
+    Group(GroupChatId),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -160,27 +160,27 @@ pub enum IOAction {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToxAction {
     SendMessage(PublicKey, MessageType, String, InternalMessageId),
-    SendGroupMessage(ChatId, MessageType, String, InternalMessageId),
+    SendGroupMessage(GroupChatId, MessageType, String, InternalMessageId),
     SendConferenceMessage(ConferenceId, MessageType, String, InternalMessageId),
     AddFriend(String, String), // Address (hex), Message
     AcceptFriend(PublicKey),   // Public Key
     DeleteFriend(PublicKey),
     CreateGroup(String), // Group Name
     CreateConference,
-    LeaveGroup(ChatId),
+    LeaveGroup(GroupChatId),
     DeleteConference(ConferenceId),
     JoinGroup(String, String, String), // PK (hex), Group Name, Password
     AcceptGroupInvite(PublicKey, String, String, String), // Friend, Invite Data (hex), Group Name, Password
     JoinConference(PublicKey, String),                    // Friend, Cookie (hex)
-    InviteFriendToGroup(ChatId, PublicKey),
+    InviteFriendToGroup(GroupChatId, PublicKey),
     InviteFriendToConference(ConferenceId, PublicKey),
-    SetGroupPeerIgnore(ChatId, PublicKey, bool),
+    SetGroupPeerIgnore(GroupChatId, PublicKey, bool),
     SetStatusMessage(String),
     SetStatusType(ToxUserStatus),
     SetTyping(PublicKey, bool),
     SetName(String),
-    SetGroupNickname(ChatId, String),
-    SetGroupTopic(ChatId, String),
+    SetGroupNickname(GroupChatId, String),
+    SetGroupTopic(GroupChatId, String),
     SetConferenceTopic(ConferenceId, String),
     Bootstrap(String, u16, DhtId),
     FileSend(PublicKey, u32, u64, String, String, Option<FileId>), // Friend, Kind, Size, Filename, FullPath, ResumeID

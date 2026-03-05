@@ -5,12 +5,22 @@ use tox_proto::ToxProto;
 const NUM_PRIORITIES: usize = 5;
 
 /// Default quantums for each priority level.
+///
+/// Each quantum must be at least MAX_TOX_PACKET_SIZE (1373) so that every
+/// priority level can send at least one full fragment per scheduling round.
+/// If the quantum is smaller than the actual fragment payload (1353 bytes),
+/// the scheduler needs two rounds to accumulate enough deficit, and the send
+/// loop breaks on the exhausted round — halving throughput.
+///
+/// P4 (Bulk) gets a large quantum so that blob transfers can fill the
+/// congestion window without being starved by small sync/control messages
+/// at higher priorities.
 const DEFAULT_QUANTUMS: [i32; NUM_PRIORITIES] = [
-    4096, // P0: Caps (Critical)
-    2048, // P1: Sync/Sketch
-    1500, // P2: MerkleNode
-    1024, // P3: Blob Metadata
-    512,  // P4: Blob Data (Bulk)
+    5200,  // P0: Caps (Critical)       — 4 fragments
+    3900,  // P1: Sync/Sketch           — 3 fragments
+    2600,  // P2: MerkleNode            — 2 fragments
+    1400,  // P3: Blob Metadata         — 1 fragment (must exceed 1353)
+    67650, // P4: Blob Data (Bulk)      — 50 fragments (1 full chunk)
 ];
 
 /// A Deficit Round Robin (DRR) scheduler for prioritized packet transmission.
@@ -100,7 +110,17 @@ impl PriorityScheduler {
 
             if self.needs_quantum[p] {
                 self.deficits[p] += self.quantums[p];
-                self.deficits[p] = self.deficits[p].min(16384);
+                // Cap deficit at 2x the level's own quantum so a long-starved
+                // level can't accumulate unbounded credit, but isn't capped
+                // BELOW its single-round quantum either. The previous fixed
+                // 16384B cap throttled P4 (Bulk, quantum 67650) to ~13
+                // packets per scheduling round, which combined with the host
+                // iteration cadence (~50 polls/sec) hard-capped blob
+                // throughput at ~3.4 Mbps regardless of cwnd or pacing.
+                let max_deficit = self.quantums[p].saturating_mul(2);
+                if self.deficits[p] > max_deficit {
+                    self.deficits[p] = max_deficit;
+                }
                 self.needs_quantum[p] = false;
             }
 
@@ -122,7 +142,40 @@ impl PriorityScheduler {
                         }
                         return Some(mid);
                     } else {
-                        // Deficit exhausted. Try next level.
+                        // Deficit exhausted. If we are the only active
+                        // level, no one is contending for fairness, so
+                        // refill the quantum and retry the same packet
+                        // immediately rather than returning None and
+                        // forcing the caller to wait. Without this, a
+                        // single-active-level flush() drains exactly one
+                        // quantum per call before `next_message` returns
+                        // None — which combined with the host iteration
+                        // cadence (~50 polls/sec for tox's 20 ms) caps
+                        // bulk throughput at `quantum * cadence` even
+                        // when cwnd allows much more. With the fast
+                        // path, a single flush call can emit packets up
+                        // to the cwnd cap.
+                        if self.active_levels.is_empty() {
+                            self.deficits[p] += self.quantums[p];
+                            let max_deficit = self.quantums[p].saturating_mul(2);
+                            if self.deficits[p] > max_deficit {
+                                self.deficits[p] = max_deficit;
+                            }
+                            if self.deficits[p] >= size as i32 {
+                                self.deficits[p] -= size as i32;
+                                queue.rotate_left(1);
+                                if self.deficits[p] > 0 {
+                                    self.active_levels.push_front(p);
+                                } else {
+                                    self.active_levels.push_back(p);
+                                    self.needs_quantum[p] = true;
+                                }
+                                return Some(mid);
+                            }
+                            // Even with a fresh quantum the next packet
+                            // is too big — fall through to the normal
+                            // push-back path.
+                        }
                         self.active_levels.push_back(p);
                         self.needs_quantum[p] = true;
                         break;

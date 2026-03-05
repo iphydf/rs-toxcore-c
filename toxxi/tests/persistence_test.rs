@@ -174,7 +174,7 @@ fn test_group_persistence_repro() {
     let mut model = create_test_model();
 
     let gnum = toxcore::tox::GroupNumber(0);
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gnum, chat_id);
     model.ensure_group_window(chat_id);
     let win_id = WindowId::Group(chat_id);

@@ -1,84 +1,66 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use std::time::Instant;
-use tox_sequenced::outgoing::OutgoingMessage;
-use tox_sequenced::protocol::{FragmentCount, FragmentIndex, MessageId, MessageType};
-use tox_sequenced::quota::Priority;
-use tox_sequenced::reassembly::MessageReassembler;
+use tox_sequenced::protocol::{MessageType, Packet};
 
-fn bench_create_ack(c: &mut Criterion) {
-    let mut reassembler = MessageReassembler::new(
-        MessageId(1),
-        FragmentCount(1024),
-        Priority::Standard,
-        0,
-        Instant::now(),
-    )
-    .unwrap();
-    // Simulate some received fragments
-    for i in (0..1024).step_by(2) {
-        reassembler
-            .add_fragment(FragmentIndex(i), vec![0; 1300], Instant::now())
-            .unwrap();
-    }
+fn bench_serialize_data_packet(c: &mut Criterion) {
+    let packet = Packet::Data {
+        seq: 42,
+        msg_type: MessageType::BlobData,
+        data: vec![0u8; 1300],
+    };
 
-    c.bench_function("create_ack_1024_sparse", |b| {
-        b.iter(|| black_box(reassembler.create_ack(black_box(FragmentCount(100)))))
-    });
-
-    // Test with almost full
-    let mut reassembler_full = MessageReassembler::new(
-        MessageId(1),
-        FragmentCount(1024),
-        Priority::Standard,
-        0,
-        Instant::now(),
-    )
-    .unwrap();
-    for i in 0..1023 {
-        reassembler_full
-            .add_fragment(FragmentIndex(i), vec![0; 1], Instant::now())
-            .unwrap();
-    }
-
-    c.bench_function("create_ack_1024_full", |b| {
-        b.iter(|| black_box(reassembler_full.create_ack(black_box(FragmentCount(100)))))
+    c.bench_function("serialize_data_packet", |b| {
+        b.iter(|| black_box(tox_proto::serialize(black_box(&packet)).unwrap()))
     });
 }
 
-fn bench_collect_acked_indices(c: &mut Criterion) {
-    let mut msg = OutgoingMessage::new(
-        MessageType::MerkleNode,
-        vec![0; 1024 * 1300],
-        1300,
-        Instant::now(),
-    )
-    .unwrap();
+fn bench_deserialize_data_packet(c: &mut Criterion) {
+    let packet = Packet::Data {
+        seq: 42,
+        msg_type: MessageType::BlobData,
+        data: vec![0u8; 1300],
+    };
+    let serialized = tox_proto::serialize(&packet).unwrap();
 
-    c.bench_function("collect_acked_indices_1024_sparse", |b| {
-        b.iter(|| {
-            msg.highest_cumulative_ack = FragmentIndex(0);
-            black_box(msg.collect_acked_indices(
-                black_box(FragmentIndex(512)),
-                black_box(0xAAAAAAAAAAAAAAAAu64),
-            ))
-        })
-    });
-
-    c.bench_function("collect_acked_indices_1024_dense", |b| {
-        b.iter(|| {
-            msg.highest_cumulative_ack = FragmentIndex(0);
-            msg.acked_bitset.fill();
-            // Few holes
-            msg.acked_bitset.unset(64 + 10);
-            msg.acked_bitset.unset(4 * 64 + 20);
-            black_box(msg.collect_acked_indices(
-                black_box(FragmentIndex(512)),
-                black_box(0xAAAAAAAAAAAAAAAAu64),
-            ))
-        })
+    c.bench_function("deserialize_data_packet", |b| {
+        b.iter(|| black_box(tox_proto::deserialize::<Packet>(black_box(&serialized)).unwrap()))
     });
 }
 
-criterion_group!(benches, bench_create_ack, bench_collect_acked_indices);
+fn bench_serialize_ack_packet(c: &mut Criterion) {
+    let packet = Packet::Ack {
+        base_seq: tox_proto::Untrusted::new(100),
+        recv_bytes: tox_proto::Untrusted::new(1_000_000),
+        sack_ranges: tox_proto::Untrusted::new(tox_proto::bounded_vec![
+            (200u32, 5u32),
+            (300u32, 8u32)
+        ]),
+    };
+
+    c.bench_function("serialize_ack_packet", |b| {
+        b.iter(|| black_box(tox_proto::serialize(black_box(&packet)).unwrap()))
+    });
+}
+
+fn bench_serialize_fragment_packet(c: &mut Criterion) {
+    let packet = Packet::Fragment {
+        frag_id: 1,
+        frag_index: 5,
+        frag_total: 49,
+        msg_type: MessageType::MerkleNode,
+        data: vec![0u8; 1300],
+    };
+
+    c.bench_function("serialize_fragment_packet", |b| {
+        b.iter(|| black_box(tox_proto::serialize(black_box(&packet)).unwrap()))
+    });
+}
+
+criterion_group!(
+    benches,
+    bench_serialize_data_packet,
+    bench_deserialize_data_packet,
+    bench_serialize_ack_packet,
+    bench_serialize_fragment_packet,
+);
 criterion_main!(benches);

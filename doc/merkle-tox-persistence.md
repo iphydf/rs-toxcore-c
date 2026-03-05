@@ -145,14 +145,14 @@ blob is stored in a companion file.
 -   **Content**: Tracks the blob's `size`, `status` (Pending/Available), and the
     `received_mask` for in-progress downloads.
 
-#### Outboard Storage (Bao)
+#### Chunk-Merkle Verification
 
-To support incremental verification and "Swarm Sync" without re-hashing the
-file, the FS backend stores Bao outboard data:
-
--   **Path**: `blobs/<hash_hex>.bao`
--   **Purpose**: Stores the pre-calculated Merkle tree of the blob's hashes,
-    allowing for $O(\log N)$ proof generation and verification for any chunk.
+The FS backend does not store any on-disk proof artifact. Chunk-boundary
+integrity is authenticated at runtime via a domain-separated blake3
+Merkle tree computed from stored chunk data at push-stream creation
+time (see `ChunkMerkleTree::from_store` in `merkle-tox-core/src/cas.rs`
+and `doc/merkle-tox-cas.md` §3). The trusted root is the blob's `hash`
+field, committed in the signed `Content::Blob` MerkleNode on the DAG.
 
 --------------------------------------------------------------------------------
 

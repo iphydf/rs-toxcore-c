@@ -11,7 +11,6 @@ rust_library(
     deps = [
         "//rs-toxcore-c/merkle-tox-core",
         "//rs-toxcore-c/tox-proto",
-        "@crates//:bao",
         "@crates//:hex",
         "@crates//:rmp-serde",
         "@crates//:rusqlite",
@@ -35,6 +34,7 @@ TEST_SRCS = glob(["tests/*.rs"])
             ":merkle-tox-sqlite",
             "//rs-toxcore-c/merkle-tox-core",
             "//rs-toxcore-c/merkle-tox-fs",
+            "//rs-toxcore-c/tox-proto",
             "@crates//:hex",
             "@crates//:proptest",
             "@crates//:rand",

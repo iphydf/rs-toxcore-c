@@ -1,9 +1,15 @@
 use std::io::{Read, Write};
 use std::sync::Arc;
 
+pub mod bounded_bytes;
+pub mod bounded_vec;
 pub mod constants;
+pub mod untrusted;
+pub use bounded_bytes::BoundedBytes;
+pub use bounded_vec::BoundedVec;
 pub use rmp;
 pub use tox_proto_derive::{ToxDeserialize, ToxProto, ToxSerialize};
+pub use untrusted::{Claimed, Untrusted};
 
 extern crate self as tox_proto;
 
@@ -580,6 +586,20 @@ pub fn skip_value<R: Read>(reader: &mut R) -> Result<()> {
     Ok(())
 }
 
+/// Upper bound on the initial preallocation hint for peer-supplied
+/// collection lengths. The wire may legitimately carry collections
+/// larger than this — the container simply grows naturally past the
+/// hint — but a hostile peer cannot force a huge allocation up
+/// front before a single element is read. Sized to the largest
+/// batch we legitimately author (`MAX_HEADS_SYNC = 64`) plus generous
+/// headroom.
+const DESERIALIZE_CAPACITY_HINT_CAP: usize = 1024;
+
+#[inline]
+fn bounded_capacity(claimed_len: usize) -> usize {
+    claimed_len.min(DESERIALIZE_CAPACITY_HINT_CAP)
+}
+
 /// Reads a single msgpack value from the reader and returns its raw bytes.
 ///
 /// This is used by the `#[tox(catch_all)]` derive macro to capture unknown
@@ -959,6 +979,13 @@ impl ToxDeserialize for String {
     fn deserialize<R: Read>(reader: &mut R, _ctx: &ToxContext) -> Result<Self> {
         let len =
             rmp::decode::read_str_len(reader).map_err(|e| Error::Deserialize(e.to_string()))?;
+        if len as usize > crate::constants::MAX_MESSAGE_SIZE {
+            return Err(Error::Deserialize(format!(
+                "oversized String: claimed len {} exceeds MAX_MESSAGE_SIZE {}",
+                len,
+                crate::constants::MAX_MESSAGE_SIZE,
+            )));
+        }
         let mut buf = vec![0u8; len as usize];
         reader.read_exact(&mut buf)?;
         String::from_utf8(buf).map_err(|e| Error::Deserialize(e.to_string()))
@@ -1027,13 +1054,20 @@ impl<T: ToxDeserialize> ToxDeserialize for Vec<T> {
         if T::SIZE == Some(1) {
             let len =
                 rmp::decode::read_bin_len(reader).map_err(|e| Error::Deserialize(e.to_string()))?;
+            if len as usize > crate::constants::MAX_MESSAGE_SIZE {
+                return Err(Error::Deserialize(format!(
+                    "oversized Vec<u8>: claimed len {} exceeds MAX_MESSAGE_SIZE {}",
+                    len,
+                    crate::constants::MAX_MESSAGE_SIZE,
+                )));
+            }
             let mut vec = vec![0u8; len as usize];
             reader.read_exact(&mut vec)?;
             return Ok(unsafe { std::mem::transmute::<Vec<u8>, Vec<T>>(vec) });
         }
         let len =
             rmp::decode::read_array_len(reader).map_err(|e| Error::Deserialize(e.to_string()))?;
-        let mut vec = Vec::with_capacity(len as usize);
+        let mut vec = Vec::with_capacity(bounded_capacity(len as usize));
         for _ in 0..len {
             vec.push(T::deserialize(reader, ctx)?);
         }
@@ -1060,29 +1094,27 @@ impl<T: ToxDeserialize> ToxDeserialize for Vec<T> {
     }
 }
 
-impl<T: ToxSize, const N: usize> ToxSize for smallvec::SmallVec<T, N> {}
-impl<T: ToxSerialize, const N: usize> ToxSerialize for smallvec::SmallVec<T, N> {
-    fn serialize<W: Write>(&self, writer: &mut W, ctx: &ToxContext) -> Result<()> {
-        rmp::encode::write_array_len(writer, self.len() as u32)
-            .map(|_| ())
-            .map_err(|e| Error::Serialize(e.to_string()))?;
-        for item in self {
-            item.serialize(writer, ctx)?;
-        }
-        Ok(())
-    }
-}
-impl<T: ToxDeserialize, const N: usize> ToxDeserialize for smallvec::SmallVec<T, N> {
-    fn deserialize<R: Read>(reader: &mut R, ctx: &ToxContext) -> Result<Self> {
-        let len = rmp::decode::read_array_len(reader)
-            .map_err(|e| Error::Deserialize(e.to_string()))? as usize;
-        let mut vec = smallvec::SmallVec::with_capacity(len);
-        for _ in 0..len {
-            vec.push(T::deserialize(reader, ctx)?);
-        }
-        Ok(vec)
-    }
-}
+// `ToxProto` was previously implemented for `smallvec::SmallVec<T, N>`,
+// but the const generic `N` is the SmallVec inline-buffer hint, not a
+// length cap — `SmallVec::push` heap-falls-back past `N`, and the
+// deserialiser would happily read any wire length. That made
+// `SmallVec<T, N>` *look* structurally bounded (so e.g.
+// `Untrusted<SmallVec<(u32, u32), 8>>` reads as "at most 8 entries on
+// the wire") while in practice admitting authenticated-peer
+// privilege-amplification DoS via oversize arrays.
+//
+// The fix was to migrate every wire field to `BoundedVec<T, N>`
+// (commits `0e95fb6`, `e9ada2d`, `2a5531a`), whose deserialiser
+// rejects `len > N` before allocating. The `SmallVec` impls are
+// deliberately gone so a future engineer adding a wire field cannot
+// reach for `SmallVec<T, N>` and recreate the original surface — the
+// compiler will refuse, forcing a deliberate choice between
+// `BoundedVec<T, N>` (bounded) and `Vec<T>` (explicitly unbounded;
+// callers must enforce a cap themselves at the consumer site).
+//
+// Internal (non-wire) uses of `SmallVec` for stack-buffer
+// optimisation continue to work as before — only the `ToxProto`
+// trait impls are removed.
 
 impl<T: ToxSize> ToxSize for std::collections::VecDeque<T> {}
 impl<T: ToxSerialize> ToxSerialize for std::collections::VecDeque<T> {
@@ -1100,7 +1132,7 @@ impl<T: ToxDeserialize> ToxDeserialize for std::collections::VecDeque<T> {
     fn deserialize<R: Read>(reader: &mut R, ctx: &ToxContext) -> Result<Self> {
         let len = rmp::decode::read_array_len(reader)
             .map_err(|e| Error::Deserialize(e.to_string()))? as usize;
-        let mut deque = std::collections::VecDeque::with_capacity(len);
+        let mut deque = std::collections::VecDeque::with_capacity(bounded_capacity(len));
         for _ in 0..len {
             deque.push_back(T::deserialize(reader, ctx)?);
         }
@@ -1275,7 +1307,10 @@ impl<
     fn deserialize<R: Read>(reader: &mut R, ctx: &ToxContext) -> Result<Self> {
         let len = rmp::decode::read_map_len(reader)
             .map_err(|e| Error::Deserialize(e.to_string()))? as usize;
-        let mut map = std::collections::HashMap::with_capacity_and_hasher(len, S::default());
+        let mut map = std::collections::HashMap::with_capacity_and_hasher(
+            bounded_capacity(len),
+            S::default(),
+        );
         for _ in 0..len {
             let k = K::deserialize(reader, ctx)?;
             let v = V::deserialize(reader, ctx)?;
@@ -1334,7 +1369,10 @@ impl<T: ToxDeserialize + Eq + std::hash::Hash, S: std::hash::BuildHasher + Defau
     fn deserialize<R: Read>(reader: &mut R, ctx: &ToxContext) -> Result<Self> {
         let len = rmp::decode::read_array_len(reader)
             .map_err(|e| Error::Deserialize(e.to_string()))? as usize;
-        let mut set = std::collections::HashSet::with_capacity_and_hasher(len, S::default());
+        let mut set = std::collections::HashSet::with_capacity_and_hasher(
+            bounded_capacity(len),
+            S::default(),
+        );
         for _ in 0..len {
             set.insert(T::deserialize(reader, ctx)?);
         }

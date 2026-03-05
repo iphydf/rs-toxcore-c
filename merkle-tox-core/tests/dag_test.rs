@@ -5,14 +5,14 @@ use merkle_tox_core::dag::{
 #[test]
 fn test_node_hashing() {
     let node = MerkleNode {
-        parents: vec![NodeHash::from([0u8; 32])],
+        parents: tox_proto::bounded_vec![NodeHash::from([0u8; 32])],
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 1,
         network_timestamp: 123456789,
         content: Content::Text("Hello Merkle-Tox".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -27,14 +27,15 @@ fn test_node_hashing() {
 #[test]
 fn test_node_serialization_roundtrip() {
     let node = MerkleNode {
-        parents: vec![NodeHash::from([0u8; 32]), NodeHash::from([1u8; 32])],
+        parents: tox_proto::bounded_vec![NodeHash::from([0u8; 32]), NodeHash::from([1u8; 32])],
         author_pk: LogicalIdentityPk::from([2u8; 32]),
         sender_pk: PhysicalDevicePk::from([3u8; 32]),
         sequence_number: 42,
         topological_rank: 5,
         network_timestamp: 987654321,
         content: Content::Text("Roundtrip test".to_string()),
-        metadata: vec![1, 2, 3],
+        metadata: tox_proto::BoundedBytes::try_from_vec(vec![1, 2, 3])
+            .expect("test fixture under MAX_METADATA_SIZE"),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };

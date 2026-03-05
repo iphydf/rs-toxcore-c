@@ -384,7 +384,7 @@ fn test_key_rotation_skips_last_resort_only_members() {
     alice_engine.peer_announcements.insert(
         bob.device_pk,
         ControlAction::Announcement {
-            pre_keys: vec![], // empty: last resort only
+            pre_keys: tox_proto::BoundedVec::new(), // empty: last resort only
             last_resort_key: SignedPreKey {
                 public_key: lr_pk,
                 signature: lr_sig,
@@ -612,7 +612,7 @@ fn test_sender_key_distribution_establishes_conversation() {
         &sender_key,
     );
     let mut skd_node1 = merkle_tox_core::testing::test_node();
-    skd_node1.parents = vec![auth_alice.hash()];
+    skd_node1.parents = tox_proto::bounded_vec![auth_alice.hash()];
     skd_node1.author_pk = alice.master_pk;
     skd_node1.sender_pk = alice.device_pk;
     skd_node1.sequence_number = (1u64 << 32) | 1;
@@ -620,13 +620,13 @@ fn test_sender_key_distribution_establishes_conversation() {
     skd_node1.network_timestamp = 1000;
     skd_node1.content = Content::SenderKeyDistribution {
         ephemeral_pk: skd_e_pk,
-        wrapped_keys: vec![WrappedKey {
+        wrapped_keys: tox_proto::bounded_vec![WrappedKey {
             recipient_pk: bob.device_pk,
             ciphertext,
             opk_id: NodeHash::from([0u8; 32]),
         }],
         ephemeral_signing_pk: EphemeralSigningPk::from([0u8; 32]),
-        disclosed_keys: vec![],
+        disclosed_keys: tox_proto::BoundedVec::new(),
     };
     merkle_tox_core::testing::sign_admin_node(&mut skd_node1, &conv_id, &alice.device_sk);
 
@@ -672,7 +672,7 @@ fn test_sender_key_distribution_establishes_conversation() {
         &sender_key,
     );
     let mut skd_node2 = merkle_tox_core::testing::test_node();
-    skd_node2.parents = vec![auth_alice.hash()];
+    skd_node2.parents = tox_proto::bounded_vec![auth_alice.hash()];
     skd_node2.author_pk = alice.master_pk;
     skd_node2.sender_pk = alice.device_pk;
     skd_node2.sequence_number = (1u64 << 32) | 2;
@@ -680,13 +680,13 @@ fn test_sender_key_distribution_establishes_conversation() {
     skd_node2.network_timestamp = 1000;
     skd_node2.content = Content::SenderKeyDistribution {
         ephemeral_pk: skd_e_pk2,
-        wrapped_keys: vec![WrappedKey {
+        wrapped_keys: tox_proto::bounded_vec![WrappedKey {
             recipient_pk: bob.device_pk,
             ciphertext: ciphertext2,
             opk_id: NodeHash::from([0u8; 32]),
         }],
         ephemeral_signing_pk: EphemeralSigningPk::from([0u8; 32]),
-        disclosed_keys: vec![],
+        disclosed_keys: tox_proto::BoundedVec::new(),
     };
     merkle_tox_core::testing::sign_admin_node(&mut skd_node2, &conv_id, &alice.device_sk);
 
@@ -740,7 +740,7 @@ fn test_x3dh_keywrap_uses_genesis_as_anchor_hash() {
     alice_engine.peer_announcements.insert(
         bob.device_pk,
         ControlAction::Announcement {
-            pre_keys: vec![],
+            pre_keys: tox_proto::BoundedVec::new(),
             last_resort_key: SignedPreKey {
                 public_key: EphemeralX25519Pk::from([0x88_u8; 32]),
                 signature: Ed25519Signature::from([0u8; 64]),
@@ -826,7 +826,7 @@ fn test_x3dh_kconv_derived_from_sk_shared() {
     alice_engine.peer_announcements.insert(
         bob.device_pk,
         ControlAction::Announcement {
-            pre_keys: vec![SignedPreKey {
+            pre_keys: tox_proto::bounded_vec![SignedPreKey {
                 public_key: bob_spk_pk,
                 signature: Ed25519Signature::from([0u8; 64]),
                 expires_at: i64::MAX,
@@ -927,7 +927,7 @@ fn test_initial_keywrap_uses_ecies_not_x3dh() {
     alice_engine.peer_announcements.insert(
         bob.device_pk,
         ControlAction::Announcement {
-            pre_keys: vec![SignedPreKey {
+            pre_keys: tox_proto::bounded_vec![SignedPreKey {
                 public_key: bob_spk_pk,
                 signature: Ed25519Signature::from([0u8; 64]),
                 expires_at: i64::MAX,
@@ -1463,7 +1463,7 @@ fn test_announcement_rotation_after_100_handshakes() {
     engine
         .handshake_count_since_announcement
         .insert(conv_id, 99);
-    let _ = engine.poll(Instant::now(), &store);
+    let _ = engine.poll(Instant::now(), &store, None);
     // Counter should still be 99 (not reset)
     assert_eq!(
         engine
@@ -1478,7 +1478,7 @@ fn test_announcement_rotation_after_100_handshakes() {
     engine
         .handshake_count_since_announcement
         .insert(conv_id, 100);
-    let _ = engine.poll(Instant::now(), &store);
+    let _ = engine.poll(Instant::now(), &store, None);
     // After poll, either the counter was reset to 0 (success) or it stays at 100
     // (failure due to missing keys, etc). The important thing is the threshold was checked.
     let count_after = engine

@@ -27,11 +27,22 @@ pub enum PackKeys {
     Exception,
 }
 
-/// K_header_epoch_n = Blake3-KDF("merkle-tox v1 header-key", K_conv || SenderKey_n)
-pub fn derive_k_header_epoch(k_conv: &KConv, sender_key_n: &SenderKey) -> HeaderKey {
-    let mut material = [0u8; 64];
+/// K_header_epoch_n = Blake3-KDF("merkle-tox v1 header-key",
+///                                K_conv || conversation_id || SenderKey_n)
+///
+/// Binding `conversation_id` into the KDF gives defense-in-depth against
+/// cross-room decryption in a shared-k_conv compromise: even if two rooms
+/// ever hold the same k_conv, their header keys differ, so the routing AEAD
+/// fails cross-room rather than fail-open.
+pub fn derive_k_header_epoch(
+    k_conv: &KConv,
+    conversation_id: &crate::dag::ConversationId,
+    sender_key_n: &SenderKey,
+) -> HeaderKey {
+    let mut material = [0u8; 96];
     material[0..32].copy_from_slice(k_conv.as_bytes());
-    material[32..64].copy_from_slice(sender_key_n.as_bytes());
+    material[32..64].copy_from_slice(conversation_id.as_bytes());
+    material[64..96].copy_from_slice(sender_key_n.as_bytes());
     let result = HeaderKey::from(derive_key("merkle-tox v1 header-key", &material));
     material.zeroize();
     result
@@ -384,10 +395,19 @@ pub fn x3dh_derive_secret_recipient(
 }
 
 /// Initializes ratchet chain key for sender from conversation key.
-pub fn ratchet_init_sender(k_conv: &KConv, sender_pk: &PhysicalDevicePk) -> ChainKey {
-    let mut material = [0u8; 64];
+///
+/// `conversation_id` is mixed into the KDF so the ratchet chain is bound to a
+/// specific conversation even when k_conv is reused. Prevents cross-room
+/// replay under a shared-k_conv compromise (defense-in-depth).
+pub fn ratchet_init_sender(
+    k_conv: &KConv,
+    conversation_id: &crate::dag::ConversationId,
+    sender_pk: &PhysicalDevicePk,
+) -> ChainKey {
+    let mut material = [0u8; 96];
     material[0..32].copy_from_slice(k_conv.as_bytes());
-    material[32..64].copy_from_slice(sender_pk.as_bytes());
+    material[32..64].copy_from_slice(conversation_id.as_bytes());
+    material[64..96].copy_from_slice(sender_pk.as_bytes());
     let result = ChainKey::from(derive_key("merkle-tox v1 sender-seed", &material));
     material.zeroize();
     result

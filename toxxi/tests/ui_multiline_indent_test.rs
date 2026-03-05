@@ -20,7 +20,7 @@ fn create_test_model() -> Model {
 #[test]
 fn test_ui_multiline_indent() {
     let mut model = create_test_model();
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model
         .session
         .group_numbers

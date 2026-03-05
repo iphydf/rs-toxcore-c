@@ -21,14 +21,14 @@ fn create_fs(path: &Path) -> FsStore {
 
 fn make_node(i: usize) -> MerkleNode {
     MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([i as u8; 32]),
         sender_pk: PhysicalDevicePk::from([i as u8; 32]),
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 1000,
         content: Content::Text(format!("Node {}", i)),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     }

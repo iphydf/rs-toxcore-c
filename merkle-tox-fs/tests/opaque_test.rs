@@ -52,7 +52,7 @@ fn test_opaque_anchor_preservation() {
 
     // 1. Put an Admin node (Anchor) in the first segment
     let admin_wire = WireNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         sender_hint: [0u8; 4],
         encrypted_routing: vec![0u8; 40],
         payload_data: vec![0x80], // Padded empty

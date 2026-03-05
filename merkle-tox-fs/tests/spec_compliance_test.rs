@@ -31,14 +31,14 @@ fn test_journal_footer_compliance() {
         // Add some nodes to ensure journal activity
         for i in 1..=5 {
             let node = MerkleNode {
-                parents: vec![],
+                parents: tox_proto::BoundedVec::new(),
                 author_pk: LogicalIdentityPk::from([1u8; 32]),
                 sender_pk: PhysicalDevicePk::from([1u8; 32]),
                 sequence_number: i,
                 topological_rank: i - 1,
                 network_timestamp: 100,
                 content: Content::Text(format!("Node {}", i)),
-                metadata: vec![],
+                metadata: tox_proto::BoundedBytes::new(),
                 authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
                 pow_nonce: 0,
             };
@@ -125,14 +125,14 @@ fn test_generation_id_mismatch_truncation() {
     {
         let store = FsStore::new(root.clone(), fs_handle.clone()).unwrap();
         let node = MerkleNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             author_pk: LogicalIdentityPk::from([1u8; 32]),
             sender_pk: PhysicalDevicePk::from([1u8; 32]),
             sequence_number: 1,
             topological_rank: 0,
             network_timestamp: 100,
             content: Content::Text("test".to_string()),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
             pow_nonce: 0,
         };
@@ -181,14 +181,14 @@ fn test_ratchet_slot_alignment() {
         let store = FsStore::new(root.clone(), fs_handle.clone()).unwrap();
         // Add a node to advance sequence number, then compact to move it to ratchet.bin
         let node = MerkleNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             author_pk: LogicalIdentityPk::from([1u8; 32]),
             sender_pk: PhysicalDevicePk::from([1u8; 32]),
             sequence_number: 10,
             topological_rank: 0,
             network_timestamp: 100,
             content: Content::Text("Trigger".to_string()),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
             pow_nonce: 0,
         };

@@ -98,7 +98,7 @@ async fn test_outgoing_pending_message_is_marked_received_on_load() {
     let config_dir = temp_dir.path();
 
     let self_pk = PublicKey([0u8; 32]);
-    let group_id = toxcore::types::ChatId([2u8; 32]);
+    let group_id = toxcore::types::GroupChatId([2u8; 32]);
     let tox_id = Address([0u8; 38]);
 
     // 1. Create a log file with an outgoing PENDING message
@@ -183,7 +183,7 @@ async fn test_truly_pending_message_is_preserved_on_load() {
     let config_dir = temp_dir.path();
 
     let self_pk = PublicKey([0u8; 32]);
-    let group_id = toxcore::types::ChatId([3u8; 32]);
+    let group_id = toxcore::types::GroupChatId([3u8; 32]);
     let tox_id = Address([0u8; 38]);
 
     let logs_dir = config_dir.join("logs");

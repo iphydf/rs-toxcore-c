@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 use toxcore::tox::{Address, ToxUserStatus};
-use toxcore::types::{ChatId, MessageType, PublicKey, ToxGroupRole};
+use toxcore::types::{GroupChatId, MessageType, PublicKey, ToxGroupRole};
 use toxxi::config::Config;
 use toxxi::model::{
     Conversation, DomainState, InternalMessageId, Message, MessageContent, MessageStatus, Model,
@@ -13,7 +13,7 @@ use toxxi::testing::{buffer_to_string, configure_insta};
 use toxxi::time::FakeTimeProvider;
 use toxxi::ui::draw;
 
-fn setup_clipping_model(trailing_messages: usize) -> (Model, ChatId) {
+fn setup_clipping_model(trailing_messages: usize) -> (Model, GroupChatId) {
     let config = Config::default();
     let self_pk = PublicKey([0u8; 32]);
     let domain = DomainState::new(
@@ -30,7 +30,7 @@ fn setup_clipping_model(trailing_messages: usize) -> (Model, ChatId) {
 
     let mut model = Model::new(domain, config.clone(), config).with_time_provider(tp);
 
-    let group_id = ChatId([1u8; 32]);
+    let group_id = GroupChatId([1u8; 32]);
     let window_id = WindowId::Group(group_id);
 
     let mut conversation = Conversation {
@@ -179,7 +179,7 @@ fn test_game_card_full_visible() {
 
     let mut model = Model::new(domain, config.clone(), config).with_time_provider(tp);
 
-    let group_id = ChatId([1u8; 32]);
+    let group_id = GroupChatId([1u8; 32]);
     let window_id = WindowId::Group(group_id);
 
     let conversation = Conversation {

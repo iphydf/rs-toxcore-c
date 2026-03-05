@@ -57,7 +57,7 @@ fn test_ui_quick_switcher() {
         conv.name = "Bob".to_string();
     }
 
-    let g_chat_id = toxcore::types::ChatId([3u8; 32]);
+    let g_chat_id = toxcore::types::GroupChatId([3u8; 32]);
     model.ensure_group_window(g_chat_id);
     if let Some(conv) = model
         .domain

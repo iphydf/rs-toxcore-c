@@ -175,7 +175,7 @@ fn test_file_command_completion() {
 fn test_group_peer_completion() {
     let mut model = create_test_model();
     let group_id = GroupNumber(0);
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(group_id, chat_id);
     model.ensure_group_window(chat_id);
 

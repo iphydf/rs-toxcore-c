@@ -36,12 +36,16 @@ rust_test(
         "@crates//:rand",
         "@crates//:tempfile",
         "@crates//:tokio",
+        "@crates//:tracing",
         "@crates//:tracing-subscriber",
     ],
 )
 
 rust_test(
     name = "bridge-test",
+    # ~10s under fastbuild crypto (real-Tox connection setup); doesn't
+    # fit the 5s "small" budget. Bumping to medium gives margin.
+    size = "medium",
     srcs = ["tests/bridge_test.rs"],
     edition = "2024",
     rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
@@ -60,8 +64,8 @@ rust_clippy(
     name = "clippy",
     testonly = True,
     deps = [
-        ":merkle-tox-tox",
-        ":integration-test",
         ":bridge-test",
+        ":integration-test",
+        ":merkle-tox-tox",
     ],
 )

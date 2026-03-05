@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 use toxcore::tox::{ToxConnection, ToxUserStatus};
-use toxcore::types::{Address, ChatId, MessageType, PublicKey, ToxGroupRole};
+use toxcore::types::{Address, GroupChatId, MessageType, PublicKey, ToxGroupRole};
 use toxxi::config::Config;
 use toxxi::export::buffer_to_svg;
 use toxxi::model::{
@@ -27,7 +27,7 @@ fn test_svg_full_ui_baseline() {
         ToxUserStatus::TOX_USER_STATUS_NONE,
     );
 
-    let group_id = ChatId([2u8; 32]);
+    let group_id = GroupChatId([2u8; 32]);
     let window_id = WindowId::Group(group_id);
 
     let mut conversation = Conversation {

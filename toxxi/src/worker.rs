@@ -13,7 +13,7 @@ use toxcore::tox::{
     ToxSavedataType, ToxUserStatus,
 };
 use toxcore::types::{
-    ChatId, ConferenceId, FileId, GROUP_CHAT_ID_SIZE, PublicKey, Tox_Err_File_Send_Chunk,
+    GroupChatId, ConferenceId, FileId, GROUP_CHAT_ID_SIZE, PublicKey, Tox_Err_File_Send_Chunk,
     Tox_Err_Friend_Send_Message, ToxError, ToxGroupRole, ToxLogLevel,
 };
 
@@ -27,7 +27,7 @@ fn find_friend(tox: &Tox, pk: &PublicKey) -> Option<FriendNumber> {
     tox.lookup_friend(pk).ok().map(|f| f.get_number())
 }
 
-fn find_group(tox: &Tox, chat_id: &ChatId) -> Option<GroupNumber> {
+fn find_group(tox: &Tox, chat_id: &GroupChatId) -> Option<GroupNumber> {
     for i in 0..tox.group_count() {
         let gnum = GroupNumber(i);
         let group = tox.group(gnum);
@@ -410,7 +410,7 @@ pub fn spawn_tox(
                                     severity: crate::msg::LogSeverity::Error,
                                     context: crate::msg::LogContext::Global,
                                     message: format!(
-                                        "SendGroupMessage: Group not found for ChatId {:?}",
+                                        "SendGroupMessage: Group not found for GroupChatId {:?}",
                                         chat_id
                                     ),
                                 }));
@@ -564,8 +564,9 @@ pub fn spawn_tox(
                             {
                                 let mut chat_id_bytes = [0u8; GROUP_CHAT_ID_SIZE];
                                 chat_id_bytes.copy_from_slice(&bytes);
+                                let chat_id = GroupChatId(chat_id_bytes);
                                 match tox.group_join(
-                                    &chat_id_bytes,
+                                    &chat_id,
                                     &tox.name(),
                                     if pass.is_empty() {
                                         None
@@ -740,7 +741,7 @@ pub fn spawn_tox(
                                     severity: crate::msg::LogSeverity::Error,
                                     context: crate::msg::LogContext::Group(chat_id),
                                     message: format!(
-                                        "SetGroupNickname: Group not found for ChatId {:?}",
+                                        "SetGroupNickname: Group not found for GroupChatId {:?}",
                                         chat_id
                                     ),
                                 }));
@@ -764,7 +765,7 @@ pub fn spawn_tox(
                                     severity: crate::msg::LogSeverity::Error,
                                     context: crate::msg::LogContext::Global,
                                     message: format!(
-                                        "SetGroupTopic: Group not found for ChatId {:?}",
+                                        "SetGroupTopic: Group not found for GroupChatId {:?}",
                                         chat_id
                                     ),
                                 }));
@@ -995,7 +996,7 @@ pub fn spawn_tox(
                             Event::FriendTyping(e) => {
                                 let _ = tx.send(Msg::Tox(ToxEvent::FriendTyping(
                                     e.friend_number(),
-                                    e.is_typing(),
+                                    e.typing(),
                                 )));
                             }
                             Event::FriendReadReceipt(e) => {

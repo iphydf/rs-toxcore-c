@@ -173,7 +173,8 @@ fn test_sync_sketch_serialization() {
 
     let sketch = SyncSketch {
         conversation_id: ConversationId::from([1u8; 32]),
-        cells: cells.clone(),
+        cells: tox_proto::BoundedVec::try_from_iter(cells.iter().cloned())
+            .expect("under MAX_SKETCH_CELLS"),
         range: SyncRange {
             min_rank: 100,
             max_rank: 200,

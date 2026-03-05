@@ -46,10 +46,16 @@ rust_binary(
 
 TEST_SRCS = glob(["tests/*.rs"])
 
+# Tests that run substantive multi-node simulations and need more
+# than the small-tier 5-second timeout.
+_MEDIUM_TESTS = [
+    "tests/group_cost_test.rs",
+]
+
 [
     rust_test(
         name = src.replace("tests/", "").replace(".rs", "").replace("_", "-"),
-        size = "small",
+        size = "medium" if src in _MEDIUM_TESTS else "small",
         srcs = [src],
         edition = "2024",
         rustc_flags = [
@@ -71,8 +77,8 @@ rust_clippy(
     name = "clippy",
     testonly = True,
     deps = [
-        ":workbench_lib",
         ":workbench",
+        ":workbench_lib",
     ] + [
         ":" + src.replace("tests/", "").replace(".rs", "").replace("_", "-")
         for src in TEST_SRCS

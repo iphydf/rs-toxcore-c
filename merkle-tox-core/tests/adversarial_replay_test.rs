@@ -50,8 +50,8 @@ fn test_cross_room_admin_node_replay_protection() {
         vec![room_a.conv_id.to_node_hash()],
         ControlAction::Snapshot(merkle_tox_core::dag::SnapshotData {
             basis_hash: merkle_tox_core::dag::NodeHash::from([0u8; 32]),
-            members: vec![],
-            last_seq_numbers: vec![],
+            members: tox_proto::BoundedVec::new(),
+            last_seq_numbers: tox_proto::BoundedVec::new(),
         }),
         1,
         1,
@@ -227,13 +227,14 @@ fn test_cross_room_content_replay_protection() {
     );
 }
 
-/// Test: Cross-room content replay with manipulated parents.
+/// Test: cross-room content replay with manipulated parents, shared k_conv,
+/// and a re-signed ephemeral signature for Room B.
 ///
-/// The previous test notes "conversation_id is no longer bound in the signature"
-/// with encrypt-then-sign, and relied on different parent hashes.
-///
-/// This test forces shared k_conv and members, re-signing node with correct ephemeral key
-/// for Room B. Ratchet key derivation (using conversation_id) still prevents verification.
+/// This is the defense-in-depth case: even if an attacker knows a shared
+/// k_conv, repoints parents to a valid Room B ancestor, and forges the
+/// ephemeral signature, the ratchet/header KDFs now bind `conversation_id`
+/// so Room B's k_msg/k_header differ from Room A's. The re-signed replay
+/// must still fail verification.
 #[test]
 fn test_cross_room_content_replay_with_same_members() {
     let _ = tracing_subscriber::fmt::try_init();
@@ -307,7 +308,7 @@ fn test_cross_room_content_replay_with_same_members() {
     // 4. Replace parents with Room B genesis. Re-sign wire data
     //    with same ephemeral key.
     let mut replayed = msg_a.clone();
-    replayed.parents = vec![room_b.conv_id.to_node_hash()];
+    replayed.parents = tox_proto::bounded_vec![room_b.conv_id.to_node_hash()];
     // Re-sign for Room B context
     merkle_tox_core::testing::sign_content_node(&mut replayed, &room_b.conv_id, &room_a.keys);
 
@@ -317,27 +318,25 @@ fn test_cross_room_content_replay_with_same_members() {
         .unwrap();
     apply_effects(effects.clone(), &store_b);
 
-    // Ephemeral signature verifies due to identical keys/parents. Ratchet key
-    // derivation fails (different conv_id yields different MAC/AEAD keys).
-    //
-    // Ratchet produces identical keys because k_conv is forced identical.
-    // Protection relies on unique k_conv per room in practice.
-    //
-    // Verify node is stored (verified or speculative). The main security guarantee:
-    // even with identical k_conv, modifying parents changes node hash, preventing
-    // unmodified replay. Unmodified replay fails structural validation.
+    // Even with forced-shared k_conv, matching members, re-pointed parents,
+    // and a re-signed ephemeral signature, the node must not verify in Room B:
+    // k_msg/k_header now bind conversation_id, so Room B derives different
+    // keys and the ephemeral-signing-key lookup fails.
     let (verified_direct, _) = engine_b.verify_node(room_b.conv_id, &replayed, &store_b);
-    // Verifies successfully because unique k_conv constraint was bypassed.
-    if verified_direct {
-        // Replay with re-signed parents succeeds if k_conv shared.
-        // Secure because k_conv is unique in production and requires
-        // ephemeral signing key.
-    } else {
-        // If verification fails, additional binding exists.
-    }
+    assert!(
+        !verified_direct,
+        "re-signed cross-room replay must fail: conversation_id binding in \
+         the ratchet/header KDFs should prevent Room B from reconstructing \
+         Room A's ephemeral signing key",
+    );
+    assert!(
+        !merkle_tox_core::testing::is_verified_in_effects(&effects),
+        "handle_node must not emit a verified effect for a re-signed replay \
+         with forced-shared k_conv",
+    );
 
-    // The REAL cross-room protection: replay without parent manipulation
-    // always fails because original parents don't exist in Room B.
+    // Sanity check: the unmodified replay also fails (original parents don't
+    // exist in Room B → structural validation rejects).
     let effects = engine_b
         .handle_node(room_b.conv_id, msg_a.clone(), &store_b, None)
         .unwrap();
@@ -392,8 +391,8 @@ fn test_speculative_node_replay_is_deduplicated() {
         ControlAction::AnchorSnapshot {
             data: SnapshotData {
                 basis_hash: genesis_node.hash(),
-                members: vec![],
-                last_seq_numbers: vec![],
+                members: tox_proto::BoundedVec::new(),
+                last_seq_numbers: tox_proto::BoundedVec::new(),
             },
             cert: bad_cert,
         },

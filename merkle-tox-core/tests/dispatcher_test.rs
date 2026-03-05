@@ -39,7 +39,7 @@ fn test_sync_heads_dispatcher() {
     // Receive SyncHeads from Bob
     let heads = SyncHeads {
         conversation_id: conv_id,
-        heads: vec![NodeHash::from([0xCCu8; 32])],
+        heads: tox_proto::bounded_vec![NodeHash::from([0xCCu8; 32])],
         flags: 0,
         anchor_hash: None,
     };
@@ -62,7 +62,7 @@ fn test_sync_heads_dispatcher() {
     assert_eq!(responses.len(), 1);
     if let ProtocolMessage::FetchBatchReq(req) = &responses[0] {
         assert_eq!(req.conversation_id, conv_id);
-        assert_eq!(req.hashes, vec![NodeHash::from([0xCCu8; 32])]);
+        assert_eq!(req.hashes.as_slice(), &[NodeHash::from([0xCCu8; 32])]);
     } else {
         panic!("Expected FetchBatchReq");
     }

@@ -1,6 +1,6 @@
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use toxcore::tox::{Address, GroupNumber, GroupPeerNumber, ToxUserStatus};
-use toxcore::types::{ChatId, PublicKey, ToxGroupRole};
+use toxcore::types::{GroupChatId, PublicKey, ToxGroupRole};
 use toxxi::config::Config;
 use toxxi::model::{DomainState, Model, PeerId, WindowId};
 use toxxi::msg::Msg;
@@ -18,7 +18,7 @@ fn create_test_model() -> Model {
     Model::new(domain, config.clone(), config)
 }
 
-fn add_test_group(model: &mut Model, gnum: GroupNumber, chat_id: ChatId) {
+fn add_test_group(model: &mut Model, gnum: GroupNumber, chat_id: GroupChatId) {
     model.session.group_numbers.insert(gnum, chat_id);
     model.ensure_group_window(chat_id);
 }
@@ -46,7 +46,7 @@ fn send_command(model: &mut Model, command: &str) {
 fn test_ignore_unignore_flow() {
     let mut model = create_test_model();
     let group_num = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     let peer_pk = PublicKey([5u8; 32]);
     let peer_id = PeerId(peer_pk);
 
@@ -135,7 +135,7 @@ fn test_ignore_unignore_flow() {
 fn test_ignore_by_peer_id() {
     let mut model = create_test_model();
     let group_num = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     let peer_pk = PublicKey([5u8; 32]);
     let peer_num = GroupPeerNumber(10);
     let peer_id = PeerId(peer_pk);
@@ -174,7 +174,7 @@ fn test_ignore_by_peer_id() {
 fn test_ignore_not_found() {
     let mut model = create_test_model();
     let group_num = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     add_test_group(&mut model, group_num, chat_id);
     model.set_active_window(1);
     let win_id = WindowId::Group(chat_id);

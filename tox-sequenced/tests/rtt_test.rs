@@ -33,14 +33,4 @@ fn test_rto_clamping() {
     assert!(rtt.rto() >= MIN_RTO);
 }
 
-#[test]
-fn test_backoff() {
-    let rtt = RttEstimator::new();
-    let base_rto = rtt.rto();
-    assert_eq!(rtt.rto_with_backoff(1), base_rto * 2);
-    assert_eq!(rtt.rto_with_backoff(2), base_rto * 4);
-    // Max backoff exponent is 6
-    assert_eq!(rtt.rto_with_backoff(10), base_rto * 64);
-}
-
 // end of tests

@@ -1,5 +1,5 @@
 use toxcore::tox::ToxUserStatus;
-use toxcore::types::{Address, ChatId, PublicKey};
+use toxcore::types::{Address, GroupChatId, PublicKey};
 use toxxi::config::Config;
 use toxxi::model::{DomainState, Model, WindowId};
 
@@ -39,7 +39,7 @@ fn test_should_highlight() {
     assert!(!model.should_highlight(window_id, "trust me"));
 
     // Group specific nick
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     model.ensure_group_window(chat_id);
     if let Some(conv) = model
         .domain

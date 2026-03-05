@@ -36,8 +36,8 @@ of a bounded set of trusted peers.
 ## 2. Measurement (Transport Integration)
 
 Time synchronization measurements are integrated into `tox-sequenced`,
-eliminating "ARQ Jitter" (retransmission delay) and using existing RTT
-heartbeats.
+using transport-level PING/PONG heartbeats that reflect pure wire latency
+without application-level retry delays.
 
 1.  **Transport PING/PONG**: The transport layer exchanges timestamps (Origin,
     Receive, Transmit) as part of its routine RTT measurement.

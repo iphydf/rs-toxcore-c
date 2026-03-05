@@ -21,7 +21,6 @@ fn test_large_blob_fs_fallback() {
     let info = BlobInfo {
         hash,
         size,
-        bao_root: None,
         status: BlobStatus::Pending,
         received_mask: None,
         decryption_key: None,
@@ -86,7 +85,6 @@ fn test_small_blob_db_storage() {
     let info = BlobInfo {
         hash,
         size,
-        bao_root: None,
         status: BlobStatus::Pending,
         received_mask: None,
         decryption_key: None,

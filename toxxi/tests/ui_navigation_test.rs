@@ -60,7 +60,7 @@ fn test_ui_navigation_rendering() {
     }
 
     let g1_num = GroupNumber(1);
-    let g1_chat_id = toxcore::types::ChatId([1u8; 32]);
+    let g1_chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(g1_num, g1_chat_id);
 
     model.ensure_group_window(g1_chat_id);

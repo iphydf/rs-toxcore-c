@@ -3,7 +3,7 @@ use crossterm::event::KeyEvent;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend};
 use toxcore::tox::{Address, GroupNumber, ToxUserStatus};
-use toxcore::types::ChatId;
+use toxcore::types::GroupChatId;
 use toxcore::types::PublicKey;
 use toxcore::types::ToxGroupRole;
 use toxxi::config::Config;
@@ -24,7 +24,7 @@ fn create_test_model() -> Model {
     Model::new(domain, config.clone(), config)
 }
 
-fn add_test_group(model: &mut Model, gnum: GroupNumber, chat_id: ChatId) {
+fn add_test_group(model: &mut Model, gnum: GroupNumber, chat_id: GroupChatId) {
     model.session.group_numbers.insert(gnum, chat_id);
     model.ensure_group_window(chat_id);
 }
@@ -40,7 +40,7 @@ fn test_group_nick() {
 
     // 1. Add a group
     let group_num = GroupNumber(0);
-    let chat_id = ChatId([5u8; 32]);
+    let chat_id = GroupChatId([5u8; 32]);
     add_test_group(&mut model, group_num, chat_id);
 
     model.set_active_window(1);
@@ -112,7 +112,7 @@ fn test_group_nick() {
 fn test_per_group_nick() {
     let mut model = create_test_model();
     let group_num = GroupNumber(0);
-    let chat_id = ChatId([5u8; 32]);
+    let chat_id = GroupChatId([5u8; 32]);
     add_test_group(&mut model, group_num, chat_id);
     model.set_active_window(1);
 
@@ -203,7 +203,7 @@ fn test_per_group_nick() {
 fn test_group_peer_join_leave_log() {
     let mut model = create_test_model();
     let group_num = GroupNumber(0);
-    let chat_id = ChatId([5u8; 32]);
+    let chat_id = GroupChatId([5u8; 32]);
     model.session.group_numbers.insert(group_num, chat_id);
     model.ensure_group_window(chat_id);
 
@@ -246,7 +246,7 @@ fn test_group_peer_join_leave_log() {
 fn test_disable_system_messages() {
     let mut model = create_test_model();
     let group_num = GroupNumber(0);
-    let chat_id = ChatId([5u8; 32]);
+    let chat_id = GroupChatId([5u8; 32]);
     model.session.group_numbers.insert(group_num, chat_id);
     model.ensure_group_window(chat_id);
 
@@ -306,7 +306,7 @@ fn test_disable_system_messages() {
 fn test_nick_feedback_visibility() {
     let mut model = create_test_model();
     let group_num = GroupNumber(0);
-    let chat_id = ChatId([5u8; 32]);
+    let chat_id = GroupChatId([5u8; 32]);
     add_test_group(&mut model, group_num, chat_id);
     model.set_active_window(1); // Group chat is index 1
 
@@ -342,7 +342,7 @@ fn test_nick_feedback_visibility() {
 fn test_nick_show_feedback_visibility() {
     let mut model = create_test_model();
     let group_num = GroupNumber(0);
-    let chat_id = ChatId([5u8; 32]);
+    let chat_id = GroupChatId([5u8; 32]);
     add_test_group(&mut model, group_num, chat_id);
     model.set_active_window(1);
 
@@ -377,7 +377,7 @@ fn test_nick_show_feedback_visibility() {
 fn test_group_nick_status_bar_update() {
     let mut model = create_test_model();
     let group_num = GroupNumber(0);
-    let chat_id = ChatId([5u8; 32]);
+    let chat_id = GroupChatId([5u8; 32]);
     add_test_group(&mut model, group_num, chat_id);
     model.set_active_window(1); // Group window
 
@@ -469,7 +469,7 @@ fn test_group_nick_status_bar_update() {
 fn test_group_nick_immediate_status_bar_update() {
     let mut model = create_test_model();
     let group_num = GroupNumber(0);
-    let chat_id = ChatId([5u8; 32]);
+    let chat_id = GroupChatId([5u8; 32]);
     add_test_group(&mut model, group_num, chat_id);
     model.set_active_window(1); // Group window
 

@@ -26,11 +26,6 @@ impl<F: FileSystem> BlobStore<F> {
         self.root.join(&hex[0..2]).join(format!("{}.info", hex))
     }
 
-    fn get_bao_path(&self, hash: &NodeHash) -> PathBuf {
-        let hex = encode_hex_32(hash.as_bytes());
-        self.root.join(&hex[0..2]).join(format!("{}.bao", hex))
-    }
-
     pub fn get_info(&self, hash: &NodeHash) -> io::Result<Option<BlobInfo>> {
         let path = self.get_info_path(hash);
         if !self.fs.exists(&path) {
@@ -49,8 +44,19 @@ impl<F: FileSystem> BlobStore<F> {
         let data = tox_proto::serialize(info).map_err(|e| io::Error::other(e.to_string()))?;
         let mut tmp_path = path.clone();
         tmp_path.set_extension("tmp");
-        self.fs.write(&tmp_path, &data)?;
+        // tmp+rename atomicity with explicit fsyncs: see
+        // `merkle-tox-fs/src/state.rs::StateFile::save` for the
+        // rationale. The write-tmp-then-rename shape isn't durable
+        // without barriers between the data and metadata writes.
+        {
+            let mut handle = self.fs.open(&tmp_path, true, true, true)?;
+            handle.write_all(&data)?;
+            handle.sync_data()?;
+        }
         self.fs.rename(&tmp_path, &path)?;
+        if let Some(parent) = path.parent() {
+            self.fs.sync_dir(parent)?;
+        }
         Ok(())
     }
 
@@ -74,63 +80,23 @@ impl<F: FileSystem> BlobStore<F> {
         Ok(buf)
     }
 
-    pub fn get_chunk_with_proof(
-        &self,
-        hash: &NodeHash,
-        offset: u64,
-        length: u32,
-    ) -> io::Result<(Vec<u8>, Vec<u8>)> {
-        let blob_path = self.get_blob_path(hash);
-        let outboard_path = self.get_bao_path(hash);
-
-        let blob_data = self.fs.read(&blob_path)?;
-        let outboard_data = match self.fs.read(&outboard_path) {
-            Ok(data) => data,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                let mut raw_data = vec![0u8; length as usize];
-                raw_data.copy_from_slice(
-                    &blob_data[offset as usize..(offset + length as u64) as usize],
-                );
-                return Ok((raw_data, Vec::new()));
-            }
-            Err(e) => return Err(e),
-        };
-
-        let mut slice = Vec::new();
-        let mut extractor = bao::encode::SliceExtractor::new_outboard(
-            std::io::Cursor::new(&blob_data),
-            std::io::Cursor::new(&outboard_data),
-            offset,
-            length as u64,
-        );
-        extractor.read_to_end(&mut slice)?;
-
-        let mut raw_data = vec![0u8; length as usize];
-        raw_data.copy_from_slice(&blob_data[offset as usize..(offset + length as u64) as usize]);
-
-        Ok((raw_data, slice))
-    }
-
+    /// Mark a fully-received blob as Available. Chunk-boundary Merkle
+    /// verification already happened in the BlobData receive path (see
+    /// doc/merkle-tox-cas.md §3), so finalize is just a status update.
+    /// Returns NotFound if there is no BlobInfo on record for `hash`.
     pub fn finalize(&self, hash: &NodeHash) -> io::Result<()> {
-        let data_path = self.get_blob_path(hash);
-        let data = self.fs.read(&data_path)?;
-        let (outboard, root) = bao::encode::outboard(&data);
-
-        let bao_path = self.get_bao_path(hash);
-        self.fs.write(&bao_path, &outboard)?;
-
-        if let Some(mut info) = self.get_info(hash)? {
-            info.status = BlobStatus::Available;
-            info.bao_root = Some(root.into());
-            let num_chunks = info.size.div_ceil(CHUNK_SIZE);
-            let mask_size = (num_chunks as usize).div_ceil(8);
-            let mut mask = vec![0u8; mask_size];
-            for i in 0..num_chunks {
-                mask[(i / 8) as usize] |= 1 << (i % 8);
-            }
-            info.received_mask = Some(mask);
-            self.put_info(&info)?;
+        let mut info = self
+            .get_info(hash)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "blob info not found"))?;
+        info.status = BlobStatus::Available;
+        let num_chunks = info.size.div_ceil(CHUNK_SIZE);
+        let mask_size = (num_chunks as usize).div_ceil(8);
+        let mut mask = vec![0u8; mask_size];
+        for i in 0..num_chunks {
+            mask[(i / 8) as usize] |= 1 << (i % 8);
         }
+        info.received_mask = Some(mask);
+        self.put_info(&info)?;
         Ok(())
     }
 }

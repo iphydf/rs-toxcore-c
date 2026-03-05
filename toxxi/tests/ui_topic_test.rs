@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend};
 use toxcore::tox::{Address, GroupNumber, ToxUserStatus};
-use toxcore::types::{ChatId, PublicKey};
+use toxcore::types::{GroupChatId, PublicKey};
 use toxxi::config::Config;
 use toxxi::model::{DomainState, Model, WindowId};
 use toxxi::msg::{Cmd, Msg, ToxAction, ToxEvent};
@@ -33,7 +33,7 @@ fn send_key(model: &mut Model, code: KeyCode, mods: KeyModifiers) -> Vec<Cmd> {
 fn test_ui_topic_update_flow() {
     let mut model = create_test_model();
     let gnum = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gnum, chat_id);
 
     // 1. Initial state: Group window exists but no topic set

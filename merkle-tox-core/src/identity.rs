@@ -2,9 +2,9 @@ use crate::dag::{
     ConversationId, DelegationCertificate, Ed25519Signature, LogicalIdentityPk, NodeHash,
     Permissions, PhysicalDevicePk,
 };
-use ed25519_dalek::{Signature as DalekSignature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature as DalekSignature, Signer, SigningKey, VerifyingKey};
 use parking_lot::Mutex;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use tox_proto::ToxProto;
 use tox_proto::constants::{MAX_AUTH_DEPTH, MAX_DEVICES_PER_IDENTITY};
 use tracing::{debug, trace, warn};
@@ -94,8 +94,15 @@ pub fn verify_delegation<P: AsRef<[u8; 32]>>(
     let signed_data =
         tox_proto::serialize(&sign_data).map_err(|_| IdentityError::InvalidSignature)?;
 
+    // `verify_strict` rejects non-canonical sibling signatures
+    // (RFC 8032 / ZIP-215). The delegation cert's signature flows
+    // into `verify_anchor_snapshot` and admin-chain verification;
+    // a non-strict variant would let a holder mint two distinct
+    // valid signatures over the same `DelegationSignData`,
+    // confounding any cert dedup or replay-detection downstream.
+    // See audit round 9 finding 2(a).
     verifying_key
-        .verify(&signed_data, &signature)
+        .verify_strict(&signed_data, &signature)
         .map_err(|e| {
             tracing::debug!(
                 "Signature verification failed for {:?}: {:?}",
@@ -144,27 +151,38 @@ impl CausalContext {
     }
 }
 
+/// Key for the authorization path cache: conversation, device, logical
+/// identity, the caller's causal context, and query rank.
+type PathCacheKey = (
+    ConversationId,
+    PhysicalDevicePk,
+    LogicalIdentityPk,
+    NodeHash,
+    u64,
+);
+
 /// Cache of verified trust paths from Physical Device PKs to Logical Identities.
 pub struct IdentityManager {
     /// Mapping of (ConversationID, Device PK) to List of Authorization Records
-    authorized_devices: HashMap<(ConversationId, PhysicalDevicePk), Vec<AuthRecord>>,
-    /// Mapping of (ConversationID, Logical PK) to (Role, JoinedAt)
-    logical_members: HashMap<(ConversationId, LogicalIdentityPk), (u8, i64)>,
-    /// Mapping of (ConversationID, Revoked Device PK) to List of Revocation Records
-    revoked_devices: HashMap<(ConversationId, PhysicalDevicePk), Vec<RevocationRecord>>,
+    /// BTreeMap so issuer-search picks the first admin in deterministic
+    /// (key) order rather than HashMap iteration order, which is
+    /// process-randomized.
+    authorized_devices: BTreeMap<(ConversationId, PhysicalDevicePk), Vec<AuthRecord>>,
+    /// Mapping of (ConversationID, Logical PK) to (Role, JoinedAt).
+    /// BTreeMap for deterministic iteration in `list_*` methods.
+    logical_members: BTreeMap<(ConversationId, LogicalIdentityPk), (u8, i64)>,
+    /// Mapping of (ConversationID, Revoked Device PK) to List of Revocation Records.
+    /// BTreeMap for deterministic iteration during permission checks.
+    revoked_devices: BTreeMap<(ConversationId, PhysicalDevicePk), Vec<RevocationRecord>>,
     /// Cache of verified paths to avoid redundant recursive checks.
-    /// (ConversationID, Device PK, Logical PK, EvaluatingNodeHash) -> min_expires_at
-    path_cache: Mutex<
-        lru::LruCache<
-            (
-                ConversationId,
-                PhysicalDevicePk,
-                LogicalIdentityPk,
-                NodeHash,
-            ),
-            i64,
-        >,
-    >,
+    /// Rank is part of the key because the revocation check depends on it
+    /// (a revocation at rank R only applies to queries at rank >= R).
+    /// Without rank in the key, a valid "authorized at rank 50" cache
+    /// entry would incorrectly shadow a query at rank > R that should
+    /// fail the cascade check — this only matters for callers using
+    /// `CausalContext::global()` (evaluating_node_hash = 0) across
+    /// varying ranks, but correctness demands the rank distinction.
+    path_cache: Mutex<lru::LruCache<PathCacheKey, i64>>,
 }
 
 impl Default for IdentityManager {
@@ -176,9 +194,9 @@ impl Default for IdentityManager {
 impl IdentityManager {
     pub fn new() -> Self {
         Self {
-            authorized_devices: HashMap::new(),
-            logical_members: HashMap::new(),
-            revoked_devices: HashMap::new(),
+            authorized_devices: BTreeMap::new(),
+            logical_members: BTreeMap::new(),
+            revoked_devices: BTreeMap::new(),
             path_cache: Mutex::new(lru::LruCache::new(
                 std::num::NonZeroUsize::new(1000).unwrap(),
             )),
@@ -225,7 +243,15 @@ impl IdentityManager {
         })
     }
 
-    /// Records logical member.
+    /// Records logical member. The founder slot (role=0) is
+    /// established by Genesis only and cannot be reassigned: two
+    /// classes of mis-call are silently rejected as defense-in-depth
+    /// — adding a role=0 entry whose `logical_pk` differs from the
+    /// existing founder, and adding the existing founder with a
+    /// non-zero role (demotion). The verifier-layer check at the top
+    /// of `handle_node_internal_ext` is the primary gate; this
+    /// function-level check exists so the invariant survives any
+    /// future caller added without re-reading the verifier.
     pub fn add_member(
         &mut self,
         conversation_id: ConversationId,
@@ -233,6 +259,23 @@ impl IdentityManager {
         role: u8,
         joined_at: i64,
     ) {
+        let existing_founder = self.get_founder(&conversation_id);
+        if role == 0 && existing_founder.is_some() && existing_founder != Some(logical_pk) {
+            debug!(
+                "add_member refused: founder slot for conv {:?} is held by {:?}, \
+                 cannot reassign to {:?}",
+                conversation_id, existing_founder, logical_pk,
+            );
+            return;
+        }
+        if existing_founder == Some(logical_pk) && role != 0 {
+            debug!(
+                "add_member refused: cannot demote founder {:?} (conv {:?}) \
+                 from role 0 to role {}",
+                logical_pk, conversation_id, role,
+            );
+            return;
+        }
         self.logical_members
             .insert((conversation_id, logical_pk), (role, joined_at));
     }
@@ -397,6 +440,17 @@ impl IdentityManager {
     /// Authorizes device using delegation certificate at specific rank.
     /// Certificate issuer must be Logical Identity (Master Seed)
     /// or another authorized device with ADMIN permissions.
+    ///
+    /// `DelegationSignData` has no nonce or signed-at timestamp, so the
+    /// same cert yields a byte-identical signature every time. That is
+    /// safe only because the replay path is fully gated downstream:
+    /// re-authorisation requires wrapping the cert in a fresh
+    /// `AuthorizeDevice` admin node (whose outer signature the
+    /// replayer cannot forge without admin keys), and any downstream
+    /// permission check walks `get_permissions_recursive`, where a
+    /// causal-ancestor revocation dominates any `AuthRecord` reinserted
+    /// here. Do not treat `authorize_device` as the enforcement point
+    /// for revocation — the causal-DAG evaluation is.
     #[allow(clippy::too_many_arguments)]
     pub fn authorize_device(
         &mut self,
@@ -606,6 +660,7 @@ impl IdentityManager {
             *device_pk,
             *logical_pk,
             ctx.evaluating_node_hash,
+            rank,
         )) && expires_at > now_ms
         {
             return true;
@@ -627,6 +682,7 @@ impl IdentityManager {
                     *device_pk,
                     *logical_pk,
                     ctx.evaluating_node_hash,
+                    rank,
                 ),
                 expires_at,
             );

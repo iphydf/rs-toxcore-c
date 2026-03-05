@@ -57,6 +57,21 @@ pub const MAX_AUTH_DEPTH: usize = 16;
 /// to prevent memory/storage exhaustion from malicious peers.
 pub const MAX_SPECULATIVE_NODES_PER_CONVERSATION: usize = 1000;
 
+/// Maximum number of equivocation tuples retained in
+/// `MerkleToxEngine.equivocations`. Equivocation evidence is useful for
+/// one-shot reporting; an attacker who keeps re-authoring the same
+/// `(conversation, sender, seq)` triple with a different node hash
+/// otherwise grows this Vec by ~136 bytes per detection without bound.
+pub const MAX_EQUIVOCATIONS: usize = 1024;
+
+/// Maximum number of `MerkleNode` replies emitted per inbound
+/// `SyncSketch`. Without this clamp, a peer-supplied sketch decoding to
+/// `missing_remotely.len() = d_max(tier)` triggers up to ~680 outbound
+/// replies (Large tier) per inbound packet — a four-orders-of-magnitude
+/// bandwidth amplifier. The remainder converges across subsequent
+/// sketch round-trips.
+pub const MAX_SKETCH_REPLY_BATCH: usize = 16;
+
 /// Maximum number of verified nodes to keep per device in a conversation.
 /// This prevents a compromised device from exhausting local storage.
 pub const MAX_VERIFIED_NODES_PER_DEVICE: u64 = 1000;
@@ -81,6 +96,22 @@ pub const MAX_MESSAGE_SIZE: usize = 1_048_576;
 /// Nodes that cannot be decrypted yet are held in this store; once the quota
 /// is exceeded the oldest entries are evicted.
 pub const OPAQUE_STORE_QUOTA: usize = 100 * 1024 * 1024;
+
+/// Maximum byte size of a single HistoryExport blob the receiver will
+/// accept. The `blob_size` field is admin-asserted: a compromised admin
+/// could otherwise sign a HistoryExport declaring `u64::MAX` bytes,
+/// which receivers would treat as the buffer-allocation target. 100 GiB
+/// is well above any plausible legitimate conversation export and well
+/// below any modern host's memory.
+pub const MAX_BLOB_SIZE: u64 = 100 * 1024 * 1024 * 1024;
+
+/// Maximum number of shard entries in a single `SyncShardChecksums`
+/// packet. Each entry costs the receiver one store-range scan and one
+/// outbound sketch, so an unbounded count is a 5×-amplification DoS.
+/// The legitimate count is `max_rank / SHARD_SIZE`; even a million-rank
+/// conversation has only ~1000 shards. 4096 leaves headroom for
+/// forward-looking peers without admitting the bulk-amplification case.
+pub const MAX_SYNC_SHARDS: usize = 4096;
 
 /// Maximum number of X3DH handshakes (KeyWrap decryptions consuming our
 /// ephemeral keys) before the device must publish a fresh Announcement.

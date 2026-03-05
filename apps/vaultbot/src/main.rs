@@ -125,15 +125,24 @@ impl VaultBot {
         let tox_shared = Arc::new(ReentrantMutex::new(tox));
         let transport = ToxTransport {
             tox: tox_shared.clone(),
+            send_ok: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err_sendq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err_not_connected: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err_other: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            recv_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_lock_wait_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_lookup_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_ffi_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
         // Derive Ed25519 identity from Tox X25519 secret key.
         let self_pk = merkle_tox_core::dag::PhysicalDevicePk::from(
-            merkle_tox_core::crypto::ed25519_public_key_from_seed(&self_sk),
+            merkle_tox_core::crypto::ed25519_public_key_from_seed(&self_sk.0),
         );
         let engine = merkle_tox_core::engine::MerkleToxEngine::with_sk(
             self_pk,
             self_pk.to_logical(),
-            PhysicalDeviceSk::from(self_sk),
+            PhysicalDeviceSk::from(self_sk.0),
             rand::SeedableRng::from_entropy(),
             Arc::new(merkle_tox_core::clock::SystemTimeProvider),
         );

@@ -55,8 +55,9 @@ impl CongestionControl for Aimd {
         self.last_rtt = rtt;
     }
 
-    fn on_nack(&mut self, _now: Instant) {
-        // Multiplicative Decrease / Fast Recovery
+    fn on_loss(&mut self, _bytes_lost: usize, _now: Instant) {
+        // Multiplicative Decrease / Fast Recovery. AIMD reacts to a
+        // loss *event*, not byte volume — so `_bytes_lost` is ignored.
         self.ssthresh = (self.cwnd / 2.0).max(MIN_SSTHRESH);
         self.cwnd = self.ssthresh;
     }
@@ -82,5 +83,5 @@ impl CongestionControl for Aimd {
         self.last_rtt
     }
 
-    fn on_fragment_sent(&mut self, _bytes: usize, _now: Instant) {}
+    fn on_packet_sent(&mut self, _bytes: usize, _now: Instant) {}
 }

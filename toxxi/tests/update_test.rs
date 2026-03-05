@@ -5,7 +5,7 @@ use toxcore::tox::{
     Address, ConferenceNumber, FriendNumber, GroupNumber, GroupPeerNumber, ToxConnection,
     ToxUserStatus,
 };
-use toxcore::types::{ChatId, ConferenceId, MessageType, PublicKey, ToxGroupRole};
+use toxcore::types::{GroupChatId, ConferenceId, MessageType, PublicKey, ToxGroupRole};
 use toxxi::config::Config;
 use toxxi::model::{ConsoleMessageType, DomainState, FriendInfo, Model, PeerId, WindowId};
 use toxxi::msg::{AppCmd, Cmd, Msg, ToxAction, ToxEvent};
@@ -41,7 +41,7 @@ fn add_test_friend(model: &mut Model, fid: FriendNumber, pk: PublicKey) {
     model.ensure_friend_window(pk);
 }
 
-fn add_test_group(model: &mut Model, gnum: GroupNumber, chat_id: ChatId) {
+fn add_test_group(model: &mut Model, gnum: GroupNumber, chat_id: GroupChatId) {
     model.session.group_numbers.insert(gnum, chat_id);
     model.ensure_group_window(chat_id);
 }
@@ -272,7 +272,7 @@ fn test_handle_win_command() {
 fn test_handle_close_command() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     add_test_group(&mut model, gid, chat_id);
 
     model.add_group_message(
@@ -329,7 +329,7 @@ fn test_handle_query_command() {
 fn test_handle_group_created_msg() {
     let mut model = create_test_model();
     let gid = GroupNumber(7);
-    let chat_id = ChatId([0u8; 32]);
+    let chat_id = GroupChatId([0u8; 32]);
 
     // Simulate worker sending GroupCreated message
     update(
@@ -346,9 +346,9 @@ fn test_handle_group_created_msg() {
 fn test_handle_group_created_no_steal_focus() {
     let mut model = create_test_model();
     let gid1 = GroupNumber(1);
-    let chat_id1 = ChatId([1u8; 32]);
+    let chat_id1 = GroupChatId([1u8; 32]);
     let gid2 = GroupNumber(2);
-    let chat_id2 = ChatId([2u8; 32]);
+    let chat_id2 = GroupChatId([2u8; 32]);
 
     // Initial population (simulating load from state)
     model.session.group_numbers.insert(gid1, chat_id1);
@@ -375,7 +375,7 @@ fn test_handle_group_created_no_steal_focus() {
 
     // Simulate worker sending GroupCreated message for a NEW group gid3
     let gid3 = GroupNumber(3);
-    let chat_id3 = ChatId([3u8; 32]);
+    let chat_id3 = GroupChatId([3u8; 32]);
     update(
         &mut model,
         Msg::Tox(ToxEvent::GroupCreated(gid3, chat_id3, None)),
@@ -445,7 +445,7 @@ fn test_handle_conference_created_no_steal_focus() {
 fn test_handle_group_msg_sending() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     add_test_group(&mut model, gid, chat_id);
 
     model.add_group_message(
@@ -560,7 +560,7 @@ fn test_handle_whois_command() {
 fn test_handle_topic_command() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     add_test_group(&mut model, gid, chat_id);
 
     model.add_group_message(
@@ -678,7 +678,7 @@ fn test_handle_status_show() {
 fn test_handle_topic_events() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
     let cid = ConferenceNumber(2);
     let conf_id = ConferenceId([2u8; 32]);
@@ -1083,7 +1083,7 @@ fn test_conference_title_update_empty_preserves_name() {
 fn test_group_name_update() {
     let mut model = create_test_model();
     let gnum = GroupNumber(0);
-    let chat_id = ChatId([0u8; 32]);
+    let chat_id = GroupChatId([0u8; 32]);
     model.session.group_numbers.insert(gnum, chat_id);
     model.ensure_group_window(chat_id);
     let window_id = WindowId::Group(chat_id);
@@ -1101,7 +1101,7 @@ fn test_group_name_update() {
 fn test_group_topic_update() {
     let mut model = create_test_model();
     let gnum = GroupNumber(0);
-    let chat_id = ChatId([0u8; 32]);
+    let chat_id = GroupChatId([0u8; 32]);
     model.session.group_numbers.insert(gnum, chat_id);
     model.ensure_group_window(chat_id);
     let window_id = WindowId::Group(chat_id);
@@ -1119,7 +1119,7 @@ fn test_group_topic_update() {
 fn test_events_ensure_windows() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
     let cid = ConferenceNumber(2);
     let conf_id = ConferenceId([2u8; 32]);
@@ -1193,7 +1193,7 @@ fn test_events_ensure_windows() {
 fn test_handle_group_peer_status_event() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
     let pid = toxcore::tox::GroupPeerNumber(5);
 
@@ -1241,7 +1241,7 @@ fn test_handle_group_peer_status_event() {
 fn test_no_duplicate_group_peers() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
     let pid = GroupPeerNumber(5);
     let pk = PublicKey([5u8; 32]);
@@ -1286,7 +1286,7 @@ fn test_no_duplicate_group_peers() {
 fn test_group_peer_join_filters_self() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
     let self_pk = model.domain.self_public_key;
 
@@ -1316,7 +1316,7 @@ fn test_group_peer_join_filters_self() {
 fn test_reconcile_deduplicates_peers() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
     let pk = PublicKey([5u8; 32]);
 

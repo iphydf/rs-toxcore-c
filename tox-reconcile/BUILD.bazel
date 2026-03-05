@@ -3,8 +3,8 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library",
 rust_library(
     name = "tox-reconcile",
     srcs = [
-        "src/lib.rs",
         "src/iblt.rs",
+        "src/lib.rs",
     ],
     edition = "2024",
     proc_macro_deps = [
@@ -51,8 +51,8 @@ rust_clippy(
     name = "clippy",
     testonly = True,
     deps = [
-        ":tox-reconcile",
         ":reconcile-test",
         ":reconcile_bench",
+        ":tox-reconcile",
     ],
 )

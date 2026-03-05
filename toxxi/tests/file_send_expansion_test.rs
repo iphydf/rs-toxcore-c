@@ -1,5 +1,5 @@
 use toxcore::tox::{Address, ToxUserStatus};
-use toxcore::types::PublicKey;
+use toxcore::types::{FriendNumber, PublicKey};
 use toxxi::commands::io::COMMANDS;
 use toxxi::config::Config;
 use toxxi::model::{ConsoleMessageType, DomainState, Model};
@@ -13,7 +13,16 @@ fn create_test_model() -> Model {
         "I am a test".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
     );
-    Model::new(domain, config.clone(), config)
+    let mut model = Model::new(domain, config.clone(), config);
+    // Add friend 0 so the file-send command's friend lookup succeeds
+    // and reaches the path-expansion + file-existence-check arm we
+    // actually want to test.
+    let friend_pk = PublicKey([0xAAu8; 32]);
+    model
+        .session
+        .friend_numbers
+        .insert(FriendNumber(0), friend_pk);
+    model
 }
 
 #[test]

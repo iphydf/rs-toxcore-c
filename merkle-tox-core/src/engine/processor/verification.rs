@@ -37,6 +37,78 @@ impl MerkleToxEngine {
         let mut effects = Vec::new();
         let now = self.clock.network_time_ms();
 
+        // A conversation has exactly one Genesis. The verifier's
+        // `is_bootstrap` exception bypasses the parent-not-verified
+        // and unauthorized-without-vouches quarantines so the
+        // legitimate first Genesis can land — but that same exception
+        // would let any peer who knows `conversation_id` mint a
+        // *second* Genesis claiming themselves as creator (the
+        // self-bind shortcut in `is_authorized` accepts it). Without
+        // this dedup, the duplicate would reach `verified = true` and
+        // `apply_side_effects` would `add_member(role=0)` and
+        // overwrite `latest_anchor_hashes` — corrupting the founder
+        // anchor for every downstream `verify_delegation` /
+        // AnchorSnapshot check. Drop the duplicate at the door.
+        // Identified in audit round 6; see
+        // `tests/adversarial_genesis_injection_test.rs`.
+        if matches!(
+            node.content,
+            Content::Control(ControlAction::Genesis { .. })
+        ) && self.latest_anchor_hashes.contains_key(&conversation_id)
+            && self.latest_anchor_hashes.get(&conversation_id) != Some(&node_hash)
+        {
+            tracing::debug!(
+                "Dropping duplicate Genesis for conv {:?} (existing anchor: {:?}, attempted: {:?})",
+                conversation_id,
+                self.latest_anchor_hashes.get(&conversation_id),
+                node_hash,
+            );
+            return Ok(effects);
+        }
+
+        // The founder slot is closed once Genesis sets it. AnchorSnapshot
+        // may *re-affirm* the founder by listing them with role=0, but
+        // it may not (a) introduce a *new* role-0 logical_pk or
+        // (b) demote the existing founder to a different role.
+        //
+        // Without this check, an admin (legitimate or with an
+        // unrevoked-but-stale cert) can mint an AnchorSnapshot whose
+        // `data.members` lists an attacker-chosen `LogicalIdentityPk`
+        // with role=0. `apply_side_effects` (`side_effects.rs:208-215`)
+        // unconditionally calls `add_member(role=0, ...)`. Combined
+        // with `get_founder`'s lex-smallest BTreeMap selection
+        // (`identity.rs:301-312`), the attacker displaces the real
+        // founder for every downstream `verify_delegation` —
+        // full admin escalation, identical class to the Genesis
+        // injection but reached through a different bootstrap surface.
+        // Identified in audit round 7; see
+        // `tests/adversarial_anchor_snapshot_member_test.rs`.
+        if let Content::Control(ControlAction::AnchorSnapshot { data, .. }) = &node.content {
+            let existing_founder = self.identity_manager.get_founder(&conversation_id);
+            for m in data.members.iter() {
+                if m.role == 0 && Some(m.public_key) != existing_founder {
+                    tracing::debug!(
+                        "Dropping AnchorSnapshot for conv {:?}: data.members contains role=0 \
+                         entry {:?} that does not match existing founder {:?}",
+                        conversation_id,
+                        m.public_key,
+                        existing_founder,
+                    );
+                    return Ok(effects);
+                }
+                if existing_founder == Some(m.public_key) && m.role != 0 {
+                    tracing::debug!(
+                        "Dropping AnchorSnapshot for conv {:?}: data.members demotes the \
+                         founder {:?} to role {}",
+                        conversation_id,
+                        m.public_key,
+                        m.role,
+                    );
+                    return Ok(effects);
+                }
+            }
+        }
+
         let is_bootstrap = matches!(
             node.content,
             Content::KeyWrap { .. }
@@ -89,7 +161,12 @@ impl MerkleToxEngine {
             let mut min_parent_ts = i64::MAX;
 
             let mut admin_ancestor_hashes = std::collections::HashSet::new();
-            let mut stack = node.parents.clone();
+            // Worklist: starts at this node's parents and grows as we
+            // visit ancestors. A regular `Vec` is the right shape — it
+            // is never serialised and it accumulates across many DAG
+            // levels, so the per-node `MAX_PARENTS` cap doesn't apply
+            // to the cumulative worklist.
+            let mut stack: Vec<NodeHash> = node.parents.iter().cloned().collect();
             let mut visited = std::collections::HashSet::new();
 
             while let Some(parent_hash) = stack.pop() {
@@ -102,7 +179,7 @@ impl MerkleToxEngine {
                     if let Some(cached) = self.admin_ancestors_cache.lock().get(&parent_hash) {
                         admin_ancestor_hashes.extend(cached.iter().cloned());
                     } else {
-                        stack.extend(parent_node.parents.clone());
+                        stack.extend(parent_node.parents.iter().cloned());
                     }
                 }
             }
@@ -283,7 +360,13 @@ impl MerkleToxEngine {
                 let seq_key = (conversation_id, node.sender_pk, node.sequence_number);
                 if let Some(&existing_hash) = self.verified_node_seqs.get(&seq_key)
                     && existing_hash != node_hash
+                    && self.equivocations.len() < tox_proto::constants::MAX_EQUIVOCATIONS
                 {
+                    // Evidence is useful for one-shot reporting. Drop
+                    // further detections once the cap is reached;
+                    // letting the Vec grow unboundedly turns a single
+                    // misbehaving authorised peer into an unbounded
+                    // memory consumer.
                     self.equivocations.push((
                         conversation_id,
                         node.sender_pk,
@@ -373,53 +456,71 @@ impl MerkleToxEngine {
                     for wrapped in wrapped_keys {
                         if wrapped.recipient_pk == self.self_pk {
                             // OPK collision detection (merkle-tox-handshake-ecies.md §5)
-                            if wrapped.opk_id != NodeHash::from([0u8; 32]) {
-                                if let Some((_prev_hash, prev_sender, prev_rank)) =
+                            if wrapped.opk_id != NodeHash::from([0u8; 32])
+                                && let Some((_prev_hash, prev_sender, prev_rank)) =
                                     self.consumed_opk_ids.get(&wrapped.opk_id)
-                                {
-                                    // Collision detected: same OPK consumed by two KeyWraps.
-                                    // Tiebreaker depends on conversation type:
-                                    // - 1-on-1: lexicographic sender_pk comparison
-                                    // - Group: admin seniority (auth_rank, auth_hash)
-                                    let is_dm =
-                                        self.identity_manager.list_members(conversation_id).len()
-                                            <= 2;
-                                    let this_wins = if is_dm {
-                                        node.sender_pk < *prev_sender
-                                    } else {
-                                        // Group: compare admin seniority tuples
-                                        let this_seniority = self
-                                            .identity_manager
-                                            .get_admin_seniority(conversation_id, &node.sender_pk)
-                                            .unwrap_or((u64::MAX, NodeHash::from([0xFF; 32])));
-                                        let prev_seniority = self
-                                            .identity_manager
-                                            .get_admin_seniority(conversation_id, prev_sender)
-                                            .unwrap_or((u64::MAX, NodeHash::from([0xFF; 32])));
-                                        this_seniority < prev_seniority
-                                    };
-                                    if !this_wins {
-                                        debug!(
-                                            "OPK collision: discarding entry from {:?} (rank {}), winner at rank {}",
-                                            node.sender_pk, node.topological_rank, prev_rank
-                                        );
-                                        continue; // skip this entry
-                                    }
+                            {
+                                // Collision detected: same OPK consumed by two KeyWraps.
+                                // Tiebreaker depends on conversation type:
+                                // - 1-on-1: lexicographic sender_pk comparison
+                                // - Group: admin seniority (auth_rank, auth_hash)
+                                let is_dm =
+                                    self.identity_manager.list_members(conversation_id).len() <= 2;
+                                let this_wins = if is_dm {
+                                    node.sender_pk < *prev_sender
+                                } else {
+                                    // Group: compare admin seniority tuples
+                                    let this_seniority = self
+                                        .identity_manager
+                                        .get_admin_seniority(conversation_id, &node.sender_pk)
+                                        .unwrap_or((u64::MAX, NodeHash::from([0xFF; 32])));
+                                    let prev_seniority = self
+                                        .identity_manager
+                                        .get_admin_seniority(conversation_id, prev_sender)
+                                        .unwrap_or((u64::MAX, NodeHash::from([0xFF; 32])));
+                                    this_seniority < prev_seniority
+                                };
+                                if !this_wins {
                                     debug!(
-                                        "OPK collision: new entry from {:?} (rank {}) wins over {:?} (rank {})",
-                                        node.sender_pk,
-                                        node.topological_rank,
-                                        prev_sender,
-                                        prev_rank
+                                        "OPK collision: discarding entry from {:?} (rank {}), winner at rank {}",
+                                        node.sender_pk, node.topological_rank, prev_rank
                                     );
-                                    // New entry wins: overwrite below
+                                    continue; // skip this entry
                                 }
-                                // Record OPK consumption
+                                debug!(
+                                    "OPK collision: new entry from {:?} (rank {}) wins over {:?} (rank {})",
+                                    node.sender_pk, node.topological_rank, prev_sender, prev_rank
+                                );
+                                // Tiebreaker-overwrite path. The prior
+                                // entry already proved the OPK was real
+                                // (it landed via the success branch
+                                // below). We can record the senior's
+                                // metadata here even though our own
+                                // decryption attempt will fail —
+                                // `consume_opk_sk` already removed the
+                                // OPK private key after the first
+                                // successful unwrap, so `find_opk_sk`
+                                // returns None for this second arrival.
+                                // This preserves the §3.8 collision
+                                // semantics: senior admin attribution
+                                // independent of arrival order, even
+                                // though the post-2a-fix success branch
+                                // is unreachable for the second wrap.
                                 self.consumed_opk_ids.insert(
                                     wrapped.opk_id,
                                     (node_hash, node.sender_pk, node.topological_rank),
                                 );
                             }
+                            // Note: first-time `consumed_opk_ids`
+                            // insertion happens in the success branch
+                            // below (via `entry().or_insert(...)` so it
+                            // never overwrites a tiebreaker insert from
+                            // the branch just above). Pre-fix this
+                            // insert ran unconditionally here — letting
+                            // any authorized peer pre-claim any OPK
+                            // they observed in an Announcement by
+                            // shipping a KeyWrap with junk ciphertext.
+                            // See `tests/adversarial_keywrap_preclaim_test.rs`.
                             let opk_sk = self.find_opk_sk(&wrapped.opk_id);
                             for spk_sk in self.ephemeral_keys.values() {
                                 if let Some(pt) = crate::crypto::ecies_unwrap_32(
@@ -449,7 +550,23 @@ impl MerkleToxEngine {
                                 }
                             }
                             // Consume OPK private key for forward secrecy
+                            // and record consumption in the collision
+                            // tracker. Both happen only after a successful
+                            // ECIES unwrap so a KeyWrap that fails to
+                            // decrypt (junk ciphertext, wrong recipient,
+                            // wrong epoch) does not pre-claim the OPK.
+                            // `or_insert` so a tiebreaker-overwrite from
+                            // the senior path above is preserved; this
+                            // branch only fills the entry on the first
+                            // successful arrival.
                             if k_conv_received.is_some() {
+                                if wrapped.opk_id != NodeHash::from([0u8; 32]) {
+                                    self.consumed_opk_ids.entry(wrapped.opk_id).or_insert((
+                                        node_hash,
+                                        node.sender_pk,
+                                        node.topological_rank,
+                                    ));
+                                }
                                 opk_ids_to_consume.push(wrapped.opk_id);
                                 break;
                             }
@@ -461,7 +578,7 @@ impl MerkleToxEngine {
                             node.sender_pk,
                             crate::ProtocolMessage::KeywrapAck {
                                 keywrap_hash: node_hash,
-                                recipient_pk: self.self_pk,
+                                recipient_pk: tox_proto::Claimed::new(self.self_pk),
                             },
                         ));
                         let em =
@@ -610,11 +727,19 @@ impl MerkleToxEngine {
                 } else if let Content::HistoryExport {
                     blob_hash,
                     blob_size,
-                    bao_root,
                     ephemeral_pk: he_ephemeral_pk,
                     wrapped_keys,
                 } = &node.content
+                    && let Some(blob_size) =
+                        blob_size.checked_le(tox_proto::constants::MAX_BLOB_SIZE)
                 {
+                    // Clamp the admin-asserted `blob_size` against the
+                    // protocol cap before allocating any state. A
+                    // HistoryExport declaring more than `MAX_BLOB_SIZE`
+                    // bytes is dropped silently here — receiver buffer
+                    // allocations are sized from this field, so an
+                    // unclamped value is a one-shot OOM amplifier.
+                    //
                     // Register blob_hash for CAS fetching when we are recipient.
                     // Unwrapped bytes are K_export: fresh key used to encrypt blob.
                     for wrapped in wrapped_keys {
@@ -651,14 +776,19 @@ impl MerkleToxEngine {
                                 opk_ids_to_consume.push(wrapped.opk_id);
                                 let info = crate::cas::BlobInfo {
                                     hash: *blob_hash,
-                                    size: *blob_size,
-                                    bao_root: *bao_root,
+                                    size: blob_size,
                                     status: crate::cas::BlobStatus::Pending,
                                     received_mask: None,
                                     decryption_key: k_export,
                                 };
-                                self.blob_syncs
-                                    .insert(*blob_hash, crate::cas::SwarmSync::new(info));
+                                self.blob_syncs.insert(
+                                    *blob_hash,
+                                    crate::cas::SwarmSync::new_with_offset(info, &self.self_pk),
+                                );
+                                // Tie the blob to its source conversation so
+                                // `BlobFetch` can gate serving on current
+                                // membership (see handlers/mod.rs).
+                                self.blob_conversations.insert(*blob_hash, conversation_id);
                                 // Trigger immediate blob fetch from peers
                                 for ((pk, cid), session) in &self.sessions {
                                     if *cid == conversation_id
@@ -690,7 +820,17 @@ impl MerkleToxEngine {
                     {
                         let auth_data = node.serialize_for_auth();
                         let mac = keys.calculate_mac(&auth_data);
-                        if sig.as_bytes()[..32] == *mac.as_bytes() {
+                        // Constant-time compare on the MAC: `==` on byte
+                        // slices short-circuits at the first mismatching
+                        // byte, leaking partial information about the
+                        // expected MAC (which is derived from `k_conv`).
+                        // `verify_mac` (`crypto.rs`) is the canonical
+                        // helper but its argument shape doesn't fit here
+                        // (we need to compare a 32-byte prefix, not a
+                        // full `NodeMac`); use `subtle::ConstantTimeEq`
+                        // directly. See audit round 9 finding #1.
+                        use subtle::ConstantTimeEq;
+                        if sig.as_bytes()[..32].ct_eq(mac.as_bytes()).into() {
                             authentic = true;
                         }
                     }
@@ -1055,10 +1195,14 @@ impl MerkleToxEngine {
             | Content::Edit { .. }
             | Content::Redaction { .. }
             | Content::Custom { .. }
-            | Content::HistoryExport { .. }
             | Content::LegacyBridge { .. }
             | Content::SenderKeyDistribution { .. }
             | Content::Unknown { .. } => Permissions::MESSAGE,
+            // HistoryExport distributes K_export to every authorised
+            // device and, on receipt, triggers an off-DAG BlobQuery.
+            // Both side-effects are admin-gated; keep the verification
+            // gate aligned so a MESSAGE-only device cannot author one.
+            Content::HistoryExport { .. } => Permissions::ADMIN,
             Content::Control(action) => match action {
                 ControlAction::AuthorizeDevice { .. }
                 | ControlAction::RevokeDevice { .. }
@@ -1201,7 +1345,10 @@ impl MerkleToxEngine {
                             {
                                 let auth_data = node.serialize_for_auth();
                                 let mac = keys.calculate_mac(&auth_data);
-                                sig.as_bytes()[..32] == *mac.as_bytes()
+                                // CT compare — see audit round 9 finding #1
+                                // and the matching call site upthread.
+                                use subtle::ConstantTimeEq;
+                                sig.as_bytes()[..32].ct_eq(mac.as_bytes()).into()
                             } else {
                                 false
                             }
@@ -1383,7 +1530,12 @@ impl MerkleToxEngine {
             }
 
             let mut admin_ancestor_hashes = std::collections::HashSet::new();
-            let mut stack = node.parents.clone();
+            // Worklist: starts at this node's parents and grows as we
+            // visit ancestors. A regular `Vec` is the right shape — it
+            // is never serialised and it accumulates across many DAG
+            // levels, so the per-node `MAX_PARENTS` cap doesn't apply
+            // to the cumulative worklist.
+            let mut stack: Vec<NodeHash> = node.parents.iter().cloned().collect();
             let mut visited = std::collections::HashSet::new();
 
             while let Some(parent_hash) = stack.pop() {
@@ -1396,7 +1548,7 @@ impl MerkleToxEngine {
                     if let Some(cached) = self.admin_ancestors_cache.lock().get(&parent_hash) {
                         admin_ancestor_hashes.extend(cached.iter().cloned());
                     } else {
-                        stack.extend(parent_node.parents.clone());
+                        stack.extend(parent_node.parents.iter().cloned());
                     }
                 }
             }

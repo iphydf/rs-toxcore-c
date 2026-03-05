@@ -70,11 +70,11 @@ fn test_message_splitting() {
 #[test]
 fn test_group_message_splitting() {
     use toxcore::tox::GroupNumber;
-    use toxcore::types::ChatId;
+    use toxcore::types::GroupChatId;
 
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
 
     model.session.group_numbers.insert(gid, chat_id);
     model.ensure_group_window(chat_id);

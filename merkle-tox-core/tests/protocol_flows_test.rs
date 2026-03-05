@@ -360,7 +360,6 @@ fn test_ratchet_snapshot_recovery() {
             conv_id,
             merkle_tox_core::dag::NodeHash::from([0u8; 32]),
             0,
-            None,
             &alice_store,
         )
         .unwrap();
@@ -806,7 +805,7 @@ fn test_x3dh_last_resort_blocking() {
         &bob.device_sk,
         vec![],
         ControlAction::Announcement {
-            pre_keys: vec![], // NO EPHEMERAL KEYS
+            pre_keys: tox_proto::BoundedVec::new(), // NO EPHEMERAL KEYS
             last_resort_key: SignedPreKey {
                 public_key: lr_pk,
                 signature: Ed25519Signature::from([0u8; 64]),
@@ -1109,7 +1108,7 @@ fn test_announcement_rejects_invalid_prekey_signature() {
         &bob.device_sk,
         vec![auth_bob.hash()],
         ControlAction::Announcement {
-            pre_keys: vec![SignedPreKey {
+            pre_keys: tox_proto::bounded_vec![SignedPreKey {
                 public_key: bad_pk,
                 signature: bad_sig,
                 expires_at: i64::MAX,
@@ -1235,7 +1234,7 @@ fn test_trust_restored_expires_after_30_days() {
     assert!(engine.conversations.get(&conv_id).unwrap().is_established());
 
     // Call poll: the 30-day expiry check should fire
-    let _ = engine.poll(Instant::now(), &store);
+    let _ = engine.poll(Instant::now(), &store, None);
 
     // After poll, the conversation should be downgraded to Pending
     match engine.conversations.get(&conv_id) {
@@ -1326,7 +1325,7 @@ fn test_reinclusion_request_protocol() {
         ) => {
             assert_eq!(*target_pk, bob.device_pk);
             assert_eq!(*conversation_id, conv_id);
-            assert_eq!(*sender_pk, alice.device_pk);
+            assert_eq!(*sender_pk.expose_unchecked(), alice.device_pk);
             assert_eq!(*healing_snapshot_hash, genesis.hash());
         }
         other => panic!("Expected SendPacket(ReinclusionRequest), got: {:?}", other),

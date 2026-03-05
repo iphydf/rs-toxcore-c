@@ -1,12 +1,12 @@
 use toxcore::tox::{GroupNumber, ToxGroupRole, ToxUserStatus};
-use toxcore::types::{ChatId, PublicKey};
+use toxcore::types::{GroupChatId, PublicKey};
 use toxxi::model::{Conversation, PeerId, PeerInfo, WindowId};
 use toxxi::testing::TestContext;
 
 #[test]
 fn test_reboot_persistence_peers_offline() {
     let ctx = TestContext::new();
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     let _group_number = GroupNumber(1);
     let peer_pk = PublicKey([2u8; 32]);
     let peer_id = PeerId(peer_pk);

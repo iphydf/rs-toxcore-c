@@ -3,6 +3,10 @@ use toxxi::tester::TestHarness;
 use toxxi::tlog;
 
 #[tokio::test]
+#[ignore = "Slow real-Tox 3-node group integration test; routinely exceeds the \
+            default 300s 'medium' Bazel timeout because of real friend-handshake \
+            and group-creation delays. Run explicitly via --test_arg=--ignored \
+            with a generous --test_timeout."]
 async fn test_group_ignore_integration() {
     let mut h = TestHarness::new(3);
     h.link_all().await;

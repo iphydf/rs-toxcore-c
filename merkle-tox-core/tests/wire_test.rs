@@ -28,7 +28,7 @@ fn test_wire_node_roundtrip() {
         1600000000,
     );
 
-    let ck = test_pack_content_keys(&keys, &sender_pk, 1);
+    let ck = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
     let wire = node
         .pack_wire(&PackKeys::Content(ck), false)
         .expect("Failed to pack");
@@ -42,7 +42,7 @@ fn test_wire_node_roundtrip() {
     );
 
     // Decrypt using unpack_wire_content with known sender
-    let ck2 = test_pack_content_keys(&keys, &sender_pk, 1);
+    let ck2 = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
     let seq =
         MerkleNode::try_decrypt_routing(&wire, &ck2.k_header).expect("Routing AEAD should succeed");
     let unpacked = MerkleNode::unpack_wire_content(&wire, sender_pk, author_pk, seq, &ck2.k_msg)
@@ -74,7 +74,7 @@ fn test_wire_node_compression_roundtrip() {
         1600000000,
     );
 
-    let ck = test_pack_content_keys(&keys, &sender_pk, 1);
+    let ck = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
     let wire = node
         .pack_wire(&PackKeys::Content(ck), true)
         .expect("Failed to pack");
@@ -83,7 +83,7 @@ fn test_wire_node_compression_roundtrip() {
             .contains(merkle_tox_core::dag::WireFlags::COMPRESSED)
     );
 
-    let ck2 = test_pack_content_keys(&keys, &sender_pk, 1);
+    let ck2 = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
     let seq = MerkleNode::try_decrypt_routing(&wire, &ck2.k_header).unwrap();
     let unpacked =
         MerkleNode::unpack_wire_content(&wire, sender_pk, author_pk, seq, &ck2.k_msg).unwrap();
@@ -174,7 +174,7 @@ fn test_wire_malleability() {
         1600000000,
     );
 
-    let ck = test_pack_content_keys(&keys, &sender_pk, 1);
+    let ck = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
     let mut wire = node
         .pack_wire(&PackKeys::Content(ck), false)
         .expect("Failed to pack");
@@ -183,7 +183,7 @@ fn test_wire_malleability() {
     // decryption to fail entirely (Poly1305 tag mismatch).
     wire.encrypted_routing[15] ^= 0x01;
 
-    let ck2 = test_pack_content_keys(&keys, &sender_pk, 1);
+    let ck2 = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
     let result = MerkleNode::try_decrypt_routing(&wire, &ck2.k_header);
     assert!(
         result.is_none(),
@@ -224,8 +224,8 @@ fn test_nonce_safety_concurrent_parents() {
         1000,
     );
 
-    let ck1 = test_pack_content_keys(&keys, &sender_pk, 1);
-    let ck2 = test_pack_content_keys(&keys, &sender_pk, 2);
+    let ck1 = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
+    let ck2 = test_pack_content_keys(&keys, &conv_id, &sender_pk, 2);
     let wire1 = node1
         .pack_wire(&PackKeys::Content(ck1), false)
         .expect("Failed to pack");
@@ -272,8 +272,8 @@ fn test_nonce_uniqueness_identical_content() {
         1000,
     );
 
-    let ck1 = test_pack_content_keys(&keys, &sender_pk, 1);
-    let ck2 = test_pack_content_keys(&keys, &sender_pk, 2);
+    let ck1 = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
+    let ck2 = test_pack_content_keys(&keys, &conv_id, &sender_pk, 2);
     let wire1 = node1.pack_wire(&PackKeys::Content(ck1), false).unwrap();
     let wire2 = node2.pack_wire(&PackKeys::Content(ck2), false).unwrap();
 
@@ -427,7 +427,7 @@ fn test_wire_node_padding_edge_cases() {
         1,
         1000,
     );
-    node_80.metadata = vec![0x80];
+    node_80.metadata = tox_proto::BoundedBytes::try_from_vec(vec![0x80]).expect("under cap");
     merkle_tox_core::testing::sign_content_node(&mut node_80, &conv_id, &keys);
     let wire_80 = node_80.pack_wire(&PackKeys::Exception, false).unwrap();
     let unpacked_80 = MerkleNode::unpack_wire_exception(&wire_80).unwrap();
@@ -445,7 +445,7 @@ fn test_wire_node_padding_edge_cases() {
         1,
         1000,
     );
-    node_00.metadata = vec![0x00];
+    node_00.metadata = tox_proto::BoundedBytes::try_from_vec(vec![0x00]).expect("under cap");
     merkle_tox_core::testing::sign_content_node(&mut node_00, &conv_id, &keys);
     let wire_00 = node_00.pack_wire(&PackKeys::Exception, false).unwrap();
     let unpacked_00 = MerkleNode::unpack_wire_exception(&wire_00).unwrap();
@@ -463,7 +463,8 @@ fn test_wire_node_padding_edge_cases() {
         1,
         1000,
     );
-    node_many_00.metadata = vec![0u8; 10];
+    node_many_00.metadata =
+        tox_proto::BoundedBytes::try_from_vec(vec![0u8; 10]).expect("under cap");
     merkle_tox_core::testing::sign_content_node(&mut node_many_00, &conv_id, &keys);
     let wire_many_00 = node_many_00.pack_wire(&PackKeys::Exception, false).unwrap();
     let unpacked_many_00 = MerkleNode::unpack_wire_exception(&wire_many_00).unwrap();
@@ -506,13 +507,13 @@ fn test_wire_mac_verification_failure() {
     );
 
     // Scenario 2: Tamper with AEAD-encrypted routing → decryption must fail
-    let ck = test_pack_content_keys(&keys, &sender_pk, 1);
+    let ck = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
     let mut wire = node
         .pack_wire(&PackKeys::Content(ck), false)
         .expect("Failed to pack");
     wire.encrypted_routing[20] ^= 0x01;
 
-    let ck2 = test_pack_content_keys(&keys, &sender_pk, 1);
+    let ck2 = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
     assert!(
         MerkleNode::try_decrypt_routing(&wire, &ck2.k_header).is_none(),
         "AEAD should reject tampered routing"
@@ -523,10 +524,11 @@ fn test_wire_mac_verification_failure() {
 fn test_sender_hint_derivation() {
     let k_conv = KConv::from([0x42u8; 32]);
     let keys = ConversationKeys::derive(&k_conv);
+    let conv_id = ConversationId::from([0xEEu8; 32]);
     let sender_pk = PhysicalDevicePk::from([3u8; 32]);
 
-    let ck1 = test_pack_content_keys(&keys, &sender_pk, 1);
-    let ck2 = test_pack_content_keys(&keys, &sender_pk, 1);
+    let ck1 = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
+    let ck2 = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
 
     // Same keys → same hint
     let hint1 = merkle_tox_core::crypto::compute_sender_hint(&ck1.k_msg);
@@ -534,7 +536,7 @@ fn test_sender_hint_derivation() {
     assert_eq!(hint1, hint2);
 
     // Different seq → different hint
-    let ck3 = test_pack_content_keys(&keys, &sender_pk, 2);
+    let ck3 = test_pack_content_keys(&keys, &conv_id, &sender_pk, 2);
     let hint3 = merkle_tox_core::crypto::compute_sender_hint(&ck3.k_msg);
     assert_ne!(hint1, hint3);
 }
@@ -558,7 +560,7 @@ fn test_routing_aead_rejects_wrong_key() {
         1000,
     );
 
-    let ck = test_pack_content_keys(&keys, &sender_pk, 1);
+    let ck = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
     let wire = node.pack_wire(&PackKeys::Content(ck), false).unwrap();
 
     // Try decrypting with a wrong key
@@ -566,6 +568,51 @@ fn test_routing_aead_rejects_wrong_key() {
     assert!(
         MerkleNode::try_decrypt_routing(&wire, &wrong_key).is_none(),
         "AEAD should reject wrong key"
+    );
+}
+
+/// Defense-in-depth: a wire packet encrypted in conversation A must not be
+/// decryptable under conversation B's key derivation, even when k_conv, the
+/// sender, and the sequence number are identical.
+///
+/// The threat this guards against is a shared-k_conv compromise: if a bug
+/// (or persistence mixup, or KeyWrap misrouting) ever causes two rooms to
+/// hold the same k_conv, the wire AEAD should still fail cross-room rather
+/// than fail-open. Binding `conversation_id` into the KDF for the header
+/// key and the ratchet chain key provides that defense.
+#[test]
+fn test_routing_aead_binds_conversation_id() {
+    let k_conv = KConv::from([0x42u8; 32]);
+    let keys = ConversationKeys::derive(&k_conv);
+    let sender_pk = PhysicalDevicePk::from([3u8; 32]);
+    let author_pk = LogicalIdentityPk::from([2u8; 32]);
+    let conv_id_a = ConversationId::from([0xAAu8; 32]);
+    let conv_id_b = ConversationId::from([0xBBu8; 32]);
+
+    // Alice packs a wire node scoped to conversation A.
+    let node = create_signed_content_node(
+        &conv_id_a,
+        &keys,
+        author_pk,
+        sender_pk,
+        vec![NodeHash::from([1u8; 32])],
+        Content::Text("secret for A only".to_string()),
+        10,
+        1,
+        1_600_000_000,
+    );
+    let ck_a = test_pack_content_keys(&keys, &conv_id_a, &sender_pk, 1);
+    let wire = node.pack_wire(&PackKeys::Content(ck_a), false).unwrap();
+
+    // Attacker, knowing the (accidentally) shared k_conv, derives keys as
+    // conversation B would and tries to decrypt.
+    let ck_b = test_pack_content_keys(&keys, &conv_id_b, &sender_pk, 1);
+    let routing = MerkleNode::try_decrypt_routing(&wire, &ck_b.k_header);
+
+    assert!(
+        routing.is_none(),
+        "wire packet encrypted in conv A must not decrypt with conv B's header key \
+         (conv_id must be mixed into derive_k_header_epoch)",
     );
 }
 

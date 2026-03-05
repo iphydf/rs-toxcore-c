@@ -2,7 +2,7 @@ pub mod policy;
 pub mod state;
 
 use crate::policy::{DefaultPolicy, PolicyHandler};
-use crate::state::{ChatState, MemberInfo, MemberRole};
+use crate::state::{ChatMessage, ChatState, ClientEvent, MemberInfo, MemberRole};
 use ed25519_dalek::SigningKey;
 use merkle_tox_core::dag::{
     Content, ControlAction, ConversationId, EmojiSource, InviteAction, LogicalIdentityPk,
@@ -14,8 +14,9 @@ use merkle_tox_core::identity::sign_delegation;
 use merkle_tox_core::node::MerkleToxNode;
 use merkle_tox_core::sync::{BlobStore, NodeStore};
 use merkle_tox_core::{NodeEvent, NodeEventHandler, Transport};
+use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
 use tracing::{debug, error, info};
 
 /// Bridges MerkleToxNode events into a tokio channel.
@@ -36,6 +37,9 @@ pub struct MerkleToxClient<T: Transport + 'static, S: NodeStore + BlobStore + 's
     policy: Arc<dyn PolicyHandler>,
     state: Arc<RwLock<ChatState>>,
     conversation_id: ConversationId,
+    event_tx: broadcast::Sender<ClientEvent>,
+    reachable_peers: Arc<RwLock<HashSet<PhysicalDevicePk>>>,
+    shutdown: watch::Sender<bool>,
 }
 
 impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient<T, S> {
@@ -45,11 +49,16 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
             conversation_id,
             ..Default::default()
         }));
+        let (event_tx, _) = broadcast::channel(256);
+        let (shutdown, _) = watch::channel(false);
         Self {
             node,
             policy: Arc::new(DefaultPolicy),
             state,
             conversation_id,
+            event_tx,
+            reachable_peers: Arc::new(RwLock::new(HashSet::new())),
+            shutdown,
         }
     }
 
@@ -63,15 +72,59 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
             conversation_id,
             ..Default::default()
         }));
+        let (event_tx, _) = broadcast::channel(256);
+        let (shutdown, _) = watch::channel(false);
         Self {
             node,
             policy,
             state,
             conversation_id,
+            event_tx,
+            reachable_peers: Arc::new(RwLock::new(HashSet::new())),
+            shutdown,
         }
     }
 
-    /// Starts the orchestration loop and performs initial state refresh.
+    /// Subscribe to application-level client events.
+    pub fn subscribe(&self) -> broadcast::Receiver<ClientEvent> {
+        self.event_tx.subscribe()
+    }
+
+    /// Signal the orchestration loop to stop.
+    pub fn shutdown(&self) {
+        let _ = self.shutdown.send(true);
+    }
+
+    /// Update peer reachability. Emits connect/disconnect events and triggers sync on connect.
+    pub async fn set_peer_available(&self, peer_pk: PhysicalDevicePk, available: bool) {
+        {
+            let mut node_lock = self.node.lock().await;
+            node_lock.set_peer_available(peer_pk, available);
+        }
+
+        let mut peers = self.reachable_peers.write().await;
+        if available {
+            if peers.insert(peer_pk) {
+                self.emit_event(ClientEvent::PeerConnected { peer_pk });
+            }
+        } else if peers.remove(&peer_pk) {
+            self.emit_event(ClientEvent::PeerDisconnected { peer_pk });
+        }
+        drop(peers);
+
+        // Trigger sync on connect
+        if available {
+            self.trigger_sync_with_peer(peer_pk).await;
+        }
+    }
+
+    /// Forward a raw packet to the underlying node.
+    pub async fn handle_packet(&self, from: PhysicalDevicePk, data: &[u8]) {
+        let mut node_lock = self.node.lock().await;
+        node_lock.handle_packet(from, data);
+    }
+
+    /// Starts the orchestration loop with polling, sync, and event handling.
     pub async fn start(self: Arc<Self>) {
         let (tx, mut rx) = mpsc::unbounded_channel();
         {
@@ -79,20 +132,56 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
             node.set_event_handler(Arc::new(ClientEventBridge { tx }));
         }
 
-        let client = self.clone();
-        tokio::spawn(async move {
-            info!("MerkleToxClient orchestration loop started");
-            while let Some(event) = rx.recv().await {
-                if let Err(e) = client.handle_event(event).await {
-                    error!("Error in orchestration loop: {}", e);
-                }
-            }
-        });
-
         // Initial state refresh from the Admin track.
         if let Err(e) = self.refresh_state().await {
             error!("Failed to refresh initial state: {}", e);
         }
+
+        let mut shutdown_rx = self.shutdown.subscribe();
+
+        // Initial poll to get first wakeup time
+        let initial_wakeup = {
+            let mut node_lock = self.node.lock().await;
+            node_lock.poll()
+        };
+        let mut poll_deadline = tokio::time::Instant::from_std(initial_wakeup);
+
+        let sync_interval = self.policy.full_sync_interval();
+
+        let client = self.clone();
+        tokio::spawn(async move {
+            info!("MerkleToxClient orchestration loop started");
+            loop {
+                tokio::select! {
+                    event = rx.recv() => {
+                        match event {
+                            Some(ev) => {
+                                if let Err(e) = client.handle_event(ev).await {
+                                    error!("Error in orchestration loop: {}", e);
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                    _ = tokio::time::sleep_until(poll_deadline) => {
+                        let next = {
+                            let mut node_lock = client.node.lock().await;
+                            node_lock.poll()
+                        };
+                        poll_deadline = tokio::time::Instant::from_std(next);
+                    }
+                    _ = tokio::time::sleep(sync_interval) => {
+                        client.trigger_full_sync().await;
+                    }
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            info!("MerkleToxClient shutting down");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
     }
 
     /// Processes a single node event.
@@ -106,7 +195,14 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
             } => {
                 if conversation_id == self.conversation_id {
                     debug!("Applying node {} to state", hex::encode(hash.as_bytes()));
+                    // Promote speculative/pending messages with the same hash
+                    {
+                        let mut state = self.state.write().await;
+                        state.speculative_messages.retain(|m| m.hash != hash);
+                        state.identity_pending_messages.retain(|m| m.hash != hash);
+                    }
                     self.apply_node_to_state(&hash, &node).await?;
+                    self.emit_client_events_for_node(conversation_id, &hash, &node);
                     debug!(
                         "Orchestrating actions for node {}",
                         hex::encode(hash.as_bytes())
@@ -114,14 +210,180 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
                     self.orchestrate_actions(&node).await?;
                 }
             }
+            NodeEvent::NodeSpeculative {
+                conversation_id,
+                hash,
+                node,
+            } => {
+                if conversation_id == self.conversation_id {
+                    let mut state = self.state.write().await;
+                    state.speculative_messages.push(ChatMessage {
+                        hash,
+                        author_pk: node.author_pk,
+                        timestamp: node.network_timestamp,
+                        content: node.content.clone(),
+                        reactions: Default::default(),
+                        is_redacted: false,
+                    });
+                    self.emit_event(ClientEvent::SpeculativeMessage {
+                        conversation_id,
+                        hash,
+                        author_pk: node.author_pk,
+                        content: node.content,
+                    });
+                }
+            }
+            NodeEvent::NodeIdentityPending {
+                conversation_id,
+                hash,
+                node,
+            } => {
+                if conversation_id == self.conversation_id {
+                    let mut state = self.state.write().await;
+                    state.identity_pending_messages.push(ChatMessage {
+                        hash,
+                        author_pk: node.author_pk,
+                        timestamp: node.network_timestamp,
+                        content: node.content.clone(),
+                        reactions: Default::default(),
+                        is_redacted: false,
+                    });
+                    self.emit_event(ClientEvent::IdentityPendingMessage {
+                        conversation_id,
+                        hash,
+                        author_pk: node.author_pk,
+                        content: node.content,
+                    });
+                }
+            }
+            NodeEvent::NodeInvalidated {
+                conversation_id,
+                hash,
+            } => {
+                if conversation_id == self.conversation_id {
+                    let mut state = self.state.write().await;
+                    state.messages.retain(|m| m.hash != hash);
+                    state.speculative_messages.retain(|m| m.hash != hash);
+                    state.identity_pending_messages.retain(|m| m.hash != hash);
+                    state.heads.retain(|h| *h != hash);
+                    self.emit_event(ClientEvent::NodeInvalidated {
+                        conversation_id,
+                        hash,
+                    });
+                }
+            }
             NodeEvent::PeerHandshakeComplete { peer_pk } => {
                 debug!("Checking auto-authorize for peer {:?}", peer_pk);
+                self.emit_event(ClientEvent::PeerConnected { peer_pk });
                 self.check_auto_authorize(&peer_pk).await?;
             }
-            _ => {}
+            NodeEvent::BlobAvailable { hash } => {
+                self.emit_event(ClientEvent::BlobAvailable { hash });
+            }
+            NodeEvent::EquivocationDetected {
+                conversation_id,
+                device_pk,
+                seq,
+                existing_hash,
+                conflicting_hash,
+            } => {
+                self.emit_event(ClientEvent::EquivocationDetected {
+                    conversation_id,
+                    device_pk,
+                    seq,
+                    existing_hash,
+                    conflicting_hash,
+                });
+            }
+            NodeEvent::HistorySnapshotNeeded { conversation_id } => {
+                self.emit_event(ClientEvent::HistorySnapshotNeeded { conversation_id });
+            }
         }
         debug!("Client handled event");
         Ok(())
+    }
+
+    /// Emit typed ClientEvents based on verified node content.
+    fn emit_client_events_for_node(
+        &self,
+        conversation_id: ConversationId,
+        hash: &NodeHash,
+        node: &MerkleNode,
+    ) {
+        match &node.content {
+            Content::Text(_)
+            | Content::Blob { .. }
+            | Content::Location { .. }
+            | Content::Custom { .. } => {
+                self.emit_event(ClientEvent::MessageReceived {
+                    conversation_id,
+                    hash: *hash,
+                    author_pk: node.author_pk,
+                    timestamp: node.network_timestamp,
+                    content: node.content.clone(),
+                });
+            }
+            Content::Reaction { target_hash, emoji } => {
+                let emoji_str = match emoji {
+                    EmojiSource::Unicode(s) => s.clone(),
+                    EmojiSource::Custom { shortcode, .. } => shortcode.clone(),
+                };
+                self.emit_event(ClientEvent::ReactionAdded {
+                    conversation_id,
+                    target_hash: *target_hash,
+                    emoji: emoji_str,
+                    reactor_pk: node.author_pk,
+                });
+            }
+            Content::Redaction { target_hash, .. } => {
+                self.emit_event(ClientEvent::MessageRedacted {
+                    conversation_id,
+                    target_hash: *target_hash,
+                });
+            }
+            Content::Control(action) => match action {
+                ControlAction::SetTitle(title) => {
+                    self.emit_event(ClientEvent::TitleChanged {
+                        conversation_id,
+                        title: title.clone(),
+                    });
+                }
+                ControlAction::SetTopic(topic) => {
+                    self.emit_event(ClientEvent::TopicChanged {
+                        conversation_id,
+                        topic: topic.clone(),
+                    });
+                }
+                ControlAction::Invite(invite) => {
+                    let role = if invite.role == 1 {
+                        MemberRole::Admin
+                    } else {
+                        MemberRole::Member
+                    };
+                    self.emit_event(ClientEvent::MemberJoined {
+                        conversation_id,
+                        member_pk: invite.invitee_pk,
+                        role,
+                    });
+                }
+                ControlAction::AuthorizeDevice { cert } => {
+                    self.emit_event(ClientEvent::DeviceAuthorized {
+                        conversation_id,
+                        device_pk: cert.device_pk,
+                    });
+                }
+                ControlAction::RevokeDevice {
+                    target_device_pk, ..
+                } => {
+                    self.emit_event(ClientEvent::DeviceRevoked {
+                        conversation_id,
+                        device_pk: *target_device_pk,
+                    });
+                }
+                _ => {}
+            },
+            _ => {}
+        }
     }
 
     async fn apply_node_to_state(&self, hash: &NodeHash, node: &MerkleNode) -> MerkleToxResult<()> {
@@ -143,7 +405,7 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
             | Content::Blob { .. }
             | Content::Location { .. }
             | Content::Custom { .. } => {
-                state.messages.push(crate::state::ChatMessage {
+                state.messages.push(ChatMessage {
                     hash: *hash,
                     author_pk: node.author_pk,
                     timestamp: node.network_timestamp,
@@ -356,6 +618,43 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
         Ok(())
     }
 
+    /// Trigger a full sync with all reachable peers (filtered by policy).
+    async fn trigger_full_sync(&self) {
+        let peers: Vec<PhysicalDevicePk> = {
+            let peers = self.reachable_peers.read().await;
+            peers
+                .iter()
+                .filter(|pk| self.policy.should_sync_with(pk))
+                .copied()
+                .collect()
+        };
+
+        for peer in peers {
+            self.trigger_sync_with_peer(peer).await;
+        }
+    }
+
+    async fn trigger_sync_with_peer(&self, peer_pk: PhysicalDevicePk) {
+        let mut node_lock = self.node.lock().await;
+        let cid = self.conversation_id;
+        let node_ref = &mut *node_lock;
+        let effects = node_ref
+            .engine
+            .start_sync(cid, Some(peer_pk), &node_ref.store);
+        let now = node_ref.time_provider.now_instant();
+        let now_ms = node_ref.time_provider.now_system_ms() as u64;
+        let mut dummy_wakeup = now;
+        for effect in effects {
+            if let Err(e) = node_ref.process_effect(effect, now, now_ms, &mut dummy_wakeup) {
+                error!("Error processing sync effect: {}", e);
+            }
+        }
+    }
+
+    fn emit_event(&self, event: ClientEvent) {
+        let _ = self.event_tx.send(event);
+    }
+
     /// Appends a text message to the history.
     pub async fn send_message(&self, text: String) -> MerkleToxResult<NodeHash> {
         self.author_node(Content::Text(text), Vec::new()).await
@@ -541,7 +840,6 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
             let info = merkle_tox_core::cas::BlobInfo {
                 hash: blob_hash,
                 size,
-                bao_root: None, // Simplified: no outboard proof for small/medium blobs
                 status: merkle_tox_core::cas::BlobStatus::Available,
                 received_mask: None,
                 decryption_key: None,
@@ -567,7 +865,7 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
                 name,
                 mime_type,
                 size,
-                metadata: Vec::new(),
+                metadata: tox_proto::BoundedBytes::new(),
             },
             Vec::new(),
         )

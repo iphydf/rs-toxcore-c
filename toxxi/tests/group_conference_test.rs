@@ -19,7 +19,7 @@ fn create_test_model() -> Model {
 fn test_group_messages() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
 
     model.add_group_message(
@@ -82,7 +82,7 @@ fn test_window_topic_group_conference() {
     let mut model = create_test_model();
 
     let gid = GroupNumber(1);
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
 
     let cid = ConferenceNumber(2);

@@ -23,12 +23,12 @@ impl SyncSession<Handshake> {
                 min_rank: 0,
                 min_timestamp: 0,
                 local_heads: heads.into_iter().collect(),
-                remote_heads: HashSet::new(),
+                remote_heads: std::collections::BTreeSet::new(),
                 missing_admin_nodes: VecDeque::new(),
                 missing_nodes_hot: VecDeque::new(),
                 missing_nodes_cold: VecDeque::new(),
                 in_flight_fetches: HashSet::new(),
-                missing_blobs: HashSet::new(),
+                missing_blobs: std::collections::BTreeSet::new(),
                 peer_features: 0,
                 time_samples: Vec::new(),
                 vouchers: HashMap::new(),
@@ -98,10 +98,10 @@ impl SyncSession<Handshake> {
     }
 
     pub fn make_sync_heads(&self, flags: u64) -> SyncHeads {
-        let mut heads: Vec<NodeHash> = self.common.local_heads.iter().cloned().collect();
-        if heads.len() > MAX_HEADS_SYNC {
-            heads.truncate(MAX_HEADS_SYNC);
-        }
+        let heads = tox_proto::BoundedVec::try_from_iter(
+            self.common.local_heads.iter().cloned().take(MAX_HEADS_SYNC),
+        )
+        .expect("take(MAX_HEADS_SYNC) bounds the iterator at the cap");
         SyncHeads {
             conversation_id: self.conversation_id,
             heads,

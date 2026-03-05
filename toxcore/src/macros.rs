@@ -7,7 +7,7 @@ macro_rules! ffi_call {
             if err == $ok_variant {
                 Ok(res)
             } else {
-                Err(err)
+                Err(err.into())
             }
         }
     };
@@ -25,14 +25,14 @@ macro_rules! ffi_get_vec {
             let mut err = $ok_variant;
             let size = unsafe { ffi::$size_func($($args,)* &mut err) };
             if err != $ok_variant {
-                Err(err)
+                Err(err.into())
             } else {
                 let mut buf = vec![0u8; size];
                 unsafe { ffi::$func($($args,)* buf.as_mut_ptr(), &mut err) };
                 if err == $ok_variant {
                     Ok(buf)
                 } else {
-                    Err(err)
+                    Err(err.into())
                 }
             }
         }
@@ -68,7 +68,7 @@ macro_rules! ffi_get_array {
             if unsafe { ffi::$func($($args,)* buf.as_mut_ptr(), &mut err) } {
                 Ok(buf)
             } else {
-                Err(err)
+                Err(err.into())
             }
         }
     };

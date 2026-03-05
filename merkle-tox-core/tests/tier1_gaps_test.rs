@@ -1,7 +1,6 @@
 use merkle_tox_core::ProtocolMessage;
-use merkle_tox_core::cas::{BlobInfo, BlobStatus, SwarmSync};
 use merkle_tox_core::clock::ManualTimeProvider;
-use merkle_tox_core::dag::{Content, LogicalIdentityPk, NodeHash, NodeLookup, PhysicalDevicePk};
+use merkle_tox_core::dag::{Content, NodeHash, NodeLookup};
 use merkle_tox_core::engine::{Effect, MerkleToxEngine};
 use merkle_tox_core::sync::NodeStore;
 use merkle_tox_core::testing::{
@@ -81,7 +80,7 @@ fn test_edit_must_target_text() {
             name: "test.bin".to_string(),
             mime_type: "application/octet-stream".to_string(),
             size: 1024,
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
         },
         parent_rank + 1,
         2,
@@ -213,76 +212,13 @@ fn test_edit_unknown_target_speculative() {
 }
 
 // ── Gap 2: BLOB_AVAIL bao_root Validation ───────────────────────────────
-
-#[test]
-fn test_blob_avail_mismatching_root_blacklists() {
-    let _ = tracing_subscriber::fmt::try_init();
-    let tp = Arc::new(ManualTimeProvider::new(Instant::now(), 1000));
-    let mut engine = MerkleToxEngine::new(
-        PhysicalDevicePk::from([1u8; 32]),
-        LogicalIdentityPk::from([1u8; 32]),
-        StdRng::seed_from_u64(0),
-        tp,
-    );
-
-    let blob_hash = NodeHash::from([0xAAu8; 32]);
-    let peer_pk = PhysicalDevicePk::from([2u8; 32]);
-    let store = InMemoryStore::new();
-
-    // Pre-populate blob_syncs with a known bao_root
-    let info = BlobInfo {
-        hash: blob_hash,
-        size: 1024,
-        bao_root: Some([0x11u8; 32]),
-        status: BlobStatus::Pending,
-        received_mask: None,
-        decryption_key: None,
-    };
-    let mut sync = SwarmSync::new(info.clone());
-    sync.add_seeder(peer_pk);
-    engine.blob_syncs.insert(blob_hash, sync);
-
-    // Peer sends BlobAvail with WRONG bao_root
-    let bad_info = BlobInfo {
-        hash: blob_hash,
-        size: 1024,
-        bao_root: Some([0x22u8; 32]), // Mismatching!
-        status: BlobStatus::Available,
-        received_mask: None,
-        decryption_key: None,
-    };
-
-    let _effects = engine
-        .handle_message(peer_pk, ProtocolMessage::BlobAvail(bad_info), &store, None)
-        .unwrap();
-
-    // The peer should have been removed as seeder
-    let sync = engine.blob_syncs.get(&blob_hash).unwrap();
-    assert!(
-        !sync.seeders.contains(&peer_pk),
-        "Peer with mismatching bao_root should be blacklisted (removed as seeder)"
-    );
-
-    // Verify with matching bao_root: peer added back
-    let good_info = BlobInfo {
-        hash: blob_hash,
-        size: 1024,
-        bao_root: Some([0x11u8; 32]), // Matching
-        status: BlobStatus::Available,
-        received_mask: None,
-        decryption_key: None,
-    };
-
-    let _ = engine
-        .handle_message(peer_pk, ProtocolMessage::BlobAvail(good_info), &store, None)
-        .unwrap();
-
-    let sync = engine.blob_syncs.get(&blob_hash).unwrap();
-    assert!(
-        sync.seeders.contains(&peer_pk),
-        "Peer with matching bao_root should be added as seeder"
-    );
-}
+//
+// The bao_root field on BlobInfo has been removed. Blob identity (the
+// `hash` field) IS the chunk-Merkle root (see doc/merkle-tox-cas.md §3);
+// a peer claiming to serve a given blob_hash is either honest or gets
+// caught at chunk-boundary verification in the BlobData handler.
+// The separate "cross-check two roots on BlobAvail" test that used to
+// live here is no longer meaningful.
 
 // ── Gap 3: SyncHeads anchor_hash ─────────────────────────────────────────
 

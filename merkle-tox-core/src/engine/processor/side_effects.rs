@@ -16,7 +16,9 @@ impl MerkleToxEngine {
         let mut effects = Vec::new();
 
         let mut admin_ancestor_hashes = std::collections::HashSet::new();
-        let mut stack = node_ref.parents.clone();
+        // Cumulative ancestor worklist — regular Vec, see the same
+        // pattern in `verification.rs`.
+        let mut stack: Vec<crate::dag::NodeHash> = node_ref.parents.iter().cloned().collect();
         let mut visited = std::collections::HashSet::new();
 
         let overlay = crate::engine::EngineStore {
@@ -34,7 +36,7 @@ impl MerkleToxEngine {
                 if let Some(cached) = self.admin_ancestors_cache.lock().get(&parent_hash) {
                     admin_ancestor_hashes.extend(cached.iter().cloned());
                 } else {
-                    stack.extend(parent_node.parents.clone());
+                    stack.extend(parent_node.parents.iter().cloned());
                 }
             }
         }
@@ -161,20 +163,32 @@ impl MerkleToxEngine {
                 // Verify each pre-key's Ed25519 signature before accepting.
                 // Signature covers only raw X25519 public key bytes and
                 // must be made by announcing device's key (node_ref.sender_pk).
-                use ed25519_dalek::{Verifier, VerifyingKey};
+                use ed25519_dalek::VerifyingKey;
                 let valid_pre_keys = if let Ok(vk) =
                     VerifyingKey::from_bytes(node_ref.sender_pk.as_bytes())
                 {
-                    pre_keys
-                        .iter()
-                        .filter(|spk| {
-                            let sig = ed25519_dalek::Signature::from_bytes(spk.signature.as_ref());
-                            vk.verify(spk.public_key.as_bytes(), &sig).is_ok()
-                        })
-                        .cloned()
-                        .collect()
+                    // `pre_keys` is bounded at the wire boundary, so
+                    // filtering its iterator stays bounded.
+                    tox_proto::BoundedVec::try_from_iter(
+                        pre_keys
+                            .iter()
+                            .filter(|spk| {
+                                let sig =
+                                    ed25519_dalek::Signature::from_bytes(spk.signature.as_ref());
+                                // `verify_strict` — see audit round 9
+                                // finding 2(a). Pre-key signatures bind
+                                // identity-key authority over each pre-key
+                                // pub; non-strict verification would admit
+                                // RFC-malleable siblings.
+                                vk.verify_strict(spk.public_key.as_bytes(), &sig).is_ok()
+                            })
+                            .cloned(),
+                    )
+                    .expect(
+                        "filtered subset of bounded pre_keys cannot exceed MAX_HANDSHAKES_PER_ANNOUNCEMENT",
+                    )
                 } else {
-                    Vec::new()
+                    tox_proto::BoundedVec::new()
                 };
                 self.peer_announcements.insert(
                     node_ref.sender_pk,
@@ -297,9 +311,18 @@ impl MerkleToxEngine {
                     // Store disclosed keys from previous epochs for deniability.
                     // Each disclosed key is ephemeral_signing_sk for epoch
                     // immediately preceding this SKD's epoch.
+                    //
+                    // `disclosed_keys.len()` is peer-controlled (no spec
+                    // cap). Use `checked_sub` + break so a peer who
+                    // claims more disclosed keys than the SKD's epoch
+                    // can support cannot trigger a debug panic on
+                    // underflow nor pollute the map with wrap-around
+                    // (sender, u64::MAX - k) junk entries in release.
                     if epoch > 0 {
                         for (i, key) in disclosed_keys.iter().enumerate() {
-                            let disclosed_epoch = epoch - 1 - i as u64;
+                            let Some(disclosed_epoch) = (epoch - 1).checked_sub(i as u64) else {
+                                break;
+                            };
                             self.disclosed_signing_keys
                                 .insert((node_ref.sender_pk, disclosed_epoch), key.clone());
                         }
@@ -314,6 +337,15 @@ impl MerkleToxEngine {
                 {
                     em.state.sender_ratchets.remove(&node_ref.sender_pk);
                 }
+            }
+            Content::Blob {
+                hash: blob_hash, ..
+            } => {
+                // Tie the blob to the conversation of the referencing
+                // node. Populated on both authoring and receiving so
+                // the BlobFetch gate can check requester membership
+                // (see handlers/mod.rs).
+                self.blob_conversations.insert(*blob_hash, conversation_id);
             }
             _ => {}
         }

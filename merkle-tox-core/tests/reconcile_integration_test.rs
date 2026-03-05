@@ -28,7 +28,7 @@ fn test_adaptive_tier_scaling() {
     }
     let sketch = tox_reconcile::SyncSketch {
         conversation_id: session.conversation_id,
-        cells: iblt_huge.into_cells(),
+        cells: tox_proto::BoundedVec::try_from_iter(iblt_huge.into_cells()).expect("Tier-bounded"),
         range: range.clone(),
     };
 
@@ -74,26 +74,26 @@ fn test_sharded_reconciliation() {
 
     // Populate store_a with nodes in Shard 0 and Shard 1
     let node_s0 = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 1,
         topological_rank: 10,
         network_timestamp: 100,
         content: Content::Text("s0".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
     let node_s1 = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 1,
         topological_rank: 1500, // Shard 1 starts at 1000
         network_timestamp: 100,
         content: Content::Text("s1".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -143,14 +143,14 @@ fn test_full_reconciliation_loop() {
     // Populate both with some common nodes
     for i in 0..10 {
         let node = MerkleNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             author_pk: LogicalIdentityPk::from([0u8; 32]),
             sender_pk: PhysicalDevicePk::from([0u8; 32]),
             sequence_number: i as u64,
             topological_rank: i as u64,
             network_timestamp: 100,
             content: Content::Text(format!("common {}", i)),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
             pow_nonce: 0,
         };
@@ -166,14 +166,14 @@ fn test_full_reconciliation_loop() {
     let mut alice_unique = Vec::new();
     for i in 10..15 {
         let node = MerkleNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             author_pk: LogicalIdentityPk::from([0u8; 32]),
             sender_pk: PhysicalDevicePk::from([0u8; 32]),
             sequence_number: i as u64,
             topological_rank: i as u64,
             network_timestamp: 100,
             content: Content::Text(format!("alice {}", i)),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
             pow_nonce: 0,
         };
@@ -187,14 +187,14 @@ fn test_full_reconciliation_loop() {
     let mut bob_unique = Vec::new();
     for i in 15..20 {
         let node = MerkleNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             author_pk: LogicalIdentityPk::from([0u8; 32]),
             sender_pk: PhysicalDevicePk::from([0u8; 32]),
             sequence_number: i as u64,
             topological_rank: i as u64,
             network_timestamp: 100,
             content: Content::Text(format!("bob {}", i)),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
             pow_nonce: 0,
         };

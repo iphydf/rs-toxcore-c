@@ -103,3 +103,77 @@ hardening do not compromise Tox ecosystem values.
         to filter sync requests.
 *   **Rationale**: Authorized peers are not necessarily trusted. They may
     observe behavior or attempt disruption.
+
+## 9. Marginal Tox Transport Coupling
+
+*   **Principle**: Merkle-Tox uses Tox only as the cheapest possible
+    authenticated lossy datagram substrate. It MUST NOT depend on
+    higher-level Tox machinery (lossless delivery, in-order delivery,
+    fragmentation, retransmission, message ACKs, send queues). All
+    reliability and ordering semantics are provided by Merkle-Tox's
+    own application layer.
+*   **Implementation**:
+    *   All custom packets sent over Tox use *lossy* modes only:
+        `tox.friend.send_lossy_packet` for direct-friend transport,
+        `gc_send_custom_*_packet(lossless=false, ...)` for NGC transport.
+        Lossless modes (`tox.friend.send_message`, NGC `lossless=true`)
+        MUST NOT be used by Merkle-Tox.
+    *   `tox-sequenced` provides congestion control, pacing, and
+        rate limiting over lossy datagrams. It does not provide
+        reliability or in-order delivery (see
+        [merkle-tox-transport.md](merkle-tox-transport.md)).
+    *   Reliability comes from Merkle-Tox's DAG sync: peers know
+        what nodes they are missing and request them explicitly.
+        Lost packets are recovered by application-level resync,
+        not by transport-level retransmission.
+    *   Application-layer state machines (sync exchanges, blob
+        transfer, handshake responses) use explicit request-IDs
+        and timeouts rather than relying on transport ordering.
+*   **Rationale**:
+    1.  **Avoids redundant reliability.** c-toxcore's lossless mode
+        retransmits blindly without knowing what data Merkle-Tox
+        actually wants to resend after a partial loss. The
+        application has semantic knowledge — content addressing,
+        DAG structure, chunk bitmasks — that the transport lacks.
+    2.  **Enables Tox-library simplification.** A future c-toxcore
+        whose only customer is Merkle-Tox can drop its lossless /
+        ordered packet machinery entirely. The same goal motivates
+        not depending on Tox conferences, the legacy chat-message
+        types (`GM_PLAIN_MESSAGE`), or per-friend message-ack APIs.
+    3.  **Decouples from any specific Tox implementation.** A
+        Merkle-Tox client need only assume "send-this-bytes-to-this-pk"
+        from its transport substrate. Any datagram protocol with
+        authenticated encryption and the right MTU would substitute
+        for Tox at the wire layer.
+    4.  **Reduces attack surface.** Tox lossless layer has its own
+        per-connection state machine, ACK timers, and overflow
+        behavior (e.g. c-toxcore NGC `send_array` capacity = 2048,
+        connection torn down after 58s of unacked traffic). Not
+        depending on it means Merkle-Tox is unaffected by bugs or
+        adversarial inputs targeting that machinery.
+*   **Trade-off**: Merkle-Tox carries the cost of its own
+    reliability/sequencing infrastructure (sync engine, request-ID
+    state, `tox-sequenced` congestion control). This is paid once
+    at the application layer and benefits from semantic awareness
+    of what is being transferred.
+
+## 10. No Privileged Infrastructure
+
+*   **Principle**: No party may occupy a privileged role. Every
+    participant and external relay is fungible; the protocol's
+    correctness MUST NOT depend on any single party's availability,
+    honesty, or non-compromise.
+*   **Implementation**: DHT nodes, TCP relays, and blind relays
+    operate under cryptographic constraint, not trust.
+    Authentication, ordering, and convergence are produced by the
+    signed DAG and the verifier state machine. No delivery service,
+    directory server, or moderation service role exists.
+    Alternatives that reintroduce privileged infrastructure
+    (MLS-style delivery service, trusted setup for ZK, central
+    identity directory, server-side abuse handling) are not options.
+*   **Trade-off**: Capabilities cheap with a trusted server — global
+    ordering, account-level moderation, identity discovery, push
+    notification routing, encrypted backup escrow — are expensive or
+    impossible without one. The design accepts these costs and
+    provides in-protocol substitutes (DAG-derived ordering, content
+    blacklist nodes, social-recovery key sharing).

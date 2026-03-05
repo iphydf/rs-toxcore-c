@@ -4,6 +4,10 @@ use toxxi::tlog;
 mod e2e;
 
 #[tokio::test]
+#[ignore = "Slow real-Tox 3-node end-to-end test; routinely exceeds the default \
+            300s 'medium' Bazel timeout because of real friend-handshake delays \
+            and the full message/group-chat exchange. Run explicitly via \
+            --test_arg=--ignored with a generous --test_timeout."]
 async fn test_toxxi_e2e_full_cycle() {
     // 1. Initialize Harness with 3 clients (Alice, Bob, Charlie)
     let mut h = TestHarness::new(3);

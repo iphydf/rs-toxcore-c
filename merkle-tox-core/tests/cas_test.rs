@@ -1,8 +1,7 @@
 use merkle_tox_core::cas::{BlobStatus, CHUNK_SIZE, FETCH_TIMEOUT, SwarmSync};
 use merkle_tox_core::dag::{NodeHash, PhysicalDevicePk};
-use merkle_tox_core::testing::{create_blob_data, create_blob_info};
+use merkle_tox_core::testing::create_blob_info;
 use std::collections::HashMap;
-use std::io::Read;
 use std::time::{Duration, Instant};
 
 #[test]
@@ -40,12 +39,12 @@ fn test_swarm_sync_timeout() {
     assert_eq!(reqs.len(), 1);
     assert_eq!(sync.active_fetches.len(), 1);
 
-    // Request 3 more, should still use the same seeder (up to 4 in-flight)
-    let reqs = sync.next_requests(3, now);
-    assert_eq!(reqs.len(), 3);
-    assert_eq!(sync.active_fetches.len(), 4);
+    // Request the remaining 9 chunks (all 10 chunks now in-flight)
+    let reqs = sync.next_requests(9, now);
+    assert_eq!(reqs.len(), 9);
+    assert_eq!(sync.active_fetches.len(), 10);
 
-    // Request again, should be empty because peer is busy (limit reached)
+    // Request again, should be empty because all chunks are in-flight
     let reqs = sync.next_requests(1, now);
     assert_eq!(reqs.len(), 0);
 
@@ -69,172 +68,18 @@ fn test_swarm_sync_completion() {
 
     assert!(!sync.tracker.is_complete());
 
-    let data = create_blob_data(hash, 0, vec![0u8; CHUNK_SIZE as usize]);
-
-    sync.on_chunk_received(&data);
+    sync.mark_chunk_received(0);
     assert!(sync.tracker.is_complete());
 }
 
-#[test]
-fn test_bao_verification_failure() {
-    let hash = NodeHash::from([1u8; 32]);
-    let bao_root = [0xEEu8; 32];
-    let mut info = create_blob_info(hash, CHUNK_SIZE);
-    info.bao_root = Some(bao_root);
-
-    let mut sync = SwarmSync::new(info);
-
-    let mut data = create_blob_data(hash, 0, vec![0u8; CHUNK_SIZE as usize]);
-    data.proof = vec![0xAAu8; 32]; // Invalid non-zero proof
-
-    let res = sync.on_chunk_received(&data);
-    assert!(!res, "Should fail Bao verification");
-    assert!(!sync.tracker.is_received(0));
-    assert!(
-        !sync.active_fetches.contains_key(&0),
-        "Active fetch should be cleared even on failure"
-    );
-}
-
-#[test]
-fn test_bao_verification_success() {
-    let data = vec![0x42u8; 1024];
-    let (bao_outboard, bao_root) = bao::encode::outboard(&data);
-    let mut hash_inner = [0u8; 32];
-    hash_inner.copy_from_slice(bao_root.as_bytes());
-    let hash = NodeHash::from(hash_inner);
-
-    let mut info = create_blob_info(hash, 1024);
-    info.bao_root = Some(hash_inner);
-
-    let mut sync = SwarmSync::new(info);
-    sync.add_seeder(PhysicalDevicePk::from([0x11u8; 32]));
-
-    // Request the chunk
-    let _ = sync.next_requests(1, Instant::now());
-
-    // Generate a real proof for this slice
-    let mut encoder = bao::encode::SliceExtractor::new_outboard(
-        std::io::Cursor::new(&data),
-        std::io::Cursor::new(&bao_outboard),
-        0,
-        1024,
-    );
-    let mut proof = Vec::new();
-    encoder.read_to_end(&mut proof).unwrap();
-
-    let blob_data = merkle_tox_core::cas::BlobData {
-        hash,
-        offset: 0,
-        data,
-        proof,
-    };
-
-    sync.on_chunk_received(&blob_data);
-    assert!(sync.tracker.is_complete());
-}
-
-#[test]
-fn test_swarm_sync_corrupted_bao_proof() {
-    let data = vec![0x42u8; 1024];
-    let (bao_outboard, bao_root) = bao::encode::outboard(&data);
-    let mut hash_inner = [0u8; 32];
-    hash_inner.copy_from_slice(bao_root.as_bytes());
-    let hash = NodeHash::from(hash_inner);
-
-    let mut info = create_blob_info(hash, 1024);
-    info.bao_root = Some(hash_inner);
-
-    let mut sync = SwarmSync::new(info);
-    let peer = PhysicalDevicePk::from([0x11u8; 32]);
-    sync.add_seeder(peer);
-
-    // Request the chunk
-    let _ = sync.next_requests(1, Instant::now());
-
-    // Generate a real proof for this slice
-    let mut encoder = bao::encode::SliceExtractor::new_outboard(
-        std::io::Cursor::new(&data),
-        std::io::Cursor::new(&bao_outboard),
-        0,
-        1024,
-    );
-    let mut proof = Vec::new();
-    encoder.read_to_end(&mut proof).unwrap();
-
-    // CORRUPT the proof
-    proof[0] ^= 0xFF;
-
-    let blob_data = merkle_tox_core::cas::BlobData {
-        hash,
-        offset: 0,
-        data,
-        proof,
-    };
-
-    // Receiving corrupted data should fail
-    let res = sync.on_chunk_received(&blob_data);
-    assert!(!res, "Should fail on corrupted Bao proof");
-    assert!(!sync.tracker.is_received(0));
-
-    // We should simulate seeder removal if it failed (matching Engine behavior)
-    sync.remove_seeder(&peer);
-    assert!(!sync.seeders.contains(&peer));
-}
-
-#[test]
-fn test_seeder_removal_on_failure() {
-    let hash = NodeHash::from([1u8; 32]);
-    let mut info = create_blob_info(hash, CHUNK_SIZE);
-    info.bao_root = Some([0u8; 32]);
-
-    let mut sync = SwarmSync::new(info);
-    let peer = PhysicalDevicePk::from([0x11u8; 32]);
-    sync.add_seeder(peer);
-
-    // Simulate a failure and removal (as the Engine would do)
-    let mut data = create_blob_data(hash, 0, vec![0u8; CHUNK_SIZE as usize]);
-    data.proof = vec![1u8; 32];
-
-    if !sync.on_chunk_received(&data) {
-        sync.remove_seeder(&peer);
-    }
-
-    assert!(!sync.seeders.contains(&peer));
-    assert!(sync.active_fetches.is_empty());
-
-    // Ensure no more requests are made to this peer
-    let next_reqs = sync.next_requests(1, Instant::now());
-    assert!(
-        next_reqs.is_empty(),
-        "Should not request from removed seeder"
-    );
-}
-
-#[test]
-fn test_swarm_sync_all_seeders_failed() {
-    let hash = NodeHash::from([1u8; 32]);
-    let mut info = create_blob_info(hash, CHUNK_SIZE);
-    info.bao_root = Some([0u8; 32]);
-
-    let mut sync = SwarmSync::new(info);
-    let peer = PhysicalDevicePk::from([0x11u8; 32]);
-    sync.add_seeder(peer);
-
-    // Request chunk
-    let _ = sync.next_requests(1, Instant::now());
-
-    // Fail chunk
-    let mut data = create_blob_data(hash, 0, vec![0u8; CHUNK_SIZE as usize]);
-    data.proof = vec![1u8; 32]; // Invalid proof
-
-    if !sync.on_chunk_received(&data) {
-        sync.remove_seeder(&peer);
-    }
-
-    assert!(sync.seeders.is_empty());
-    assert!(sync.next_requests(1, Instant::now()).is_empty());
-}
+// Note: `test_bao_verification_*`, `test_swarm_sync_corrupted_bao_proof`,
+// `test_seeder_removal_on_failure`, and `test_swarm_sync_all_seeders_failed`
+// used to live here. They tested per-piece Bao slice verification, which
+// has been replaced by the domain-separated ChunkMerkleTree scheme (see
+// `doc/merkle-tox-cas.md` §3). Equivalent coverage for the new scheme lives
+// in `merkle-tox-core/src/cas/merkle.rs` (unit tests for the Merkle tree
+// itself) and `tests/cas_push_test.rs` (engine-level security properties:
+// rejects tampered chunks, rejects invalid proofs, blacklists seeders).
 
 #[test]
 fn test_swarm_sync_multiple_seeders() {
@@ -267,12 +112,14 @@ fn test_swarm_sync_multiple_seeders() {
 
     // Receive one chunk from p1, now p1 should have 2 in-flight, p2: 3, p3: 2
     // Next request should go to either p1 or p3 (both have 2 in-flight)
-    let data = create_blob_data(
-        hash,
-        reqs.iter().find(|(p, _)| p == &p1).unwrap().1.offset,
-        vec![0u8; CHUNK_SIZE as usize],
-    );
-    sync.on_chunk_received(&data);
+    let p1_offset = *reqs
+        .iter()
+        .find(|(p, _)| p == &p1)
+        .unwrap()
+        .1
+        .offset
+        .expose_unchecked();
+    sync.mark_chunk_received(p1_offset / CHUNK_SIZE);
 
     let more_reqs = sync.next_requests(1, Instant::now());
     assert_eq!(more_reqs.len(), 1);

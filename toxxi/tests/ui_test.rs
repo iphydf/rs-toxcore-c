@@ -73,7 +73,7 @@ fn test_ui_read_receipt_suffix() {
 fn test_ui_sidebar_default_visibility_groups() {
     let mut model = create_test_model();
     let gid = toxcore::tox::GroupNumber(1);
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
 
     // Add a group message to ensure the window exists and is populated
@@ -183,7 +183,7 @@ fn test_ui_sidebar_not_shown_for_console() {
 fn test_ui_group_message_status() {
     let mut model = create_test_model();
     let gnum = toxcore::tox::GroupNumber(0);
-    let chat_id = toxcore::types::ChatId([0u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([0u8; 32]);
     model.session.group_numbers.insert(gnum, chat_id);
 
     let (internal_id, _) = model.add_outgoing_message(
@@ -563,7 +563,7 @@ fn test_ui_sidebar_selection_highlight() {
     );
 
     let gid = toxcore::tox::GroupNumber(1);
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
     model.add_group_message(
         chat_id,

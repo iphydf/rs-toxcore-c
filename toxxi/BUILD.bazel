@@ -72,10 +72,10 @@ TEST_SRCS = glob(
         name = src.replace("tests/", "").replace(".rs", "").replace("/", "-").replace("_", "-"),
         srcs = [src] + (glob(["tests/e2e/**"]) if src.endswith("e2e_test.rs") else []),
         crate_root = src,
+        data = glob(["tests/snapshots/**"]),
         edition = "2024",
         proc_macro_deps = PROC_MACRO_DEPS,
         rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
-        data = glob(["tests/snapshots/**"]),
         deps = COMMON_DEPS + [":toxxi_lib"],
     )
     for src in TEST_SRCS

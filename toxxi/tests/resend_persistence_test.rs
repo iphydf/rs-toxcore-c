@@ -1,5 +1,5 @@
 use toxcore::tox::GroupNumber;
-use toxcore::types::{ChatId, MessageType};
+use toxcore::types::{GroupChatId, MessageType};
 use toxxi::model::{InternalMessageId, MessageStatus, WindowId};
 use toxxi::msg::{Cmd, IOAction, Msg, ToxEvent};
 use toxxi::testing::TestContext;
@@ -11,7 +11,7 @@ fn test_group_message_sent_persistence() {
     let mut model = ctx.create_model();
 
     let group_number = GroupNumber(0);
-    let chat_id = ChatId([1u8; 32]);
+    let chat_id = GroupChatId([1u8; 32]);
     let internal_id = InternalMessageId(123);
 
     // Setup session mapping

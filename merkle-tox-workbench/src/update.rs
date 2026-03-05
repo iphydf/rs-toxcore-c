@@ -344,7 +344,6 @@ fn tick(model: &mut Model, dt: Duration) -> Vec<Cmd> {
                     let info = BlobInfo {
                         hash,
                         size: data.len() as u64,
-                        bao_root: None, // No Bao for simple sim
                         status: BlobStatus::Available,
                         received_mask: None,
                         decryption_key: None,
@@ -368,7 +367,7 @@ fn tick(model: &mut Model, dt: Duration) -> Vec<Cmd> {
                             name: "sim_file.bin".to_string(),
                             mime_type: "application/octet-stream".to_string(),
                             size: data.len() as u64,
-                            metadata: vec![],
+                            metadata: tox_proto::BoundedBytes::new(),
                         },
                         vec![],
                         &seeder.node.store,

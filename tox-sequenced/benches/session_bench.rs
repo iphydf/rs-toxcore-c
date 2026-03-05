@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::hint::black_box;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tox_sequenced::protocol::{MessageType, Packet};
-use tox_sequenced::{Algorithm, AlgorithmType, SequenceSession};
+use tox_sequenced::{Algorithm, AlgorithmType, SequenceSession, SessionEvent};
 
 struct NetSim {
     latency: Duration,
@@ -77,7 +77,7 @@ fn run_session_transfer(
     let msg_data = vec![0u8; data_size / messages_count.max(1)];
     for _ in 0..messages_count {
         alice
-            .send_message(MessageType::MerkleNode, &msg_data, now)
+            .send_auto(MessageType::MerkleNode, &msg_data, now)
             .unwrap();
     }
 
@@ -92,28 +92,37 @@ fn run_session_transfer(
             .unwrap_or_default()
             .as_millis() as u64;
 
-        // Alice -> Bob
-        for p in alice.get_packets_to_send(now, now_ms) {
-            a_to_b.send(p, now);
-        }
+        // Alice flushes outgoing
+        alice.flush(now, now_ms, &mut |packet| {
+            a_to_b.send(packet, now);
+            true
+        });
 
+        // Bob receives from Alice
         for p in a_to_b.receive(now) {
             let replies = bob.handle_packet(p, now);
-            while let Some(event) = bob.poll_event() {
-                if let tox_sequenced::SessionEvent::MessageCompleted(..) = event {
-                    completed += 1;
-                }
-            }
             for r in replies {
                 b_to_a.send(r, now);
             }
         }
 
-        // Bob -> Alice
-        for p in bob.get_packets_to_send(now, now_ms) {
-            b_to_a.send(p, now);
+        // Bob flushes (ACKs)
+        bob.flush(now, now_ms, &mut |packet| {
+            b_to_a.send(packet, now);
+            true
+        });
+
+        // Count received messages
+        while let Some(event) = bob.poll_event() {
+            match event {
+                SessionEvent::DataReceived(..) | SessionEvent::MessageCompleted(..) => {
+                    completed += 1;
+                }
+                _ => {}
+            }
         }
 
+        // Alice receives ACKs
         for p in b_to_a.receive(now) {
             let _replies = alice.handle_packet(p, now);
         }
@@ -136,11 +145,12 @@ fn bench_session_scenarios(c: &mut Criterion) {
     let mut group = c.benchmark_group("session_transfer");
 
     for &algo in AlgorithmType::ALL_TYPES {
-        group.bench_function(format!("bulk_100kb_clean_{}", algo), |b| {
+        // Small single-packet DATA transfers
+        group.bench_function(format!("data_1kb_clean_{}", algo), |b| {
             b.iter(|| {
                 run_session_transfer(
-                    black_box(100_000),
-                    black_box(1),
+                    black_box(1000),
+                    black_box(10),
                     Duration::from_millis(10),
                     0.0,
                     Duration::ZERO,
@@ -149,23 +159,11 @@ fn bench_session_scenarios(c: &mut Criterion) {
             })
         });
 
-        group.bench_function(format!("bulk_100kb_lossy_5pct_{}", algo), |b| {
+        // Fragmented transfer
+        group.bench_function(format!("frag_100kb_clean_{}", algo), |b| {
             b.iter(|| {
                 run_session_transfer(
                     black_box(100_000),
-                    black_box(1),
-                    Duration::from_millis(10),
-                    0.05,
-                    Duration::ZERO,
-                    black_box(algo),
-                )
-            })
-        });
-
-        group.bench_function(format!("bulk_900kb_clean_{}", algo), |b| {
-            b.iter(|| {
-                run_session_transfer(
-                    black_box(900_000),
                     black_box(1),
                     Duration::from_millis(10),
                     0.0,
@@ -175,19 +173,6 @@ fn bench_session_scenarios(c: &mut Criterion) {
             })
         });
     }
-
-    group.bench_function("interactive_10msg_10kb", |b| {
-        b.iter(|| {
-            run_session_transfer(
-                black_box(10_000),
-                black_box(10),
-                Duration::from_millis(10),
-                0.01,
-                Duration::from_millis(5),
-                black_box(AlgorithmType::Aimd),
-            )
-        })
-    });
 
     group.finish();
 }

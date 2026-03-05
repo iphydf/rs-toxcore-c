@@ -18,7 +18,7 @@ use toxcore::tox::{
     ToxUserStatus,
 };
 use toxcore::types::{
-    Address, ChatId, ConferenceId, FileId, MessageType, PublicKey, ToxGroupRole, ToxLogLevel,
+    Address, GroupChatId, ConferenceId, FileId, MessageType, PublicKey, ToxGroupRole, ToxLogLevel,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -124,7 +124,7 @@ pub struct Conversation {
 pub enum WindowId {
     Console,
     Friend(PublicKey),
-    Group(ChatId),
+    Group(GroupChatId),
     Conference(ConferenceId),
     Logs,
     Files,
@@ -315,7 +315,7 @@ pub struct DomainState {
 #[derive(Default)]
 pub struct SessionState {
     pub friend_numbers: HashMap<FriendNumber, PublicKey>,
-    pub group_numbers: HashMap<GroupNumber, ChatId>,
+    pub group_numbers: HashMap<GroupNumber, GroupChatId>,
     pub conference_numbers: HashMap<ConferenceNumber, ConferenceId>,
     pub group_peer_numbers: HashMap<(GroupNumber, GroupPeerNumber), PublicKey>,
 }
@@ -445,7 +445,7 @@ impl UiState {
 #[derive(Debug, Clone)]
 pub struct GroupReconcileInfo {
     pub number: GroupNumber,
-    pub chat_id: ChatId,
+    pub chat_id: GroupChatId,
     pub name: Option<String>,
     pub role: Option<ToxGroupRole>,
     pub self_name: Option<String>,
@@ -632,7 +632,7 @@ impl Model {
         self.ensure_conversation_window(window_id, default_name);
     }
 
-    pub fn ensure_group_window(&mut self, chat_id: ChatId) {
+    pub fn ensure_group_window(&mut self, chat_id: GroupChatId) {
         let name = if let Some((num, _)) = self
             .session
             .group_numbers
@@ -779,7 +779,7 @@ impl Model {
 
     pub fn add_group_message(
         &mut self,
-        chat_id: ChatId,
+        chat_id: GroupChatId,
         message_type: MessageType,
         sender: String,
         content: String,

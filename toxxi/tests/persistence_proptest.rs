@@ -166,8 +166,8 @@ prop_compose! {
     }
 }
 
-fn arb_chat_id() -> impl Strategy<Value = ChatId> {
-    any::<[u8; 32]>().prop_map(ChatId)
+fn arb_chat_id() -> impl Strategy<Value = GroupChatId> {
+    any::<[u8; 32]>().prop_map(GroupChatId)
 }
 
 fn arb_conference_id() -> impl Strategy<Value = ConferenceId> {

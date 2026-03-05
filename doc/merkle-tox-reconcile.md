@@ -111,10 +111,10 @@ difference size $D$.
 
 Tier   | Cells ($m$) | $D_{max}$ | Wire Size | Transport Method
 :----- | :---------- | :-------- | :-------- | :-------------------------
-Tiny   | 16          | 10        | ~700B     | Lossy Multicast (1 packet)
-Small  | 64          | 40        | ~2.8KB    | Reliable Unicast (3 pkts)
-Medium | 256         | 170       | ~11KB     | Reliable Unicast
-Large  | 1024        | 680       | ~45KB     | Reliable Unicast
+Tiny   | 16          | 10        | ~700B     | Group Multicast or Data
+Small  | 64          | 40        | ~2.8KB    | Fragment (~3 pkts)
+Medium | 256         | 170       | ~11KB     | Fragment
+Large  | 1024        | 680       | ~45KB     | Fragment
 
 -   **Heuristic**: $m \approx 1.5 \times D_{max}$ ensures a decoding success
     probability $> 99\%$ for legitimate sketches.
@@ -252,14 +252,15 @@ Set reconciliation is deployed differently depending on the network context:
     (`RECONCILE_GOSSIP_INTERVAL_MS = 60000`).
 -   This identifies if any peers have "drifted" from the global consensus.
 -   If a peer receives a multicast sketch and cannot decode a difference of 0,
-    it initiates a **Reliable Unicast** sync with the broadcaster.
+    it initiates a **unicast** sync with the broadcaster.
 
-### B. Deep Reconciliation (Reliable)
+### B. Deep Reconciliation
 
 -   For synchronization of long-term history, peers use **Medium** or **Large**
     sketches.
--   These are sent via `tox-sequenced` to ensure all fragments arrive and the
-    sketch is whole before decoding.
+-   These are sent as FRAGMENT messages via `tox-sequenced`. If a fragment is
+    lost, the message is dropped after `REASSEMBLY_TIMEOUT` and the
+    application retries the reconciliation on the next sync round.
 
 ## 7. Security & Privacy
 

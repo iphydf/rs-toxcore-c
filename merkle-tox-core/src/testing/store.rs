@@ -4,15 +4,20 @@ use crate::dag::{
 };
 use crate::error::{MerkleToxError, MerkleToxResult};
 use crate::sync::{FullStore, SyncRange};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::RwLock;
 
 /// A thread-safe in-memory store for protocol nodes and blobs.
 #[derive(Default)]
 pub struct InMemoryStore {
-    pub nodes: RwLock<HashMap<NodeHash, (MerkleNode, bool)>>,
-    pub speculative_nodes: RwLock<HashSet<NodeHash>>,
-    pub opaque_nodes: RwLock<HashSet<NodeHash>>,
+    /// BTreeMap: iteration order matters because verification cascades and
+    /// `get_verified_nodes_by_type` consume sibling nodes in sequence.
+    pub nodes: RwLock<BTreeMap<NodeHash, (MerkleNode, bool)>>,
+    /// BTreeSet for deterministic iteration order — reverify cascades
+    /// pick nodes in iteration order, which propagates to wire-visible
+    /// fetch and head-update sequencing.
+    pub speculative_nodes: RwLock<BTreeSet<NodeHash>>,
+    pub opaque_nodes: RwLock<BTreeSet<NodeHash>>,
     pub wire_nodes: RwLock<HashMap<NodeHash, (ConversationId, crate::dag::WireNode)>>,
     pub children: RwLock<HashMap<NodeHash, Vec<NodeHash>>>,
     pub admin_distance_cache: RwLock<HashMap<NodeHash, u64>>,
@@ -300,7 +305,11 @@ impl crate::sync::NodeStore for InMemoryStore {
             .filter(|(n, v)| *v && n.node_type() == node_type)
             .map(|(n, _)| n.clone())
             .collect();
-        res.sort_by_key(|n| n.topological_rank);
+        // Total order: rank then hash. Without the hash tiebreaker, sibling
+        // nodes with the same rank kept their HashMap iteration order, which
+        // randomizes per process and makes the verification cascade
+        // non-deterministic.
+        res.sort_by_key(|n| (n.topological_rank, n.hash()));
         Ok(res)
     }
     fn get_node_hashes_in_range(
@@ -429,26 +438,38 @@ impl crate::sync::BlobStore for InMemoryStore {
     ) -> MerkleToxResult<()> {
         let mut blobs = self.blobs.write().unwrap();
         if let Some((info, buffer)) = blobs.get_mut(hash) {
-            if buffer.is_empty() {
+            let first_write = buffer.is_empty();
+            if first_write {
                 *buffer = vec![0u8; info.size as usize];
             }
             let end = (offset as usize + data.len()).min(buffer.len());
             buffer[offset as usize..end].copy_from_slice(&data[..end - offset as usize]);
 
-            // Update mask
-            let chunk_idx = offset / CHUNK_SIZE;
-            let mut mask = info.received_mask.take().unwrap_or_else(|| {
-                let num_chunks = info.size.div_ceil(CHUNK_SIZE);
+            // Update mask — mark ALL chunks covered by this write.
+            let first_chunk = offset / CHUNK_SIZE;
+            let last_byte = offset + data.len() as u64;
+            let last_chunk = if last_byte == 0 {
+                0
+            } else {
+                (last_byte - 1) / CHUNK_SIZE
+            };
+            let num_chunks = info.size.div_ceil(CHUNK_SIZE);
+            let mut mask = if first_write {
                 vec![0u8; num_chunks.div_ceil(8) as usize]
-            });
-            let byte_idx = (chunk_idx / 8) as usize;
-            let bit_idx = (chunk_idx % 8) as u8;
-            if byte_idx < mask.len() {
-                mask[byte_idx] |= 1 << bit_idx;
+            } else {
+                info.received_mask
+                    .take()
+                    .unwrap_or_else(|| vec![0u8; num_chunks.div_ceil(8) as usize])
+            };
+            for chunk_idx in first_chunk..=last_chunk {
+                let byte_idx = (chunk_idx / 8) as usize;
+                let bit_idx = (chunk_idx % 8) as u8;
+                if byte_idx < mask.len() {
+                    mask[byte_idx] |= 1 << bit_idx;
+                }
             }
 
             // Check if complete
-            let num_chunks = info.size.div_ceil(CHUNK_SIZE);
             let mut complete = true;
             for i in 0..num_chunks {
                 let b_idx = (i / 8) as usize;
@@ -472,16 +493,11 @@ impl crate::sync::BlobStore for InMemoryStore {
         let blobs = self.blobs.read().unwrap();
         let (_, buffer) = blobs.get(hash).ok_or(MerkleToxError::BlobNotFound(*hash))?;
         let start = offset as usize;
+        if start >= buffer.len() {
+            return Err(MerkleToxError::BlobNotFound(*hash));
+        }
         let end = (start + length as usize).min(buffer.len());
         Ok(buffer[start..end].to_vec())
-    }
-    fn get_chunk_with_proof(
-        &self,
-        hash: &NodeHash,
-        offset: u64,
-        length: u32,
-    ) -> MerkleToxResult<(Vec<u8>, Vec<u8>)> {
-        Ok((self.get_chunk(hash, offset, length)?, Vec::new()))
     }
 }
 
@@ -757,14 +773,6 @@ macro_rules! __delegate_store {
                 length: u32,
             ) -> $crate::error::MerkleToxResult<Vec<u8>> {
                 self.$field.get_chunk(hash, offset, length)
-            }
-            fn get_chunk_with_proof(
-                &self,
-                hash: &$crate::dag::NodeHash,
-                offset: u64,
-                length: u32,
-            ) -> $crate::error::MerkleToxResult<(Vec<u8>, Vec<u8>)> {
-                self.$field.get_chunk_with_proof(hash, offset, length)
             }
         }
 

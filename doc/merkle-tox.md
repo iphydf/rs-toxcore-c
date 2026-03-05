@@ -20,9 +20,19 @@ signed nodes.
 
 The project is divided into three layers:
 
-1.  **Reliability Layer (`tox-sequenced`)**: Provides ordered transport over
-    lossy Tox custom packets. It handles fragmentation, acknowledgments, and
-    retransmission.
+1.  **Transport Layer (`tox-sequenced`)**: Provides congestion-controlled
+    datagram delivery over lossy Tox custom packets. It handles pacing,
+    congestion control, and priority scheduling. Reliability is handled at
+    the application layer, where semantic knowledge (content addressing,
+    DAG structure, chunk bitmasks) enables smarter retransmission.
+
+    The underlying Tox-level transport is one of two: **direct friend
+    connections** (`tox.friend.send_lossy_packet`) for 1:1 friend chats
+    and multi-device self-sync, or **NGC custom packets**
+    (`gc_send_custom_private_packet`) for group conversations whose
+    members are not all mutual friends. The two are different products
+    with different threat models, not interchangeable routes; see
+    [merkle-tox-ngc.md](merkle-tox-ngc.md).
 
 2.  **Logic Layer (`merkle-tox-core`)**: Manages the DAG structure, calculates
     hashes, verifies signatures, and runs the synchronization state machine.
@@ -57,14 +67,22 @@ models, attack vectors, and design trade-offs.
 
 The following limits ensure system stability and DoS resistance:
 
--   **MAX_PARENTS**: 16 (Maximum number of parents a single node can have).
+-   **MAX_PARENTS**: `MAX_GROUP_DEVICES` = 4096 (Maximum number of parents a
+    single node can have). Bound to `MAX_GROUP_DEVICES` because the admin
+    frontier width — number of concurrent unmerged admin heads — is itself
+    bounded by the number of authorized devices that can author admin nodes.
+    Wide-frontier cases (group creation, partition heal) require any new node
+    to be able to merge the full frontier; otherwise propagation stalls.
+    Steady-state frontiers are typically 1–3 wide; the upper bound matters
+    only for transient bursts.
 -   **MAX_GROUP_DEVICES**: 4096 (Maximum authorized physical devices per
     conversation, keeping KeyWrap within MTU).
 -   **MAX_DEVICES_PER_IDENTITY**: 32 (Maximum authorized devices per logical
     ID).
 -   **MAX_METADATA_SIZE**: 32KB (Maximum size of the optional metadata field).
--   **MAX_MESSAGE_SIZE**: 1MB (Maximum reassembled message size for transport).
--   **MAX_INFLIGHT_MESSAGES**: 32 (Maximum concurrent reassemblies per peer).
+-   **MAX_FRAGMENT_MESSAGE**: 1MB (Maximum reassembled fragmented message size).
+-   **MAX_CONCURRENT_REASSEMBLY**: 32 (Maximum concurrent fragmented messages
+    per peer).
 -   **MAX_HEADS_SYNC**: 64 (Maximum heads advertised in `SYNC_HEADS`).
 -   **BASELINE_POW_DIFFICULTY**: 20 bits (Leading zeros for Genesis entry; ~1–2s
     on a smartphone via pre-signature Blake3 hashing).
@@ -78,7 +96,8 @@ The following limits ensure system stability and DoS resistance:
     `HandshakePulse` if it has already authored a KeyWrap rotation within this
     window, or if it has already responded to a topologically newer or
     concurrent pulse from the same peer in the current sync batch).
--   **BLOB_CHUNK_SIZE**: 64KB (Standard size for CAS blob requests).
+-   **BLOB_CHUNK_SIZE**: 64KB (Bao verification boundary for blob data).
+-   **BLOB_PIECE_SIZE**: ~1300B (Blob data piece matching transport MTU).
 
 ## Baseline Protocol (Version 1)
 

@@ -118,7 +118,7 @@ fn test_historical_authorization_verification() {
     let mut msg = merkle_tox_core::testing::test_node();
     msg.author_pk = identity.master_pk; // FIXED: Must match the identity that authorized the device
     msg.sender_pk = historical_device.device_pk;
-    msg.parents = vec![auth_hash];
+    msg.parents = tox_proto::bounded_vec![auth_hash];
     msg.content = Content::Text("I was authorized when I sent this".to_string());
     msg.topological_rank = 2;
     msg.sequence_number = 1;

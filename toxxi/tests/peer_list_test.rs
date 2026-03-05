@@ -21,7 +21,7 @@ fn create_test_model() -> Model {
 fn test_peer_list_shows_when_empty() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
 
     // Create a group window
@@ -71,7 +71,7 @@ fn test_peer_list_shows_when_empty() {
 fn test_peer_list_namesake_distinction() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
 
     model.add_group_message(
@@ -130,7 +130,7 @@ fn test_peer_list_namesake_distinction() {
 fn test_peer_list_status_colors() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
     model.ensure_group_window(chat_id);
     model.set_active_window(1);
@@ -197,7 +197,7 @@ fn test_peer_list_status_colors() {
 fn test_peer_list_roles_and_ignore() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
-    let chat_id = toxcore::types::ChatId([1u8; 32]);
+    let chat_id = toxcore::types::GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
     model.ensure_group_window(chat_id);
     model.set_active_window(1);

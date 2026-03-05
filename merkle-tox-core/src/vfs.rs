@@ -13,6 +13,15 @@ pub trait FileHandle: Read + Write + Seek + Send + Sync + Debug {
     fn metadata(&self) -> io::Result<FileMetadata>;
     fn try_lock_exclusive(&self) -> io::Result<()>;
     fn try_lock_shared(&self) -> io::Result<()>;
+    /// Force buffered file contents to durable storage. After
+    /// success, the data written through this handle is guaranteed
+    /// to survive a host crash or power loss. Required at every
+    /// durability boundary in the persistence layer — see
+    /// `merkle-tox-fs` callers (`StateFile::save`, `Journal::append`
+    /// / `truncate`, `BlobStore::put_info`, `compact_internal`).
+    /// Without this, the kernel page cache may reorder writes
+    /// across crash and produce torn or stale state.
+    fn sync_data(&self) -> io::Result<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +49,14 @@ pub trait FileSystem: Send + Sync + Debug {
         create: bool,
         truncate: bool,
     ) -> io::Result<Box<dyn FileHandle>>;
+
+    /// Force a directory entry's metadata to durable storage. Must
+    /// be called *after* a `rename` whose new name needs to survive
+    /// a crash — without this, the rename target may not be visible
+    /// after recovery on filesystems that don't guarantee
+    /// metadata-write ordering against data writes (ext4 default,
+    /// btrfs, zfs without `sync=always`).
+    fn sync_dir(&self, path: &Path) -> io::Result<()>;
 }
 
 #[derive(Clone, Copy)]
@@ -101,6 +118,14 @@ impl FileSystem for StdFileSystem {
             .open(path)?;
         Ok(Box::new(file))
     }
+
+    fn sync_dir(&self, path: &Path) -> io::Result<()> {
+        // Linux/macOS: open the directory and call fsync on the
+        // returned descriptor. This is the documented way to flush
+        // a rename's metadata to disk.
+        let dir = OpenOptions::new().read(true).open(path)?;
+        dir.sync_data()
+    }
 }
 
 impl FileHandle for File {
@@ -120,6 +145,9 @@ impl FileHandle for File {
     }
     fn try_lock_shared(&self) -> io::Result<()> {
         fs2::FileExt::try_lock_shared(self)
+    }
+    fn sync_data(&self) -> io::Result<()> {
+        File::sync_data(self)
     }
 }
 
@@ -260,6 +288,14 @@ impl FileSystem for MemFileSystem {
         let inner = self.inner.read().unwrap();
         inner.files.contains_key(path) || inner.dirs.contains_key(path)
     }
+    fn sync_dir(&self, _path: &Path) -> io::Result<()> {
+        // In-memory filesystem: writes are immediately visible and
+        // there is no kernel page cache to flush. A no-op satisfies
+        // the durability contract trivially (the only "crash" mode
+        // for `MemFileSystem` is process exit, which discards the
+        // entire state).
+        Ok(())
+    }
     fn open(
         &self,
         path: &Path,
@@ -370,6 +406,12 @@ impl FileHandle for MemFileHandle {
     fn try_lock_shared(&self) -> io::Result<()> {
         Ok(())
     }
+    fn sync_data(&self) -> io::Result<()> {
+        // MemFileHandle's writes are flushed via Drop / explicit
+        // flush() into the underlying MemFiles map; nothing to
+        // sync to disk.
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -457,6 +499,12 @@ impl FileSystem for FaultInjectingFileSystem {
     }
     fn exists(&self, path: &Path) -> bool {
         self.inner.exists(path)
+    }
+    fn sync_dir(&self, path: &Path) -> io::Result<()> {
+        if self.should_fail() {
+            return Err(io::Error::other("Injected fault on sync_dir"));
+        }
+        self.inner.sync_dir(path)
     }
     fn open(
         &self,
@@ -546,5 +594,11 @@ impl FileHandle for FaultInjectingHandle {
     }
     fn try_lock_shared(&self) -> io::Result<()> {
         self.inner.try_lock_shared()
+    }
+    fn sync_data(&self) -> io::Result<()> {
+        if self.should_fail() {
+            return Err(io::Error::other("Injected fault on sync_data"));
+        }
+        self.inner.sync_data()
     }
 }
