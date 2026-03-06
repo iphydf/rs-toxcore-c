@@ -429,18 +429,24 @@ impl crate::sync::BlobStore for InMemoryStore {
     ) -> MerkleToxResult<()> {
         let mut blobs = self.blobs.write().unwrap();
         if let Some((info, buffer)) = blobs.get_mut(hash) {
-            if buffer.is_empty() {
+            let first_write = buffer.is_empty();
+            if first_write {
                 *buffer = vec![0u8; info.size as usize];
             }
             let end = (offset as usize + data.len()).min(buffer.len());
             buffer[offset as usize..end].copy_from_slice(&data[..end - offset as usize]);
 
-            // Update mask
+            // Update mask — reset on first write to discard any stale mask
+            // inherited from a seeder's BlobInfo via BlobAvail.
             let chunk_idx = offset / CHUNK_SIZE;
-            let mut mask = info.received_mask.take().unwrap_or_else(|| {
-                let num_chunks = info.size.div_ceil(CHUNK_SIZE);
+            let num_chunks = info.size.div_ceil(CHUNK_SIZE);
+            let mut mask = if first_write {
                 vec![0u8; num_chunks.div_ceil(8) as usize]
-            });
+            } else {
+                info.received_mask.take().unwrap_or_else(|| {
+                    vec![0u8; num_chunks.div_ceil(8) as usize]
+                })
+            };
             let byte_idx = (chunk_idx / 8) as usize;
             let bit_idx = (chunk_idx % 8) as u8;
             if byte_idx < mask.len() {
@@ -448,7 +454,6 @@ impl crate::sync::BlobStore for InMemoryStore {
             }
 
             // Check if complete
-            let num_chunks = info.size.div_ceil(CHUNK_SIZE);
             let mut complete = true;
             for i in 0..num_chunks {
                 let b_idx = (i / 8) as usize;
@@ -472,6 +477,9 @@ impl crate::sync::BlobStore for InMemoryStore {
         let blobs = self.blobs.read().unwrap();
         let (_, buffer) = blobs.get(hash).ok_or(MerkleToxError::BlobNotFound(*hash))?;
         let start = offset as usize;
+        if start >= buffer.len() {
+            return Err(MerkleToxError::BlobNotFound(*hash));
+        }
         let end = (start + length as usize).min(buffer.len());
         Ok(buffer[start..end].to_vec())
     }

@@ -1,0 +1,69 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library", "rust_test")
+
+rust_library(
+    name = "merkle-tox-bench-lib",
+    srcs = [
+        "src/lib.rs",
+        "src/harness.rs",
+        "src/headless.rs",
+        "src/metrics.rs",
+        "src/scenario.rs",
+        "src/tui.rs",
+    ],
+    crate_name = "merkle_tox_bench",
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//rs-toxcore-c/merkle-tox-core",
+        "@crates//:blake3",
+        "@crates//:clap",
+        "@crates//:crossbeam",
+        "@crates//:crossterm",
+        "@crates//:ratatui",
+        "@crates//:rand",
+        "@crates//:serde",
+        "@crates//:serde_json",
+    ],
+)
+
+rust_binary(
+    name = "merkle-tox-bench",
+    srcs = ["src/main.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":merkle-tox-bench-lib",
+        "@crates//:clap",
+        "@crates//:crossterm",
+        "@crates//:ratatui",
+    ],
+)
+
+TEST_SRCS = glob(["tests/*.rs"])
+
+[
+    rust_test(
+        name = src.replace("tests/", "").replace(".rs", "").replace("_", "-"),
+        size = "small",
+        srcs = [src],
+        edition = "2024",
+        rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+        deps = [
+            ":merkle-tox-bench-lib",
+            "//rs-toxcore-c/merkle-tox-core",
+        ],
+    )
+    for src in TEST_SRCS
+]
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":merkle-tox-bench-lib",
+        ":merkle-tox-bench",
+    ] + [
+        ":" + src.replace("tests/", "").replace(".rs", "").replace("_", "-")
+        for src in TEST_SRCS
+    ],
+)
