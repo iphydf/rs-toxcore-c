@@ -190,15 +190,19 @@ fn test_malicious_snapshot_poisoning() {
         vec![room.conv_id.to_node_hash()],
         ControlAction::Snapshot(merkle_tox_core::dag::SnapshotData {
             basis_hash: room.conv_id.to_node_hash(),
-            members: vec![], // EMPTY members list!
-            last_seq_numbers: vec![],
+            members: tox_proto::BoundedVec::new(), // EMPTY members list!
+            last_seq_numbers: tox_proto::BoundedVec::new(),
         }),
         1,
         1,
         1000,
     );
 
-    // 3. A new joiner performs shallow sync and receives this snapshot
+    // 3. An observer with an existing membership view receives the malicious
+    //    snapshot. We use a separate TestRoom-setup engine so the observer
+    //    has a populated identity_manager — that's the attack surface: if
+    //    handle_node(Snapshot) blindly imported `data.members`, it would wipe
+    //    the observer's member list to empty.
     let observer_pk = PhysicalDevicePk::from([9u8; 32]);
     let mut observer_engine = MerkleToxEngine::new(
         observer_pk,
@@ -207,17 +211,28 @@ fn test_malicious_snapshot_poisoning() {
         tp,
     );
     let observer_store = InMemoryStore::new();
+    room.setup_engine(&mut observer_engine, &observer_store);
+
+    let members_before = observer_engine.identity_manager.list_members(room.conv_id);
+    assert!(
+        !members_before.is_empty(),
+        "baseline: observer's membership view must be populated before the \
+         attack for this test to be meaningful",
+    );
 
     observer_engine
         .handle_node(room.conv_id, malicious_snapshot, &observer_store, None)
         .unwrap();
 
-    // Verification: The observer should still rely on the Admin Track, not JUST the snapshot,
-    // or the snapshot itself MUST be verified against the Admin Track.
-    // If the observer trusts the snapshot blindly, they will think the room is empty.
-
-    // In our implementation, handle_node(Snapshot) applies side effects.
-    // ControlAction::Snapshot side effects are NOT implemented in engine.rs yet!
-    // So the malicious snapshot currently does nothing.
-    // This test ensures that when we DO implement snapshot processing, we do it safely.
+    // §3.10 / identity-integrity: ControlAction::Snapshot must NOT import
+    // members — only AnchorSnapshot may do so, and only under the
+    // skip_generic_path ADMIN cert gate (Gap 15). A plain Snapshot
+    // side-effect is intentionally limited to updating latest_anchor_hashes,
+    // which is what makes the empty-members snapshot inert.
+    let members_after = observer_engine.identity_manager.list_members(room.conv_id);
+    assert_eq!(
+        members_before, members_after,
+        "malicious Snapshot must not alter observer's membership view; \
+         member-list imports are restricted to AnchorSnapshot",
+    );
 }

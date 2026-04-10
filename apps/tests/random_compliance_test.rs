@@ -202,10 +202,13 @@ fn test_store_random_compliance() {
                 verified,
             } => {
                 let cid = conv_ids[conv_idx];
-                let parents: Vec<NodeHash> = parent_indices
-                    .iter()
-                    .map(|&i| known_nodes[conv_idx][i])
-                    .collect();
+                let parents = tox_proto::BoundedVec::try_from_iter(
+                    parent_indices
+                        .iter()
+                        .map(|&i| known_nodes[conv_idx][i])
+                        .take(merkle_tox_core::dag::MAX_PARENTS),
+                )
+                .expect("take(MAX_PARENTS) bounds at cap");
                 let node = MerkleNode {
                     parents,
                     author_pk: LogicalIdentityPk::from([1u8; 32]),
@@ -214,7 +217,7 @@ fn test_store_random_compliance() {
                     topological_rank: rank,
                     network_timestamp: 1000 + i as i64,
                     content: Content::Text(format!("Node {}", i)),
-                    metadata: vec![],
+                    metadata: tox_proto::BoundedBytes::new(),
                     authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
                     pow_nonce: 0,
                 };
@@ -275,7 +278,6 @@ fn test_store_random_compliance() {
                 let info = BlobInfo {
                     hash: blob_hash,
                     size,
-                    bao_root: None,
                     status: BlobStatus::Pending,
                     received_mask: None,
                     decryption_key: None,

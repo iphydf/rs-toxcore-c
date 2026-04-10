@@ -38,7 +38,6 @@ rust_library(
         "//rs-toxcore-c/tox-proto",
         "//rs-toxcore-c/tox-reconcile",
         "//rs-toxcore-c/tox-sequenced",
-        "@crates//:bao",
         "@crates//:bitflags",
         "@crates//:blake3",
         "@crates//:chacha20",
@@ -71,9 +70,13 @@ TEST_SRCS = glob(["tests/*.rs"])
 # Tests that mine many PoW nonces need more than the "small" 60s short-timeout.
 _POW_HEAVY_TESTS = [
     "tests/engine_integration_test.rs",
+    "tests/adversarial_anchor_snapshot_member_test.rs",
     "tests/adversarial_convergence_test.rs",
+    "tests/adversarial_genesis_injection_test.rs",
+    "tests/adversarial_keywrap_preclaim_test.rs",
     "tests/key_management_test.rs",
     "tests/protocol_flows_test.rs",
+    "tests/tier2_gaps_test.rs",
 ]
 
 [
@@ -88,7 +91,6 @@ _POW_HEAVY_TESTS = [
             "//rs-toxcore-c/merkle-tox-fs",
             "//rs-toxcore-c/tox-proto",
             "//rs-toxcore-c/tox-reconcile",
-            "@crates//:bao",
             "@crates//:blake3",
             "@crates//:chacha20",
         "@crates//:chacha20poly1305",
@@ -100,9 +102,11 @@ _POW_HEAVY_TESTS = [
             "@crates//:rmp-serde",
             "@crates//:serde",
             "@crates//:serde_bytes",
+            "@crates//:crossbeam",
             "@crates//:tempfile",
             "@crates//:tracing-subscriber",
             "@crates//:x25519-dalek",
+            "@crates//:zstd",
         ],
     )
     for src in TEST_SRCS
@@ -117,7 +121,6 @@ rust_binary(
         ":merkle-tox-core",
         "//rs-toxcore-c/tox-proto",
         "//rs-toxcore-c/tox-reconcile",
-        "@crates//:bao",
         "@crates//:blake3",
         "@crates//:criterion",
     ],

@@ -203,14 +203,6 @@ impl BlobStore for FailingStore {
     fn get_chunk(&self, h: &NodeHash, o: u64, l: u32) -> MerkleToxResult<Vec<u8>> {
         self.inner.get_chunk(h, o, l)
     }
-    fn get_chunk_with_proof(
-        &self,
-        h: &NodeHash,
-        o: u64,
-        l: u32,
-    ) -> MerkleToxResult<(Vec<u8>, Vec<u8>)> {
-        self.inner.get_chunk_with_proof(h, o, l)
-    }
 }
 
 #[test]
@@ -230,14 +222,14 @@ fn test_pending_cache_not_cleared_on_failure() {
 
     let cid = ConversationId::from([1u8; 32]);
     let node_data = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: alice.master_pk,
         sender_pk: alice.device_pk,
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 1000,
         content: Content::Text("Fail me".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: merkle_tox_core::dag::NodeAuth::EphemeralSignature(Ed25519Signature::from(
             [0u8; 64],
         )),
@@ -277,14 +269,14 @@ fn test_pending_cache_cleared_on_success() {
 
     let cid = ConversationId::from([1u8; 32]);
     let node_data = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: alice.master_pk,
         sender_pk: alice.device_pk,
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 1000,
         content: Content::Text("Success".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: merkle_tox_core::dag::NodeAuth::EphemeralSignature(Ed25519Signature::from(
             [0u8; 64],
         )),

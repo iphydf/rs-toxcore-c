@@ -28,6 +28,13 @@ pub struct IbltCell {
     pub hash_sum: u64,
 }
 
+/// Cap on the number of cells in a `SyncSketch.cells` array.  Equal
+/// to `Tier::Large.cell_count()` — the largest legitimate IBLT size
+/// in the protocol's tier ladder.  Any sketch with more cells than
+/// this is unambiguously over-spec and is rejected at the wire-
+/// deserialise boundary by `BoundedVec`.
+pub const MAX_SKETCH_CELLS: usize = 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
     Tiny,   // 16 cells
@@ -72,10 +79,21 @@ pub struct SyncRange {
     pub max_rank: u64,
 }
 
+/// Wire payload of a single IBLT-based reconciliation step.
+///
+/// `cells` is length-capped at `MAX_SKETCH_CELLS = 1024` (= the
+/// largest legitimate tier, `Tier::Large`) at the type level: any
+/// peer-supplied wire payload claiming more cells is rejected by
+/// `BoundedVec`'s deserialiser before allocating a single
+/// `IbltCell`. Without this cap the handler's PoW gate at
+/// `merkle-tox-core/src/engine/handlers/mod.rs:193` only fires
+/// *after* full deserialisation, leaving an authenticated-peer DoS
+/// where a 100 000-cell sketch costs ~5 MB allocation +
+/// `O(cells.len())` parse work per packet.
 #[derive(Debug, Clone, ToxProto, PartialEq, Eq)]
 pub struct SyncSketch {
     pub conversation_id: ConversationId,
-    pub cells: Vec<IbltCell>,
+    pub cells: tox_proto::BoundedVec<IbltCell, MAX_SKETCH_CELLS>,
     pub range: SyncRange,
 }
 

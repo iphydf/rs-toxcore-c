@@ -19,7 +19,7 @@ fn test_pow_solve_and_verify() {
 
     let sketch = tox_reconcile::SyncSketch {
         conversation_id: ConversationId::from([0; 32]),
-        cells: Vec::new(),
+        cells: tox_proto::BoundedVec::new(),
         range: tox_reconcile::SyncRange {
             min_rank: 0,
             max_rank: 0,
@@ -48,7 +48,7 @@ fn test_pow_incorrect_solution() {
 
     let sketch = tox_reconcile::SyncSketch {
         conversation_id: ConversationId::from([0; 32]),
-        cells: Vec::new(),
+        cells: tox_proto::BoundedVec::new(),
         range: tox_reconcile::SyncRange {
             min_rank: 0,
             max_rank: 0,
@@ -75,7 +75,7 @@ fn test_pow_expired_challenge() {
 
     let sketch = tox_reconcile::SyncSketch {
         conversation_id: ConversationId::from([0; 32]),
-        cells: Vec::new(),
+        cells: tox_proto::BoundedVec::new(),
         range: tox_reconcile::SyncRange {
             min_rank: 0,
             max_rank: 0,

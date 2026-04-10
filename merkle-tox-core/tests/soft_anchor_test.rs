@@ -94,7 +94,7 @@ fn test_soft_anchor_single_parent() {
     );
     let mut node = test_node();
     node.author_pk = alice.master_pk;
-    node.parents = vec![parent_hash, other_parent_hash];
+    node.parents = tox_proto::bounded_vec![parent_hash, other_parent_hash];
     node.topological_rank = 1;
     node.content = Content::Control(ControlAction::SoftAnchor {
         basis_hash: parent_hash,
@@ -119,7 +119,7 @@ fn test_soft_anchor_single_parent() {
     );
     let mut node2 = test_node();
     node2.author_pk = alice.master_pk;
-    node2.parents = vec![other_parent_hash];
+    node2.parents = tox_proto::bounded_vec![other_parent_hash];
     node2.topological_rank = 1;
     node2.content = Content::Control(ControlAction::SoftAnchor {
         basis_hash: parent_hash, // doesn't match parent
@@ -144,7 +144,7 @@ fn test_soft_anchor_single_parent() {
     );
     let mut node3 = test_node();
     node3.author_pk = alice.master_pk;
-    node3.parents = vec![parent_hash];
+    node3.parents = tox_proto::bounded_vec![parent_hash];
     node3.topological_rank = 1;
     node3.content = Content::Control(ControlAction::SoftAnchor {
         basis_hash: parent_hash,
@@ -496,7 +496,7 @@ fn test_soft_anchor_hop_reset() {
 
     // Content node after SoftAnchor should have admin_distance=1
     let mut content_node = test_node();
-    content_node.parents = vec![sa_hash];
+    content_node.parents = tox_proto::bounded_vec![sa_hash];
     content_node.topological_rank = 2;
     let content_hash = content_node.hash();
     store
@@ -564,7 +564,7 @@ fn test_soft_anchor_auto_trigger() {
     // Build a chain of 450 content nodes to push admin_distance high
     for i in 0..450u64 {
         let mut node = test_node();
-        node.parents = vec![prev];
+        node.parents = tox_proto::bounded_vec![prev];
         node.topological_rank = (i + 1) + 1; // offset from genesis rank
         node.sequence_number = i + 100;
         let h = node.hash();
@@ -586,7 +586,7 @@ fn test_soft_anchor_auto_trigger() {
     let effects = engine.author_node(
         room.conv_id,
         Content::Text("trigger".to_string()),
-        Vec::new(),
+        vec![],
         &store,
     );
     assert!(

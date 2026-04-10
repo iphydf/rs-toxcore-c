@@ -1,4 +1,4 @@
-use super::{CongestionControl, DeliverySample};
+use super::{CongestionControl, DeliverySample, MAX_BW_CEILING};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use tox_proto::ToxProto;
@@ -20,7 +20,7 @@ const MIN_CWND: usize = 4;
 const MIN_CWND_GAIN: f32 = 1.1; // Reduced from 1.25
 const LOSS_REDUCTION_FACTOR: f32 = 0.9; // Less aggressive (was 0.5)
 const LOSS_EVENT_THRESHOLD: usize = 8; // More resilient (was 2)
-const INITIAL_RTT: Duration = Duration::from_secs(10);
+const INITIAL_RTT: Duration = Duration::from_millis(100);
 
 /// A windowed max filter using a monotonic queue.
 #[derive(ToxProto)]
@@ -93,6 +93,11 @@ pub struct Bbrv1 {
     app_limited: bool,
     has_non_app_limited_sample_in_round: bool,
 
+    /// During Startup, cwnd grows by bytes_acked (exponential growth) rather
+    /// than being purely BDP-derived. This prevents the chicken-and-egg problem
+    /// where cwnd can't grow because max_bw is measured from a cwnd-limited pipe.
+    startup_cwnd: usize,
+
     pub rng: rand::rngs::StdRng,
 }
 
@@ -118,6 +123,7 @@ impl Bbrv1 {
             round_start: None,
             app_limited: false,
             has_non_app_limited_sample_in_round: false,
+            startup_cwnd: MIN_CWND,
             rng,
         };
         bbr.enter_startup();
@@ -125,9 +131,14 @@ impl Bbrv1 {
     }
 
     fn update_bandwidth(&mut self, now: Instant, sample: DeliverySample) {
-        // Use a minimum duration floor to avoid extreme bandwidth spikes on ultra-fast links
-        let duration = sample.duration.max(Duration::from_millis(1));
-        let bw = sample.bytes_delivered as f32 / duration.as_secs_f32();
+        // Floor `sample.duration` at `min_rtt` and clamp the result at
+        // `MAX_BW_CEILING`. See `congestion::MAX_BW_CEILING` and
+        // `bbrv2::update_bandwidth` for the full rationale; in short,
+        // sub-RTT delivery samples (cumulative-base catch-ups across
+        // SACK gaps, ack-batching coalescence) read as multi-Gbps and
+        // poison the pacer.
+        let duration = sample.duration.max(self.min_rtt);
+        let bw = (sample.bytes_delivered as f32 / duration.as_secs_f32()).min(MAX_BW_CEILING);
         if bw.is_finite() && bw > 0.0 && (!sample.app_limited || bw > self.max_bw.get()) {
             self.max_bw.add(now, bw);
         }
@@ -174,6 +185,7 @@ impl Bbrv1 {
         self.filled_pipe = false;
         self.full_bw = 0.0;
         self.full_bw_count = 0;
+        self.startup_cwnd = MIN_CWND;
     }
 
     fn enter_drain(&mut self) {
@@ -251,6 +263,15 @@ impl CongestionControl for Bbrv1 {
             }
         }
 
+        // During Startup, grow cwnd by bytes_acked for exponential growth.
+        // This avoids the chicken-and-egg problem: BDP-based cwnd stays tiny
+        // when max_bw is measured from a cwnd-limited pipe.
+        if self.state == Bbrv1State::Startup && _bytes_acked > 0 {
+            let mtu = crate::protocol::ESTIMATED_PAYLOAD_SIZE;
+            let acked_frags = _bytes_acked.div_ceil(mtu);
+            self.startup_cwnd += acked_frags;
+        }
+
         match self.state {
             Bbrv1State::Startup => {
                 if self.filled_pipe {
@@ -284,7 +305,9 @@ impl CongestionControl for Bbrv1 {
         }
     }
 
-    fn on_nack(&mut self, _now: Instant) {
+    fn on_loss(&mut self, _bytes_lost: usize, _now: Instant) {
+        // BBRv1 counts loss *events* per round (with an 8-event
+        // tolerance threshold), so byte volume is ignored.
         self.loss_count_in_round += 1;
         if self.loss_count_in_round > LOSS_EVENT_THRESHOLD {
             self.cwnd_gain = (self.cwnd_gain * LOSS_REDUCTION_FACTOR).max(MIN_CWND_GAIN);
@@ -312,7 +335,12 @@ impl CongestionControl for Bbrv1 {
 
         // BDP + some extra for high throughput on long-fat pipes
         let target = (bdp * self.cwnd_gain / mtu) as usize;
-        target.max(MIN_CWND)
+        if self.state == Bbrv1State::Startup {
+            // During Startup, use the larger of BDP-based and ack-growth-based cwnd.
+            target.max(self.startup_cwnd).max(MIN_CWND)
+        } else {
+            target.max(MIN_CWND)
+        }
     }
 
     fn pacing_rate(&self) -> f32 {
@@ -322,16 +350,31 @@ impl CongestionControl for Bbrv1 {
 
         let rate = self.max_bw.get() * self.pacing_gain;
 
-        if self.state == Bbrv1State::Startup {
-            rate.max(STARTUP_MIN_PACING_RATE)
+        let rate = if self.state == Bbrv1State::Startup {
+            // Scale the startup floor with startup_cwnd so pacing doesn't
+            // bottleneck the exponentially growing window.  Without this,
+            // a fixed 200 KB/s floor makes check_filled_pipe falsely detect
+            // a full pipe when it's really just pacing-limited.
+            let cwnd_floor = self.startup_cwnd as f32
+                * crate::protocol::ESTIMATED_PAYLOAD_SIZE as f32
+                * self.pacing_gain
+                / self.min_rtt.as_secs_f32().max(0.001);
+            rate.max(STARTUP_MIN_PACING_RATE).max(cwnd_floor)
         } else {
             rate.max(MIN_PACING_RATE)
-        }
+        };
+
+        // Final ceiling: `cwnd_floor` divides by `min_rtt` and so can
+        // overrule `max_bw` when min_rtt has converged sub-millisecond
+        // and a single ACK has just inflated `startup_cwnd` via a
+        // multi-MB cumulative-base catch-up.  Clamp at `MAX_BW_CEILING`
+        // to keep pacing within any plausible physical link.
+        rate.min(MAX_BW_CEILING)
     }
 
     fn min_rtt(&self) -> Duration {
         self.min_rtt
     }
 
-    fn on_fragment_sent(&mut self, _bytes: usize, _now: Instant) {}
+    fn on_packet_sent(&mut self, _bytes: usize, _now: Instant) {}
 }

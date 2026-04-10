@@ -1,9 +1,9 @@
 use merkle_tox_bench::scenario::{ScenarioCategory, all_scenarios, scenarios_by_ids};
 
 #[test]
-fn all_scenarios_returns_ten() {
+fn all_scenarios_returns_twelve() {
     let scenarios = all_scenarios();
-    assert_eq!(scenarios.len(), 10);
+    assert_eq!(scenarios.len(), 12);
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn category_counts() {
         .filter(|s| s.category == ScenarioCategory::Combined)
         .count();
 
-    assert_eq!(blob_count, 5);
+    assert_eq!(blob_count, 7);
     assert_eq!(dag_count, 3);
     assert_eq!(combined_count, 2);
 }

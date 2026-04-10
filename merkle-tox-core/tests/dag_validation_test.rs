@@ -1,41 +1,32 @@
 use ed25519_dalek::{Signer, SigningKey};
 use merkle_tox_core::dag::{
-    Content, ControlAction, ConversationId, Ed25519Signature, LogicalIdentityPk, MAX_METADATA_SIZE,
-    MAX_PARENTS, MerkleNode, NodeAuth, NodeHash, PhysicalDevicePk,
+    Content, ControlAction, ConversationId, Ed25519Signature, LogicalIdentityPk, MerkleNode,
+    NodeAuth, NodeHash, PhysicalDevicePk,
 };
 use merkle_tox_core::testing::{InMemoryStore, TestIdentity, TestRoom, sign_admin_node, test_node};
 
-#[test]
-fn test_validate_max_parents() {
-    let mut node = test_node();
-    node.parents = vec![NodeHash::from([0u8; 32]); MAX_PARENTS + 1];
-    node.topological_rank = 1; // Needs to be > 0 if it has parents, but it will fail earlier anyway
-    let lookup = InMemoryStore::new();
-    let conv_id = ConversationId::from([0xAAu8; 32]);
-    let res = node.validate(&conv_id, &lookup);
-    assert!(matches!(
-        res,
-        Err(merkle_tox_core::dag::ValidationError::MaxParentsExceeded { .. })
-    ));
-}
+// The `validate(parents.len() > MAX_PARENTS)` check is no longer
+// reachable: `MerkleNode.parents` is `BoundedVec<NodeHash, MAX_PARENTS>`,
+// so an over-cap parent set cannot be constructed in safe Rust. The
+// equivalent wire-side property (over-cap deserialise rejected) is
+// enforced by `tox_proto::ToxDeserialize for BoundedVec<T, N>` and
+// covered by `tests/adversarial_oversized_wire_test.rs`.
 
-#[test]
-fn test_validate_max_metadata() {
-    let mut node = test_node();
-    node.metadata = vec![0u8; MAX_METADATA_SIZE + 1];
-    let lookup = InMemoryStore::new();
-    let conv_id = ConversationId::from([0xAAu8; 32]);
-    let res = node.validate(&conv_id, &lookup);
-    assert!(matches!(
-        res,
-        Err(merkle_tox_core::dag::ValidationError::MaxMetadataExceeded { .. })
-    ));
-}
+// `validate(metadata.len() > MAX_METADATA_SIZE)` is no longer
+// reachable: `MerkleNode.metadata` is `BoundedBytes<MAX_METADATA_SIZE>`,
+// so an over-cap construction is impossible in safe Rust. The
+// equivalent wire-side property is enforced by
+// `tox_proto::BoundedBytes`'s deserialiser and pinned by
+// `tox-proto/tests/bounded_bytes_test.rs`. The
+// `ValidationError::MaxMetadataExceeded` variant is kept reachable
+// from the `WireNode -> MerkleNode` unpack path for in-memory
+// constructions that bypass the type-system cap, so the test for
+// that variant lives in `tests/wire_test.rs` instead.
 
 #[test]
 fn test_validate_first_node_rank() {
     let mut node = test_node();
-    node.parents = vec![];
+    node.parents = tox_proto::bounded_vec![];
     let lookup = InMemoryStore::new();
     let conv_id = ConversationId::from([0xAAu8; 32]);
 
@@ -61,7 +52,7 @@ fn test_validate_first_node_rank() {
 fn test_validate_rank_violation() {
     let parent_hash = NodeHash::from([1u8; 32]);
     let mut node = test_node();
-    node.parents = vec![parent_hash];
+    node.parents = tox_proto::bounded_vec![parent_hash];
     node.topological_rank = 10;
     let conv_id = ConversationId::from([0xAAu8; 32]);
 
@@ -127,8 +118,8 @@ fn test_validate_admin_isolation() {
     a_node.content = Content::Control(ControlAction::Snapshot(
         merkle_tox_core::dag::SnapshotData {
             basis_hash: NodeHash::from([0u8; 32]),
-            members: vec![],
-            last_seq_numbers: vec![],
+            members: tox_proto::BoundedVec::new(),
+            last_seq_numbers: tox_proto::BoundedVec::new(),
         },
     ));
     lookup
@@ -141,15 +132,15 @@ fn test_validate_admin_isolation() {
     node.content = Content::Control(ControlAction::Snapshot(
         merkle_tox_core::dag::SnapshotData {
             basis_hash: NodeHash::from([0u8; 32]),
-            members: vec![],
-            last_seq_numbers: vec![],
+            members: tox_proto::BoundedVec::new(),
+            last_seq_numbers: tox_proto::BoundedVec::new(),
         },
     ));
     sign_admin_node(&mut node, &conv_id, &sk);
     node.topological_rank = 2;
 
     // Admin node with Content parent -> Fail
-    node.parents = vec![content_parent];
+    node.parents = tox_proto::bounded_vec![content_parent];
     node.topological_rank = 2;
     sign_admin_node(&mut node, &conv_id, &sk); // Re-sign because parents changed
     let res = node.validate(&conv_id, &lookup);
@@ -159,14 +150,14 @@ fn test_validate_admin_isolation() {
     ));
 
     // Admin node with Admin parent -> Ok
-    node.parents = vec![admin_parent];
+    node.parents = tox_proto::bounded_vec![admin_parent];
     node.topological_rank = 2;
     sign_admin_node(&mut node, &conv_id, &sk);
     assert!(node.validate(&conv_id, &lookup).is_ok());
 
     // Content node with Admin parent -> Ok
     let mut content_node = test_node();
-    content_node.parents = vec![admin_parent];
+    content_node.parents = tox_proto::bounded_vec![admin_parent];
     content_node.topological_rank = 2;
     assert!(content_node.validate(&conv_id, &lookup).is_ok());
 }
@@ -191,8 +182,8 @@ fn test_validate_mixed_parents() {
     a_node.content = Content::Control(ControlAction::Snapshot(
         merkle_tox_core::dag::SnapshotData {
             basis_hash: NodeHash::from([0u8; 32]),
-            members: vec![],
-            last_seq_numbers: vec![],
+            members: tox_proto::BoundedVec::new(),
+            last_seq_numbers: tox_proto::BoundedVec::new(),
         },
     ));
     lookup
@@ -203,7 +194,7 @@ fn test_validate_mixed_parents() {
 
     // Content node with BOTH Admin and Content parents -> Ok
     let mut node = test_node();
-    node.parents = vec![content_parent, admin_parent];
+    node.parents = tox_proto::bounded_vec![content_parent, admin_parent];
     node.topological_rank = 2;
     assert!(node.validate(&conv_id, &lookup).is_ok());
 }
@@ -225,7 +216,7 @@ fn test_validate_content_parent_to_admin_v1_rule() {
 
     // Admin node (Snapshot, a true Admin type)
     let mut admin_node = MerkleNode {
-        parents: vec![content_parent],
+        parents: tox_proto::bounded_vec![content_parent],
         author_pk: LogicalIdentityPk::from(sk.verifying_key().to_bytes()),
         sender_pk: PhysicalDevicePk::from(sk.verifying_key().to_bytes()),
         sequence_number: 1,
@@ -234,11 +225,11 @@ fn test_validate_content_parent_to_admin_v1_rule() {
         content: Content::Control(ControlAction::Snapshot(
             merkle_tox_core::dag::SnapshotData {
                 basis_hash: NodeHash::from([0u8; 32]),
-                members: vec![],
-                last_seq_numbers: vec![],
+                members: tox_proto::BoundedVec::new(),
+                last_seq_numbers: tox_proto::BoundedVec::new(),
             },
         )),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::Signature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -275,8 +266,8 @@ fn test_validate_auth_mismatch() {
     admin_node.content = Content::Control(ControlAction::Snapshot(
         merkle_tox_core::dag::SnapshotData {
             basis_hash: NodeHash::from([0u8; 32]),
-            members: vec![],
-            last_seq_numbers: vec![],
+            members: tox_proto::BoundedVec::new(),
+            last_seq_numbers: tox_proto::BoundedVec::new(),
         },
     ));
     admin_node.authentication = NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64]));
@@ -295,7 +286,7 @@ fn test_validate_cycle_detection() {
     // Node references itself as parent.
     let mut node = test_node();
     let hash = node.hash();
-    node.parents = vec![hash];
+    node.parents = tox_proto::bounded_vec![hash];
     node.topological_rank = 1;
 
     // We simulate that the node is already known to the store.
@@ -334,7 +325,7 @@ fn test_validate_indirect_cycle() {
     lookup.nodes.write().unwrap().insert(hash2, (n2, true)); // Parent has rank 10
 
     let mut node = test_node();
-    node.parents = vec![hash2];
+    node.parents = tox_proto::bounded_vec![hash2];
     node.topological_rank = 10; // Rank NOT greater than parent
 
     let res = node.validate(&conv_id, &lookup);
@@ -355,7 +346,7 @@ fn test_validate_missing_parent() {
     let conv_id = ConversationId::from([0xAAu8; 32]);
     let mut node = test_node();
     let missing_hash = NodeHash::from([0xEEu8; 32]);
-    node.parents = vec![missing_hash];
+    node.parents = tox_proto::bounded_vec![missing_hash];
     let res = node.validate(&conv_id, &lookup);
     assert!(
         matches!(res, Err(merkle_tox_core::dag::ValidationError::MissingParents(hashes)) if hashes == vec![missing_hash])
@@ -366,7 +357,7 @@ fn test_validate_missing_parent() {
 fn test_validate_duplicate_parents() {
     let parent_hash = NodeHash::from([1u8; 32]);
     let mut node = test_node();
-    node.parents = vec![parent_hash, parent_hash];
+    node.parents = tox_proto::bounded_vec![parent_hash, parent_hash];
     node.topological_rank = 1;
 
     let lookup = InMemoryStore::new();
@@ -389,7 +380,7 @@ fn test_validate_duplicate_parents() {
 fn test_validate_extreme_rank_difference() {
     let parent_hash = NodeHash::from([1u8; 32]);
     let mut node = test_node();
-    node.parents = vec![parent_hash];
+    node.parents = tox_proto::bounded_vec![parent_hash];
 
     // Parent has rank 1
     let lookup = InMemoryStore::new();
@@ -431,21 +422,21 @@ fn test_content_sig_domain_separator() {
 
     // Create a content node
     let content_node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: alice.master_pk,
         sender_pk: alice.device_pk,
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 1000,
         content: Content::Text("hello".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
 
     // Create an admin node
     let admin_node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: alice.master_pk,
         sender_pk: alice.device_pk,
         sequence_number: 1,
@@ -454,11 +445,11 @@ fn test_content_sig_domain_separator() {
         content: Content::Control(ControlAction::Snapshot(
             merkle_tox_core::dag::SnapshotData {
                 basis_hash: NodeHash::from([0u8; 32]),
-                members: vec![],
-                last_seq_numbers: vec![],
+                members: tox_proto::BoundedVec::new(),
+                last_seq_numbers: tox_proto::BoundedVec::new(),
             },
         )),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::Signature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -511,14 +502,14 @@ fn test_max_message_size_enforced() {
     // Create a node with content exceeding 1 MB
     let big_text = "x".repeat(1_048_577); // > 1MB
     let big_node = merkle_tox_core::dag::MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: alice.master_pk,
         sender_pk: alice.device_pk,
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 1000,
         content: Content::Text(big_text),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::Signature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -533,14 +524,14 @@ fn test_max_message_size_enforced() {
 
     // A small message should pass the size check (may fail other checks like auth)
     let small_node = merkle_tox_core::dag::MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: alice.master_pk,
         sender_pk: alice.device_pk,
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 1000,
         content: Content::Text("hello".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::Signature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };

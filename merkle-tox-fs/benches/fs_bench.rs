@@ -12,14 +12,14 @@ use tempfile::TempDir;
 
 fn make_node(i: u64) -> MerkleNode {
     MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1; 32]),
         sender_pk: PhysicalDevicePk::from([1; 32]),
         sequence_number: i,
         topological_rank: i,
         network_timestamp: i as i64,
         content: Content::Text(format!("Message number {}", i)),
-        metadata: vec![0; 64],
+        metadata: tox_proto::BoundedBytes::try_from_vec(vec![0; 64]).expect("test fixture under MAX_METADATA_SIZE"),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     }
@@ -119,7 +119,6 @@ fn bench_blob_ops(c: &mut Criterion) {
         size: 64 * 1024,
         status: BlobStatus::Pending,
         received_mask: None,
-        bao_root: None,
         decryption_key: None,
     };
     store.put_blob_info(info).unwrap();

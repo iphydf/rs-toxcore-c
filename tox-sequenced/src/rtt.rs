@@ -9,7 +9,6 @@ pub const MAX_RTO: Duration = Duration::from_millis(5000);
 pub const RTT_ALPHA: f32 = 0.125;
 pub const RTT_BETA: f32 = 0.25;
 pub const RTT_K: u32 = 4;
-pub const MAX_BACKOFF_EXPONENT: u32 = 6;
 
 /// An estimator for Round-Trip Time (RTT) and Retransmission Timeout (RTO).
 ///
@@ -53,10 +52,6 @@ impl RttEstimator {
 
     pub fn rto(&self) -> Duration {
         self.rto
-    }
-
-    pub fn rto_with_backoff(&self, retries: u32) -> Duration {
-        self.rto * (1 << retries.min(MAX_BACKOFF_EXPONENT))
     }
 
     pub fn srtt(&self) -> Duration {

@@ -1,109 +1,65 @@
 pub mod buffer;
 
 use self::buffer::FragmentBuffer;
-use crate::error::SequencedError;
-use crate::protocol::{
-    FragmentCount, FragmentIndex, MAX_FRAGMENTS_PER_MESSAGE, MAX_MESSAGE_SIZE, MessageId, Nack,
-    Priority, SelectiveAck,
-};
-use smallvec::SmallVec;
+use crate::protocol::Priority;
 use std::time::Instant;
 use tox_proto::ToxProto;
 
-/// A reliable, fragmented message being reassembled.
+/// A fragment reassembly entry for a fragmented message.
 #[derive(Debug, Clone, ToxProto)]
-pub struct MessageReassembler {
-    pub message_id: MessageId,
-    pub total_fragments: FragmentCount,
+pub struct FragmentReassembly {
+    pub frag_id: u32,
+    pub frag_total: u16,
+    pub msg_type: crate::protocol::MessageType,
     pub priority: Priority,
     pub buffer: FragmentBuffer,
     pub reserved_bytes: usize,
+    pub created_at: Instant,
     pub last_activity: Instant,
 }
 
-impl MessageReassembler {
+impl FragmentReassembly {
     pub fn new(
-        message_id: MessageId,
-        total_fragments: FragmentCount,
-        priority: Priority,
+        frag_id: u32,
+        frag_total: u16,
+        msg_type: crate::protocol::MessageType,
         reserved_bytes: usize,
         now: Instant,
-    ) -> Result<Self, SequencedError> {
-        if total_fragments.0 == 0 || total_fragments.0 > MAX_FRAGMENTS_PER_MESSAGE {
-            return Err(SequencedError::InvalidTotalFragments);
-        }
-        Ok(Self {
-            message_id,
-            total_fragments,
-            priority,
-            buffer: FragmentBuffer::new(total_fragments),
+    ) -> Self {
+        Self {
+            frag_id,
+            frag_total,
+            msg_type,
+            priority: msg_type.priority(),
+            buffer: FragmentBuffer::new(frag_total),
             reserved_bytes,
+            created_at: now,
             last_activity: now,
-        })
-    }
-
-    pub fn is_received(&self, index: FragmentIndex) -> bool {
-        if index.0 >= self.total_fragments.0 {
-            return false;
         }
-        self.buffer.received_mask().get(index.0 as usize)
     }
 
     pub fn add_fragment(
         &mut self,
-        index: FragmentIndex,
+        index: u16,
         data: Vec<u8>,
         now: Instant,
-    ) -> Result<bool, SequencedError> {
+    ) -> bool {
         self.last_activity = now;
-        if self.buffer.current_size() + data.len() > MAX_MESSAGE_SIZE {
-            return Err(SequencedError::MessageTooLarge);
+        if index >= self.frag_total {
+            return false;
         }
+        if self.buffer.current_size() + data.len() > crate::protocol::MAX_FRAGMENT_MESSAGE {
+            return false;
+        }
+        self.buffer.add_fragment(index, data).unwrap_or_default()
+    }
 
-        self.buffer.add_fragment(index, data)
+    pub fn is_complete(&self) -> bool {
+        self.buffer.is_complete()
     }
 
     pub fn assemble(self) -> Option<Vec<u8>> {
         self.buffer.assemble()
-    }
-
-    pub fn create_ack(&self, rwnd_fragments: FragmentCount) -> SelectiveAck {
-        let base_index = self.buffer.base_index();
-        let bitmask = self.buffer.received_mask().sack_mask(base_index.0 as usize);
-
-        SelectiveAck {
-            message_id: self.message_id,
-            base_index,
-            bitmask,
-            rwnd: rwnd_fragments,
-        }
-    }
-
-    pub fn create_nack(&self, base_index: FragmentIndex) -> Option<Nack> {
-        let mut missing = SmallVec::new();
-        let mut curr = base_index.0;
-        let limit = self.buffer.highest_index().0 as usize;
-        while let Some(zero_idx) = self.buffer.received_mask().next_zero(curr as usize, limit) {
-            let zero_idx = zero_idx as u16;
-            missing.push(FragmentIndex(zero_idx));
-            if missing.len() >= 128 {
-                break;
-            }
-            curr = zero_idx + 1;
-        }
-
-        if !missing.is_empty() {
-            Some(Nack {
-                message_id: self.message_id,
-                missing_indices: missing,
-            })
-        } else {
-            None
-        }
-    }
-
-    pub fn received_count(&self) -> FragmentCount {
-        self.buffer.received_count()
     }
 
     pub fn current_size(&self) -> usize {

@@ -12,7 +12,6 @@ rust_library(
         "src/error.rs",
         "src/flat_map.rs",
         "src/lib.rs",
-        "src/outgoing.rs",
         "src/protocol.rs",
         "src/quota.rs",
         "src/reassembly/buffer.rs",
@@ -88,7 +87,9 @@ rust_binary(
     rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
     deps = [
         ":tox-sequenced",
+        "//rs-toxcore-c/tox-proto",
         "@crates//:criterion",
+        "@crates//:smallvec",
     ],
 )
 

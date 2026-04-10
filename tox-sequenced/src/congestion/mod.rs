@@ -2,7 +2,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 use tox_proto::ToxProto;
 
-/// A sample of delivery information for a single ACKed fragment.
+/// A sample of delivery information from an ACK packet.
 #[derive(Debug, Clone, Copy, ToxProto)]
 pub struct DeliverySample {
     pub bytes_delivered: usize,
@@ -10,6 +10,31 @@ pub struct DeliverySample {
     pub now: Instant,
     pub app_limited: bool,
 }
+
+/// Hard ceiling on bandwidth-derived quantities (bytes/sec). 1 Gbps
+/// covers the realistic peer-to-peer Tox upper bound (LAN gigabit
+/// links are common; data-center 10G is not a target deployment).
+///
+/// Why this is needed at all: the delivery samples fed into BBR-style
+/// estimators come from the protocol's cumulative `recv_bytes`
+/// counter — a single ACK can report a multi-MB jump when cumulative
+/// base catches up across a SACK gap, and the receiver's
+/// `ACK_INTERVAL` batching means the time delta between consecutive
+/// ACKs can be sub-RTT. Their ratio reads as multi-Gbps even on a
+/// 100 Mbps link, which combined with startup pacing gain drives the
+/// pacer to tens of Gbps, overruns the bottleneck queue, and
+/// triggers loss-driven backoff to ~50 % steady-state util.
+///
+/// The first iteration of this ceiling sat at 10 Gbps — comfortably
+/// above any deployment but, in practice, *too high to bind* during
+/// startup: a single spike could push `max_bw` to the ceiling
+/// instantly, leaving the pacer sending at 10 Gbps for several
+/// seconds while the real link was 100 Mbps. Lowering to 1 Gbps
+/// brings the cap closer to the realistic envelope, reducing the
+/// startup overshoot from 100× to 10× over a 100 Mbps bottleneck
+/// while still allowing genuine LAN-gigabit transfers to fill the
+/// pipe.
+pub const MAX_BW_CEILING: f32 = 125_000_000.0;
 
 pub trait CongestionControl: Send {
     /// Called when an ACK is received.
@@ -22,13 +47,18 @@ pub trait CongestionControl: Send {
         now: Instant,
     );
 
-    /// Called when a NACK is received (fast recovery candidate).
-    fn on_nack(&mut self, now: Instant);
+    /// Called when loss is detected. `bytes_lost` is the total payload
+    /// bytes across all packets declared lost in this scan; algorithms
+    /// that count loss *events* (AIMD halve, Cubic β-multiply,
+    /// BBRv1's 8-per-round threshold) ignore the byte count, while
+    /// BBRv2's loss-rate computation uses it for accurate accounting.
+    /// Called at most once per `check_losses` scan in tox-sequenced.
+    fn on_loss(&mut self, bytes_lost: usize, now: Instant);
 
     /// Called when a retransmission timeout (RTO) occurs (slow start candidate).
     fn on_timeout(&mut self, now: Instant);
 
-    /// Current congestion window in number of fragments.
+    /// Current congestion window in bytes.
     fn cwnd(&self) -> usize;
 
     /// Current pacing rate in bytes per second.
@@ -37,8 +67,8 @@ pub trait CongestionControl: Send {
     /// Current minimum RTT estimate.
     fn min_rtt(&self) -> Duration;
 
-    /// Called when a fragment is sent.
-    fn on_fragment_sent(&mut self, bytes: usize, now: Instant);
+    /// Called when a packet is sent.
+    fn on_packet_sent(&mut self, bytes: usize, now: Instant);
 }
 
 pub mod aimd;
@@ -130,8 +160,8 @@ impl CongestionControl for Algorithm {
         dispatch!(self, on_ack, rtt, sample, bytes_acked, in_flight, now)
     }
 
-    fn on_nack(&mut self, now: Instant) {
-        dispatch!(self, on_nack, now)
+    fn on_loss(&mut self, bytes_lost: usize, now: Instant) {
+        dispatch!(self, on_loss, bytes_lost, now)
     }
 
     fn on_timeout(&mut self, now: Instant) {
@@ -150,7 +180,7 @@ impl CongestionControl for Algorithm {
         dispatch!(self, min_rtt)
     }
 
-    fn on_fragment_sent(&mut self, bytes: usize, now: Instant) {
-        dispatch!(self, on_fragment_sent, bytes, now)
+    fn on_packet_sent(&mut self, bytes: usize, now: Instant) {
+        dispatch!(self, on_packet_sent, bytes, now)
     }
 }

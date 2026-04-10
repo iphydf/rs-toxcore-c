@@ -35,6 +35,11 @@ fn benchmark_report_aggregate_score() {
             blob_completion_time_ms: Some(1000),
             total_bytes_tx: 1024,
             timed_out: false,
+            wall_clock_ms: None,
+            latency: None,
+            peak_admin_frontier: 0,
+            peak_content_frontier: 0,
+            useful_bytes: 0,
         },
         ScenarioResult {
             scenario_id: 2,
@@ -46,6 +51,11 @@ fn benchmark_report_aggregate_score() {
             blob_completion_time_ms: None,
             total_bytes_tx: 512,
             timed_out: false,
+            wall_clock_ms: None,
+            latency: None,
+            peak_admin_frontier: 0,
+            peak_content_frontier: 0,
+            useful_bytes: 0,
         },
     ];
     let report = BenchmarkReport::from_results(results);

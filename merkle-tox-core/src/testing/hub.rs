@@ -5,8 +5,39 @@ use crossbeam::channel::{Receiver, Sender, unbounded};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// Per-node traffic counters. Bytes accumulated since registration.
+/// Used by cost-measurement test harnesses; zero overhead when
+/// `record_bytes` is not called.
+#[derive(Default)]
+pub struct NodeTrafficCounters {
+    pub bytes_sent: AtomicU64,
+    pub bytes_received: AtomicU64,
+    pub packets_sent: AtomicU64,
+    pub packets_received: AtomicU64,
+}
+
+impl NodeTrafficCounters {
+    pub fn snapshot(&self) -> TrafficSnapshot {
+        TrafficSnapshot {
+            bytes_sent: self.bytes_sent.load(AtomicOrdering::Relaxed),
+            bytes_received: self.bytes_received.load(AtomicOrdering::Relaxed),
+            packets_sent: self.packets_sent.load(AtomicOrdering::Relaxed),
+            packets_received: self.packets_received.load(AtomicOrdering::Relaxed),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TrafficSnapshot {
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub packets_sent: u64,
+    pub packets_received: u64,
+}
 
 #[derive(Debug, Eq, PartialEq)]
 struct DelayedPacket {
@@ -14,12 +45,20 @@ struct DelayedPacket {
     to: PhysicalDevicePk,
     data: Vec<u8>,
     delivery_time: Instant,
+    /// Insertion sequence — secondary key so two packets with the same
+    /// delivery_time pop in FIFO order (BinaryHeap is otherwise
+    /// unspecified for tied keys, which causes simulation non-determinism).
+    insertion_seq: u64,
 }
 
 impl Ord for DelayedPacket {
     fn cmp(&self, other: &Self) -> Ordering {
-        // BinaryHeap is a max-heap, so we reverse the comparison to get a min-heap on delivery_time
-        other.delivery_time.cmp(&self.delivery_time)
+        // BinaryHeap is a max-heap, so reverse to get a min-heap on
+        // (delivery_time, insertion_seq).
+        other
+            .delivery_time
+            .cmp(&self.delivery_time)
+            .then_with(|| other.insertion_seq.cmp(&self.insertion_seq))
     }
 }
 
@@ -68,6 +107,15 @@ pub struct VirtualHub {
     time_provider: Arc<dyn TimeProvider>,
     /// Seeded RNG for deterministic simulation.
     rng: Mutex<StdRng>,
+    /// Per-link bandwidth limit in bits per second. None = unlimited.
+    bandwidth_bps: Mutex<Option<f64>>,
+    /// Next time each directional link (from, to) becomes free after current transmission.
+    link_free_time: Mutex<HashMap<(PhysicalDevicePk, PhysicalDevicePk), Instant>>,
+    /// Monotonic counter for DelayedPacket FIFO tiebreaking.
+    next_insertion_seq: Mutex<u64>,
+    /// Per-node traffic counters (lazily allocated on first send/receive
+    /// from that node). For cost-measurement instrumentation.
+    traffic: Mutex<HashMap<PhysicalDevicePk, Arc<NodeTrafficCounters>>>,
 }
 
 impl VirtualHub {
@@ -84,7 +132,47 @@ impl VirtualHub {
             latency: Mutex::new(Duration::ZERO),
             time_provider,
             rng: Mutex::new(StdRng::seed_from_u64(4)),
+            bandwidth_bps: Mutex::new(None),
+            link_free_time: Mutex::new(HashMap::new()),
+            next_insertion_seq: Mutex::new(0),
+            traffic: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Get (creating if absent) the traffic-counter handle for a node.
+    fn counters_for(&self, pk: &PhysicalDevicePk) -> Arc<NodeTrafficCounters> {
+        let mut t = self.traffic.lock().unwrap();
+        t.entry(*pk)
+            .or_insert_with(|| Arc::new(NodeTrafficCounters::default()))
+            .clone()
+    }
+
+    /// Snapshot the current traffic counters for a node. Returns
+    /// `TrafficSnapshot::default()` (all zeros) if the node never
+    /// sent or received.
+    pub fn traffic_snapshot(&self, pk: &PhysicalDevicePk) -> TrafficSnapshot {
+        let t = self.traffic.lock().unwrap();
+        t.get(pk)
+            .map(|c| c.snapshot())
+            .unwrap_or_default()
+    }
+
+    /// Reset all traffic counters. Useful for measuring a specific
+    /// window of activity (e.g., after warmup is complete).
+    pub fn reset_traffic(&self) {
+        for c in self.traffic.lock().unwrap().values() {
+            c.bytes_sent.store(0, AtomicOrdering::Relaxed);
+            c.bytes_received.store(0, AtomicOrdering::Relaxed);
+            c.packets_sent.store(0, AtomicOrdering::Relaxed);
+            c.packets_received.store(0, AtomicOrdering::Relaxed);
+        }
+    }
+
+    fn next_seq(&self) -> u64 {
+        let mut s = self.next_insertion_seq.lock().unwrap();
+        let seq = *s;
+        *s += 1;
+        seq
     }
 
     /// Sets the seed for the internal RNG.
@@ -97,6 +185,12 @@ impl VirtualHub {
         *self.loss_model.lock().unwrap() = LossModel::Uniform { probability: loss };
         *self.latency.lock().unwrap() = latency;
         *self.jitter.lock().unwrap() = jitter;
+    }
+
+    /// Sets the per-link bandwidth limit. None = unlimited.
+    pub fn set_bandwidth(&self, bps: Option<f64>) {
+        *self.bandwidth_bps.lock().unwrap() = bps;
+        self.link_free_time.lock().unwrap().clear();
     }
 
     /// Sets a specific loss model.
@@ -169,6 +263,19 @@ impl VirtualHub {
 
     /// Routes a packet from one virtual node to another, applying impairments.
     pub fn route(&self, from: PhysicalDevicePk, to: PhysicalDevicePk, data: Vec<u8>) {
+        // Instrumentation: count bytes attempted out from `from` regardless
+        // of whether they reach `to`. This captures the bandwidth a
+        // realistic device would actually emit, including packets
+        // ultimately dropped by impairments — same as real-world cost.
+        let sender_counters = self.counters_for(&from);
+        let data_len = data.len() as u64;
+        sender_counters
+            .bytes_sent
+            .fetch_add(data_len, AtomicOrdering::Relaxed);
+        sender_counters
+            .packets_sent
+            .fetch_add(1, AtomicOrdering::Relaxed);
+
         let now = self.time_provider.now_instant();
 
         // 1. Blackout Engine
@@ -221,9 +328,46 @@ impl VirtualHub {
         };
         drop(rng); // Release RNG lock before potentially routing/queueing
 
-        if latency.is_zero() {
+        // 5. Bandwidth serialization
+        let bandwidth = *self.bandwidth_bps.lock().unwrap();
+        if let Some(bps) = bandwidth {
+            let transmission_secs = (data.len() * 8) as f64 / bps;
+            let transmission_duration = Duration::from_secs_f64(transmission_secs);
+
+            let mut link_free = self.link_free_time.lock().unwrap();
+            let link_key = (from, to);
+            let link_free_time = link_free.get(&link_key).copied().unwrap_or(now);
+            let departure = if link_free_time > now { link_free_time } else { now };
+            let delivery_time = departure + transmission_duration + latency;
+            link_free.insert(link_key, departure + transmission_duration);
+            drop(link_free);
+
+            let insertion_seq = self.next_seq();
+            self.queue.lock().unwrap().push(DelayedPacket {
+                from,
+                to,
+                data,
+                delivery_time,
+                insertion_seq,
+            });
+        } else if latency.is_zero() {
+            let data_len = data.len() as u64;
             let nodes = self.nodes.lock().unwrap();
             if let Some(tx) = nodes.get(&to) {
+                // Instrumentation: count delivery in the latency==0
+                // fast path (same as the poll()-based path below).
+                let receiver_counters = {
+                    let mut t = self.traffic.lock().unwrap();
+                    t.entry(to)
+                        .or_insert_with(|| Arc::new(NodeTrafficCounters::default()))
+                        .clone()
+                };
+                receiver_counters
+                    .bytes_received
+                    .fetch_add(data_len, AtomicOrdering::Relaxed);
+                receiver_counters
+                    .packets_received
+                    .fetch_add(1, AtomicOrdering::Relaxed);
                 let _ = tx.send((from, data));
             } else {
                 // Promotion: Send to Gateway if destination is unknown
@@ -233,11 +377,13 @@ impl VirtualHub {
                 }
             }
         } else {
+            let insertion_seq = self.next_seq();
             self.queue.lock().unwrap().push(DelayedPacket {
                 from,
                 to,
                 data,
                 delivery_time: now + latency,
+                insertion_seq,
             });
         }
     }
@@ -252,7 +398,23 @@ impl VirtualHub {
         while let Some(pkt) = queue.peek() {
             if now >= pkt.delivery_time {
                 let pkt = queue.pop().unwrap();
+                let data_len = pkt.data.len() as u64;
                 if let Some(tx) = nodes.get(&pkt.to) {
+                    // Instrumentation: count bytes received by `to` when
+                    // delivery succeeds. Mirrors send-side counting in
+                    // `route()`.
+                    let receiver_counters = {
+                        let mut t = self.traffic.lock().unwrap();
+                        t.entry(pkt.to)
+                            .or_insert_with(|| Arc::new(NodeTrafficCounters::default()))
+                            .clone()
+                    };
+                    receiver_counters
+                        .bytes_received
+                        .fetch_add(data_len, AtomicOrdering::Relaxed);
+                    receiver_counters
+                        .packets_received
+                        .fetch_add(1, AtomicOrdering::Relaxed);
                     let _ = tx.send((pkt.from, pkt.data));
                 } else if let Some(gtx) = gateway.as_ref() {
                     // Promotion: Send to Gateway if destination is unknown

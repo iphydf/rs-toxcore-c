@@ -5,15 +5,22 @@ use crate::dag::{
 use crate::error::MerkleToxResult;
 use std::time::Duration;
 use tox_proto::ToxProto;
+use tox_proto::constants::{MAX_BATCH_SIZE, MAX_HEADS_SYNC};
 pub use tox_reconcile::{SyncRange, Tier};
 
 /// Advertises current DAG tips to peer.
+///
+/// `heads` is bounded by `MAX_HEADS_SYNC = 64` at the type level: a
+/// peer cannot send a `SyncHeads` whose declared `heads` array
+/// exceeds the cap (the deserialiser rejects the whole packet
+/// before allocating). This makes the cap a structural property of
+/// the wire type rather than a writer-side discipline.
 #[derive(Debug, Clone, ToxProto, PartialEq, Eq)]
 pub struct SyncHeads {
     /// Conversation ID (Genesis Hash).
     pub conversation_id: ConversationId,
-    /// Current DAG heads.
-    pub heads: Vec<NodeHash>,
+    /// Current DAG heads, capped at `MAX_HEADS_SYNC`.
+    pub heads: tox_proto::BoundedVec<NodeHash, MAX_HEADS_SYNC>,
     /// Flags indicating local capabilities (e.g., seeding blobs).
     pub flags: u64,
     /// Hash of earliest known admin head (for 500-hop trust bridging).
@@ -21,10 +28,13 @@ pub struct SyncHeads {
 }
 
 /// Request for batch of nodes by hash.
+///
+/// `hashes` is bounded by `MAX_BATCH_SIZE` at the type level. See
+/// `SyncHeads` for the rationale.
 #[derive(Debug, Clone, ToxProto, PartialEq, Eq)]
 pub struct FetchBatchReq {
     pub conversation_id: ConversationId,
-    pub hashes: Vec<NodeHash>,
+    pub hashes: tox_proto::BoundedVec<NodeHash, MAX_BATCH_SIZE>,
 }
 
 pub const FLAG_CAS_INVENTORY: u64 = 0x01;
@@ -212,14 +222,6 @@ pub trait BlobStore: Send + Sync {
 
     /// Reads data chunk from blob.
     fn get_chunk(&self, hash: &NodeHash, offset: u64, length: u32) -> MerkleToxResult<Vec<u8>>;
-
-    /// Reads data chunk with corresponding Bao proof.
-    fn get_chunk_with_proof(
-        &self,
-        hash: &NodeHash,
-        offset: u64,
-        length: u32,
-    ) -> MerkleToxResult<(Vec<u8>, Vec<u8>)>;
 }
 
 /// Trait for persisting reconciliation sketches (e.g., IBLTs).

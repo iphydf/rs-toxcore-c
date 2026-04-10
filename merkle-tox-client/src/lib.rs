@@ -666,8 +666,11 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
         target_hash: NodeHash,
         emoji: EmojiSource,
     ) -> MerkleToxResult<NodeHash> {
-        self.author_node(Content::Reaction { target_hash, emoji }, Vec::new())
-            .await
+        self.author_node(
+            Content::Reaction { target_hash, emoji },
+            Vec::new(),
+        )
+        .await
     }
 
     /// Redacts a previous message.
@@ -840,7 +843,6 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
             let info = merkle_tox_core::cas::BlobInfo {
                 hash: blob_hash,
                 size,
-                bao_root: None, // Simplified: no outboard proof for small/medium blobs
                 status: merkle_tox_core::cas::BlobStatus::Available,
                 received_mask: None,
                 decryption_key: None,
@@ -866,7 +868,7 @@ impl<T: Transport + 'static, S: NodeStore + BlobStore + 'static> MerkleToxClient
                 name,
                 mime_type,
                 size,
-                metadata: Vec::new(),
+                metadata: tox_proto::BoundedBytes::new(),
             },
             Vec::new(),
         )

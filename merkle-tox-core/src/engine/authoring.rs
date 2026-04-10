@@ -121,7 +121,7 @@ impl MerkleToxEngine {
                 .get(&conversation_id)
                 .copied()
                 .unwrap_or_else(|| NodeHash::from(*conversation_id.as_bytes())),
-            wrapped_keys: vec![wrapped],
+            wrapped_keys: tox_proto::bounded_vec![wrapped],
             ephemeral_pk: e_a_pk,
         };
 
@@ -458,6 +458,21 @@ impl MerkleToxEngine {
                 (use_epoch_id << 32) | 1
             };
 
+            // The DAG invariant keeps `parents` well below MAX_PARENTS
+            // for realistic conversations; truncating defensively at
+            // the cap is preferable to panicking on a pathological
+            // partition+heal frontier.
+            let parents = tox_proto::BoundedVec::try_from_iter(
+                parents.into_iter().take(crate::dag::MAX_PARENTS),
+            )
+            .expect("take(MAX_PARENTS) bounds iterator at cap");
+
+            let metadata_bounded = tox_proto::BoundedBytes::try_from_vec(metadata).map_err(|_| {
+                MerkleToxError::Validation(crate::dag::ValidationError::MaxMetadataExceeded {
+                    actual: 0,
+                    max: crate::dag::MAX_METADATA_SIZE,
+                })
+            })?;
             let mut node = MerkleNode {
                 parents,
                 author_pk,
@@ -466,7 +481,7 @@ impl MerkleToxEngine {
                 topological_rank,
                 network_timestamp: now,
                 content,
-                metadata,
+                metadata: metadata_bounded,
                 authentication: NodeAuth::EphemeralSignature(crate::dag::Ed25519Signature::from(
                     [0u8; 64],
                 )), // Placeholder
@@ -613,13 +628,17 @@ impl MerkleToxEngine {
                                         SenderKey::from(
                                             *crate::crypto::ratchet_init_sender(
                                                 &k_conv,
+                                                &conversation_id,
                                                 &node.sender_pk,
                                             )
                                             .as_bytes(),
                                         )
                                     });
-                                let k_header =
-                                    crate::crypto::derive_k_header_epoch(&k_conv, &sender_key);
+                                let k_header = crate::crypto::derive_k_header_epoch(
+                                    &k_conv,
+                                    &conversation_id,
+                                    &sender_key,
+                                );
                                 let mut routing_nonce = [0u8; 12];
                                 let mut payload_nonce = [0u8; 12];
                                 self.rng.lock().fill_bytes(&mut routing_nonce);
@@ -742,13 +761,17 @@ impl MerkleToxEngine {
                                     SenderKey::from(
                                         *crate::crypto::ratchet_init_sender(
                                             &k_conv,
+                                            &conversation_id,
                                             &node.sender_pk,
                                         )
                                         .as_bytes(),
                                     )
                                 });
-                            let k_header =
-                                crate::crypto::derive_k_header_epoch(&k_conv, &sender_key);
+                            let k_header = crate::crypto::derive_k_header_epoch(
+                                &k_conv,
+                                &conversation_id,
+                                &sender_key,
+                            );
                             let mut routing_nonce = [0u8; 12];
                             let mut payload_nonce = [0u8; 12];
                             self.rng.lock().fill_bytes(&mut routing_nonce);
@@ -853,9 +876,26 @@ impl MerkleToxEngine {
     ) -> MerkleToxResult<Vec<Effect>> {
         self.clear_pending();
 
-        let mut pre_keys = Vec::new();
-        // Generate 5 fresh ephemeral pre-keys
-        for _ in 0..5 {
+        let mut pre_keys: tox_proto::BoundedVec<
+            crate::dag::SignedPreKey,
+            { tox_proto::constants::MAX_HANDSHAKES_PER_ANNOUNCEMENT as usize },
+        > = tox_proto::BoundedVec::new();
+        // Generate 64 fresh ephemeral pre-keys. Per the consumption
+        // convention in `engine/mod.rs::consume_recipient_opk`, the
+        // first entry is treated as the SPK (never consumed) and
+        // entries [1..] are OPKs (consumed on each X3DH handshake); 64
+        // entries thus provide 1 SPK + 63 OPKs. The cap is 100
+        // (`MAX_HANDSHAKES_PER_ANNOUNCEMENT`); 64 leaves headroom while
+        // protecting forward secrecy for users who go offline with
+        // pending inbound handshakes. At the prior pool=5 (1 SPK + 4
+        // OPKs), a typical user returning after ~30 days with ~8
+        // pending inbound handshakes falls back to `last_resort_key`
+        // for 4 of them, compromising FS for those handshakes; at
+        // pool=64 the typical case never exhausts. Regression-guarded
+        // by `tests/announcement_opk_pool_test.rs`. See
+        // `doc/planning/constants-cost-reference.md` §2 for the
+        // analysis.
+        for _ in 0..64 {
             let mut sk_bytes = [0u8; 32];
             self.rng.lock().fill_bytes(&mut sk_bytes);
             let sk = EphemeralX25519Sk::from(sk_bytes);
@@ -875,11 +915,13 @@ impl MerkleToxEngine {
                 return Err(MerkleToxError::Crypto("Missing identity key".to_string()));
             };
 
-            pre_keys.push(crate::dag::SignedPreKey {
-                public_key: pk,
-                signature,
-                expires_at: self.clock.network_time_ms() + 30 * 24 * 60 * 60 * 1000, // 30 days
-            });
+            pre_keys
+                .try_push(crate::dag::SignedPreKey {
+                    public_key: pk,
+                    signature,
+                    expires_at: self.clock.network_time_ms() + 30 * 24 * 60 * 60 * 1000, // 30 days
+                })
+                .expect("64 pre_keys, well under cap of MAX_HANDSHAKES_PER_ANNOUNCEMENT (100)");
         }
 
         // Last resort key
@@ -1004,7 +1046,7 @@ impl MerkleToxEngine {
                     .map(|k| &k.k_conv)
                     .cloned()
                     .unwrap_or_else(|| KConv::from([0u8; 32]));
-                crate::crypto::derive_k_header_epoch(&k_conv, &sender_key)
+                crate::crypto::derive_k_header_epoch(&k_conv, &conversation_id, &sender_key)
             } else {
                 crate::dag::HeaderKey::from([0u8; 32])
             };
@@ -1038,7 +1080,7 @@ impl MerkleToxEngine {
 
         let self_dh_sk_bytes = self.self_dh_sk.as_ref().map(|sk| *sk.as_bytes());
 
-        let mut wrapped_keys = Vec::new();
+        let mut wrapped_keys: Vec<crate::dag::WrappedKey> = Vec::new();
         for recipient_pk in recipients {
             if recipient_pk == self.self_pk {
                 continue;
@@ -1076,9 +1118,9 @@ impl MerkleToxEngine {
 
         let content = Content::SenderKeyDistribution {
             ephemeral_pk: skd_e_pk,
-            wrapped_keys,
+            wrapped_keys: tox_proto::BoundedVec::try_from_iter(wrapped_keys).expect("recipient set bounded by MAX_GROUP_DEVICES"),
             ephemeral_signing_pk,
-            disclosed_keys: vec![], // No signing key rotation for sender rekey
+            disclosed_keys: tox_proto::BoundedVec::new(), // No signing key rotation for sender rekey
         };
 
         self.author_node_internal(
@@ -1158,7 +1200,7 @@ impl MerkleToxEngine {
         ));
 
         // 3. Create KeyWrap nodes for all authorized devices (bootstraps the NEW generation)
-        let mut wrapped_keys = Vec::new();
+        let mut wrapped_keys: Vec<crate::dag::WrappedKey> = Vec::new();
         let k_conv_bytes = {
             let em = match self.conversations.get(&conversation_id).unwrap() {
                 Conversation::Established(em) => em,
@@ -1239,7 +1281,7 @@ impl MerkleToxEngine {
                 Content::KeyWrap {
                     generation: new_generation,
                     anchor_hash,
-                    wrapped_keys,
+                    wrapped_keys: tox_proto::BoundedVec::try_from_iter(wrapped_keys).expect("recipient set bounded by MAX_GROUP_DEVICES"),
                     ephemeral_pk: e_pk,
                 },
                 Vec::new(),
@@ -1336,7 +1378,7 @@ impl MerkleToxEngine {
                     .map(|k| &k.k_conv)
                     .cloned()
                     .unwrap_or_else(|| KConv::from([0u8; 32]));
-                crate::crypto::derive_k_header_epoch(&k_conv, &sender_key)
+                crate::crypto::derive_k_header_epoch(&k_conv, &conversation_id, &sender_key)
             } else {
                 crate::dag::HeaderKey::from([0u8; 32])
             };
@@ -1372,7 +1414,7 @@ impl MerkleToxEngine {
         // Compute our own X25519 secret for auth_secret computation.
         let self_dh_sk_bytes = self.self_dh_sk.as_ref().map(|sk| *sk.as_bytes());
 
-        let mut wrapped_keys = Vec::new();
+        let mut wrapped_keys: Vec<crate::dag::WrappedKey> = Vec::new();
         for recipient_pk in recipients {
             if recipient_pk == self.self_pk {
                 continue;
@@ -1411,9 +1453,10 @@ impl MerkleToxEngine {
 
         let content = Content::SenderKeyDistribution {
             ephemeral_pk: skd_e_pk,
-            wrapped_keys,
+            wrapped_keys: tox_proto::BoundedVec::try_from_iter(wrapped_keys).expect("recipient set bounded by MAX_GROUP_DEVICES"),
             ephemeral_signing_pk,
-            disclosed_keys,
+            disclosed_keys: tox_proto::BoundedVec::try_from_iter(disclosed_keys)
+                .expect("disclosed-key set bounded by MAX_GROUP_DEVICES"),
         };
 
         self.author_node_internal(
@@ -1460,7 +1503,11 @@ impl MerkleToxEngine {
                 let keys = em.get_keys(epoch).ok_or_else(|| {
                     MerkleToxError::Other("No keys for current epoch".to_string())
                 })?;
-                let init = crate::crypto::ratchet_init_sender(&keys.k_conv, &self.self_pk);
+                let init = crate::crypto::ratchet_init_sender(
+                    &keys.k_conv,
+                    &conversation_id,
+                    &self.self_pk,
+                );
                 (epoch << 32, init)
             }
         } else {
@@ -1483,11 +1530,19 @@ impl MerkleToxEngine {
                         .cloned()
                         .unwrap_or_else(|| {
                             SenderKey::from(
-                                *crate::crypto::ratchet_init_sender(&keys.k_conv, &self.self_pk)
-                                    .as_bytes(),
+                                *crate::crypto::ratchet_init_sender(
+                                    &keys.k_conv,
+                                    &conversation_id,
+                                    &self.self_pk,
+                                )
+                                .as_bytes(),
                             )
                         });
-                    crate::crypto::derive_k_header_epoch(&keys.k_conv, &sender_key)
+                    crate::crypto::derive_k_header_epoch(
+                        &keys.k_conv,
+                        &conversation_id,
+                        &sender_key,
+                    )
                 }
             } else {
                 return Ok(Vec::new());
@@ -1512,7 +1567,7 @@ impl MerkleToxEngine {
         let self_dh_sk_bytes = self.self_dh_sk.as_ref().map(|sk| *sk.as_bytes());
 
         // Wrap JIT payload for each target device
-        let mut wrapped_keys = Vec::new();
+        let mut wrapped_keys: Vec<crate::dag::WrappedKey> = Vec::new();
         for recipient_pk in &target_devices {
             let spk = self.resolve_recipient_spk(recipient_pk);
             let (opk, opk_id) = self
@@ -1558,9 +1613,9 @@ impl MerkleToxEngine {
 
         let content = Content::SenderKeyDistribution {
             ephemeral_pk: jit_e_pk,
-            wrapped_keys,
+            wrapped_keys: tox_proto::BoundedVec::try_from_iter(wrapped_keys).expect("recipient set bounded by MAX_GROUP_DEVICES"),
             ephemeral_signing_pk,
-            disclosed_keys: vec![], // JIT has no disclosed keys
+            disclosed_keys: tox_proto::BoundedVec::new(), // JIT has no disclosed keys
         };
 
         self.author_node_internal(conversation_id, content, Vec::new(), store, Some(epoch))
@@ -1590,7 +1645,6 @@ impl MerkleToxEngine {
         conversation_id: ConversationId,
         blob_hash: NodeHash,
         blob_size: u64,
-        bao_root: Option<[u8; 32]>,
         store: &dyn NodeStore,
     ) -> MerkleToxResult<Vec<Effect>> {
         match self.conversations.get(&conversation_id) {
@@ -1617,7 +1671,7 @@ impl MerkleToxEngine {
         );
 
         // Encrypt K_export for our other authorized devices using ECIES.
-        let mut wrapped_keys = Vec::new();
+        let mut wrapped_keys: Vec<crate::dag::WrappedKey> = Vec::new();
         {
             let dummy_ctx = crate::identity::CausalContext {
                 evaluating_node_hash: crate::dag::NodeHash::from([0u8; 32]),
@@ -1649,10 +1703,9 @@ impl MerkleToxEngine {
 
         let content = Content::HistoryExport {
             blob_hash,
-            blob_size,
-            bao_root,
+            blob_size: tox_proto::Untrusted::new(blob_size),
             ephemeral_pk: he_pk,
-            wrapped_keys,
+            wrapped_keys: tox_proto::BoundedVec::try_from_iter(wrapped_keys).expect("recipient set bounded by MAX_GROUP_DEVICES"),
         };
 
         self.author_node(conversation_id, content, Vec::new(), store)
@@ -1670,25 +1723,37 @@ impl MerkleToxEngine {
         }
         let basis_hash = heads[0]; // Simplified
 
-        let members = self
-            .identity_manager
-            .list_members(conversation_id)
-            .into_iter()
-            .map(|(pk, role, joined)| crate::dag::MemberInfo {
-                public_key: pk,
-                role,
-                joined_at: joined,
-            })
-            .collect();
+        // identity_manager respects `MAX_GROUP_DEVICES` at insertion
+        // (see `identity.rs::add_member` and `:574` device-count
+        // guard); the `take(MAX_GROUP_DEVICES)` here is paranoia for
+        // future maintainers, since `try_from_iter` would otherwise
+        // panic if a future identity-rule change weakens the
+        // invariant — surfacing the bug at its source.
+        let members = tox_proto::BoundedVec::try_from_iter(
+            self.identity_manager
+                .list_members(conversation_id)
+                .into_iter()
+                .take(tox_proto::constants::MAX_GROUP_DEVICES)
+                .map(|(pk, role, joined)| crate::dag::MemberInfo {
+                    public_key: pk,
+                    role,
+                    joined_at: joined,
+                }),
+        )
+        .expect("identity_manager bounded at MAX_GROUP_DEVICES");
 
-        let mut last_seq_numbers = Vec::new();
+        let mut last_seq_numbers: Vec<(crate::dag::PhysicalDevicePk, u64)> = Vec::new();
         for dev_pk in self
             .identity_manager
             .list_authorized_devices(conversation_id)
+            .into_iter()
+            .take(tox_proto::constants::MAX_GROUP_DEVICES)
         {
             let seq = store.get_last_sequence_number(&conversation_id, &dev_pk);
             last_seq_numbers.push((dev_pk, seq));
         }
+        let last_seq_numbers = tox_proto::BoundedVec::try_from_iter(last_seq_numbers)
+            .expect("authorized devices bounded at MAX_GROUP_DEVICES");
 
         let content = Content::Control(ControlAction::Snapshot(crate::dag::SnapshotData {
             basis_hash,

@@ -1,11 +1,12 @@
 use merkle_tox_core::ProtocolMessage;
 use merkle_tox_core::clock::ManualTimeProvider;
 use merkle_tox_core::dag::{
-    Content, ConversationId, Ed25519Signature, LogicalIdentityPk, MerkleNode, NodeAuth, NodeHash,
-    PhysicalDevicePk, WireFlags,
+    Content, ConversationId, Ed25519Signature, KConv, LogicalIdentityPk, MerkleNode, NodeAuth,
+    NodeHash, PhysicalDevicePk, WireFlags,
 };
+use merkle_tox_core::engine::conversation::{ConversationData, Established};
 use merkle_tox_core::engine::session::{Handshake, PeerSession, SyncSession};
-use merkle_tox_core::engine::{Effect, MerkleToxEngine};
+use merkle_tox_core::engine::{Conversation, Effect, MerkleToxEngine};
 use merkle_tox_core::sync::{NodeStore, RECONCILIATION_INTERVAL};
 use merkle_tox_core::testing::InMemoryStore;
 use rand::SeedableRng;
@@ -15,12 +16,24 @@ use std::time::{Duration, Instant};
 fn make_engine(now: Instant) -> (MerkleToxEngine, Arc<ManualTimeProvider>, PhysicalDevicePk) {
     let tp = Arc::new(ManualTimeProvider::new(now, 0));
     let self_pk = PhysicalDevicePk::from([0u8; 32]);
-    let engine = MerkleToxEngine::new(
+    let mut engine = MerkleToxEngine::new(
         self_pk,
         self_pk.to_logical(),
         rand::rngs::StdRng::seed_from_u64(42),
         tp.clone(),
     );
+    // The Sync* / MerkleNode handlers now drop messages naming a
+    // conversation we have not joined locally. Every test in this
+    // file uses `conv_id = [1u8; 32]`, so seed that conversation up
+    // front to keep the existing fixtures focused on the protocol
+    // behaviour they cover (rate-limit, reconciliation, sketch CPU
+    // budgets, etc.).
+    let conv_id = ConversationId::from([1u8; 32]);
+    let established =
+        ConversationData::<Established>::new(conv_id, KConv::from([0x11u8; 32]), 1000);
+    engine
+        .conversations
+        .insert(conv_id, Conversation::Established(established));
     (engine, tp, self_pk)
 }
 
@@ -52,7 +65,7 @@ fn test_rate_limited_pauses_recon() {
             peer_pk,
             ProtocolMessage::SyncRateLimited {
                 conversation_id: conv_id,
-                retry_after_ms: 5000,
+                retry_after_ms: tox_proto::Untrusted::new(5000),
             },
             &store,
             None,
@@ -70,7 +83,7 @@ fn test_rate_limited_pauses_recon() {
         s.common.heads_dirty = false;
         s.common.recon_dirty = true;
     }
-    let effects = engine.poll(now, &store).unwrap();
+    let effects = engine.poll(now, &store, None).unwrap();
     // No SyncShardChecksums should be emitted (recon is paused)
     let has_shard_checksums = effects.iter().any(|e| {
         matches!(
@@ -109,7 +122,7 @@ fn test_rate_limited_expires() {
             peer_pk,
             ProtocolMessage::SyncRateLimited {
                 conversation_id: conv_id,
-                retry_after_ms: 1000,
+                retry_after_ms: tox_proto::Untrusted::new(1000),
             },
             &store,
             None,
@@ -125,7 +138,7 @@ fn test_rate_limited_expires() {
         s.common.last_recon_time = now - RECONCILIATION_INTERVAL - Duration::from_secs(1);
     }
 
-    let effects = engine.poll(later, &store).unwrap();
+    let effects = engine.poll(later, &store, None).unwrap();
 
     // Rate limit expired, so recon should proceed (SyncShardChecksums emitted)
     let has_shard_checksums = effects.iter().any(|e| {
@@ -142,6 +155,130 @@ fn test_rate_limited_expires() {
     // rate_limited_until should be cleared
     let session = engine.sessions.get(&(peer_pk, conv_id)).unwrap();
     assert!(session.common().rate_limited_until.is_none());
+}
+
+/// §3.3b Sketch-spam adversarial coverage: when a peer has exhausted its
+/// per-peer sketch CPU budget, the responder must emit `SyncRateLimited`
+/// and must NOT process the sketch (no SyncShardChecksums, no PoW challenge
+/// for sub-Medium sketches). Verifies the token-bucket mitigation is wired
+/// end-to-end, not just present as a struct.
+#[test]
+fn test_sketch_spam_triggers_rate_limited_when_budget_exhausted() {
+    use merkle_tox_core::engine::CpuBudget;
+    use tox_reconcile::{IbltCell, SyncRange, SyncSketch};
+
+    let now = Instant::now();
+    let (mut engine, _tp, _self_pk) = make_engine(now);
+    let store = InMemoryStore::new();
+    let conv_id = ConversationId::from([1u8; 32]);
+    let peer_pk = PhysicalDevicePk::from([2u8; 32]);
+
+    // Simulate an attacker that has already drained the per-peer budget by
+    // flooding sketches. A drained CpuBudget is the observable state the
+    // handler should react to.
+    let mut drained = CpuBudget::new(0);
+    drained.remaining_ms = 0.0;
+    engine.sketch_cpu_budgets.insert(peer_pk, drained);
+
+    // A Small sketch (≤64 cells) skips the PoW gate and goes directly to
+    // the budget check — the exact path an attacker would flood.
+    let sketch = SyncSketch {
+        conversation_id: conv_id,
+        cells: tox_proto::BoundedVec::try_from_iter(std::iter::repeat_n(IbltCell::default(), 64)).expect("under MAX_SKETCH_CELLS"),
+        range: SyncRange {
+            min_rank: 0,
+            max_rank: 100,
+        },
+    };
+
+    let effects = engine
+        .handle_message(peer_pk, ProtocolMessage::SyncSketch(sketch), &store, None)
+        .unwrap();
+
+    let rate_limited = effects.iter().any(|e| {
+        matches!(
+            e,
+            Effect::SendPacket(p, ProtocolMessage::SyncRateLimited { .. }) if *p == peer_pk,
+        )
+    });
+    assert!(
+        rate_limited,
+        "exhausted sketch budget must produce a SyncRateLimited backoff; \
+         otherwise the per-peer CPU cap from merkle-tox-threat-model.md §3.3b \
+         provides no real defense"
+    );
+
+    let processed = effects.iter().any(|e| {
+        matches!(
+            e,
+            Effect::SendPacket(
+                _,
+                ProtocolMessage::SyncShardChecksums { .. }
+                    | ProtocolMessage::ReconPowChallenge { .. }
+                    | ProtocolMessage::FetchBatchReq(_),
+            )
+        )
+    });
+    assert!(
+        !processed,
+        "sketch must not be processed when budget is exhausted"
+    );
+}
+
+/// Companion to the sketch-spam test: once the refill window has elapsed, a
+/// previously-rate-limited peer must be accepted again. Verifies the token
+/// bucket recovers rather than permanently locking out the peer — legitimate
+/// peers must not be stuck behind an exhausted budget.
+#[test]
+fn test_sketch_budget_refills_after_window() {
+    use merkle_tox_core::engine::CpuBudget;
+    use tox_reconcile::{IbltCell, SyncRange, SyncSketch};
+
+    let now = Instant::now();
+    let tp = Arc::new(ManualTimeProvider::new(now, 0));
+    let self_pk = PhysicalDevicePk::from([0u8; 32]);
+    let mut engine = MerkleToxEngine::new(
+        self_pk,
+        self_pk.to_logical(),
+        rand::rngs::StdRng::seed_from_u64(42),
+        tp.clone(),
+    );
+    let store = InMemoryStore::new();
+    let conv_id = ConversationId::from([1u8; 32]);
+    let peer_pk = PhysicalDevicePk::from([2u8; 32]);
+
+    // Start with an exhausted budget, pinned to now_ms = 0.
+    let mut drained = CpuBudget::new(0);
+    drained.remaining_ms = 0.0;
+    engine.sketch_cpu_budgets.insert(peer_pk, drained);
+
+    // Advance the virtual clock past the refill window so the bucket refills
+    // to full.
+    tp.advance(Duration::from_millis(
+        tox_proto::constants::SKETCH_CPU_WINDOW_MS as u64 + 1_000,
+    ));
+
+    let sketch = SyncSketch {
+        conversation_id: conv_id,
+        cells: tox_proto::BoundedVec::try_from_iter(std::iter::repeat_n(IbltCell::default(), 64)).expect("under MAX_SKETCH_CELLS"),
+        range: SyncRange {
+            min_rank: 0,
+            max_rank: 100,
+        },
+    };
+
+    let effects = engine
+        .handle_message(peer_pk, ProtocolMessage::SyncSketch(sketch), &store, None)
+        .unwrap();
+
+    let rate_limited = effects.iter().any(|e| {
+        matches!(e, Effect::SendPacket(_, ProtocolMessage::SyncRateLimited { .. }))
+    });
+    assert!(
+        !rate_limited,
+        "after the refill window elapses the budget must recover; legitimate \
+         peers must not stay locked out forever"
+    );
 }
 
 // --- Gap 2: Shallow Sync "Last N Messages" ---
@@ -184,14 +321,14 @@ fn test_shallow_last_n() {
 
     for i in 0..4u8 {
         let node = MerkleNode {
-            parents: vec![NodeHash::from([i + 0x10; 32])],
+            parents: tox_proto::bounded_vec![NodeHash::from([i + 0x10; 32])],
             author_pk: LogicalIdentityPk::from([0u8; 32]),
             sender_pk: PhysicalDevicePk::from([0u8; 32]),
             sequence_number: (i + 1) as u64,
             topological_rank: 100 - i as u64,
             network_timestamp: 1000 + i as i64,
             content: Content::Text(format!("msg {}", i)),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
             pow_nonce: 0,
         };
@@ -255,7 +392,7 @@ fn test_gossip_broadcast() {
 
     // First poll at now: gossip has never been sent, so it should fire
     // (default last_gossip_time is now - GOSSIP_INTERVAL)
-    let effects = engine.poll(now, &store).unwrap();
+    let effects = engine.poll(now, &store, None).unwrap();
     let sketch_count = effects
         .iter()
         .filter(|e| matches!(e, Effect::SendPacket(_, ProtocolMessage::SyncSketch(_))))
@@ -275,7 +412,7 @@ fn test_gossip_broadcast() {
     }
 
     // Poll again immediately. Should NOT resend gossip
-    let effects2 = engine.poll(now + Duration::from_secs(1), &store).unwrap();
+    let effects2 = engine.poll(now + Duration::from_secs(1), &store, None).unwrap();
     let sketch_count2 = effects2
         .iter()
         .filter(|e| matches!(e, Effect::SendPacket(_, ProtocolMessage::SyncSketch(_))))
@@ -302,11 +439,11 @@ fn test_hot_cold_fetch_priority() {
 
     // Fetch batch of 1: should get hot first
     let batch = session.next_fetch_batch(1).unwrap();
-    assert_eq!(batch.hashes, vec![hot_hash]);
+    assert_eq!(batch.hashes.as_slice(), &[hot_hash]);
 
     // Fetch batch of 1 again: now cold
     let batch = session.next_fetch_batch(1).unwrap();
-    assert_eq!(batch.hashes, vec![cold_hash]);
+    assert_eq!(batch.hashes.as_slice(), &[cold_hash]);
 
     // Both queues should be empty now
     assert!(session.common.missing_nodes_hot.is_empty());
@@ -320,14 +457,14 @@ fn test_enqueue_missing_classification() {
 
     // Create a node at rank 2000 to serve as a head
     let head_node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 1,
         topological_rank: 2000,
         network_timestamp: 1000,
         content: Content::Text("head".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -366,14 +503,14 @@ fn test_cold_first_eviction() {
 
     // Create a head node at rank 2000
     let head_node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 1,
         topological_rank: 2000,
         network_timestamp: 1000,
         content: Content::Text("head".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -383,14 +520,14 @@ fn test_cold_first_eviction() {
 
     // Create a cold node (rank 500, far below HOT_WINDOW of 1000 from head 2000)
     let cold_node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 2,
         topological_rank: 500,
         network_timestamp: 500,
         content: Content::Text("cold".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -399,14 +536,14 @@ fn test_cold_first_eviction() {
 
     // Create a hot node (rank 1500, within HOT_WINDOW of 1000 from head 2000)
     let hot_node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 3,
         topological_rank: 1500,
         network_timestamp: 1500,
         content: Content::Text("hot".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -445,7 +582,7 @@ fn test_cold_first_eviction() {
     let trigger_wire = merkle_tox_core::dag::WireNode {
         sender_hint: [0xFF; 4],
         flags: WireFlags::ENCRYPTED,
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         encrypted_routing: vec![],
         payload_data: vec![0u8; 100],
         topological_rank: 1800,

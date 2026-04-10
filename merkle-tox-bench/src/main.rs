@@ -12,6 +12,7 @@ use ratatui::backend::CrosstermBackend;
 use merkle_tox_bench::harness::SimulationHarness;
 use merkle_tox_bench::headless;
 use merkle_tox_bench::scenario::{self, Scenario};
+use merkle_tox_bench::scenario_large;
 use merkle_tox_bench::tui::{self, TuiState};
 
 #[derive(Parser, Debug)]
@@ -43,6 +44,12 @@ struct Args {
     /// RNG seed for determinism.
     #[arg(long, default_value_t = 42)]
     seed: u64,
+
+    /// Include the large-group scenarios (32 / 100 nodes). Off by
+    /// default because their wall-clock cost is orders of magnitude
+    /// above the small-group set; not part of the ab_compare A/B flow.
+    #[arg(long)]
+    include_large_groups: bool,
 }
 
 fn main() -> io::Result<()> {
@@ -54,11 +61,20 @@ fn main() -> io::Result<()> {
             .collect()
     });
 
-    let scenarios = if let Some(ids) = &scenario_ids {
+    let mut scenarios = if let Some(ids) = &scenario_ids {
         scenario::scenarios_by_ids(ids)
     } else {
         scenario::all_scenarios()
     };
+
+    if args.include_large_groups {
+        let large = scenario_large::large_group_scenarios();
+        if let Some(ids) = &scenario_ids {
+            scenarios.extend(large.into_iter().filter(|s| ids.contains(&s.id)));
+        } else {
+            scenarios.extend(large);
+        }
+    }
 
     if scenarios.is_empty() {
         eprintln!("No valid scenarios selected.");

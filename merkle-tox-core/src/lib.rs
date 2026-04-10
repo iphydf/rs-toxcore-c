@@ -39,7 +39,16 @@ pub trait Transport: Send + Sync {
 }
 
 /// High-level message types for Merkle-Tox protocol.
+///
+/// Marked `#[non_exhaustive]` so external pattern matchers (in
+/// downstream FFI consumers — `go-toxcore-c`, `jvm-toxcore-c`,
+/// `qtox`, etc.) cannot accidentally rely on a closed variant set,
+/// and the `Unknown` catch-all variant absorbs deserialise of any
+/// future on-wire variant from a newer peer without dropping the
+/// packet outright. Together these let the protocol grow without a
+/// SemVer-major break for in-flight upgrades.
 #[derive(Debug, Clone, ToxProto, PartialEq)]
+#[non_exhaustive]
 pub enum ProtocolMessage {
     CapsAnnounce {
         version: u32,
@@ -53,21 +62,33 @@ pub enum ProtocolMessage {
     SyncSketch(tox_reconcile::SyncSketch),
     SyncShardChecksums {
         conversation_id: ConversationId,
-        shards: Vec<(tox_reconcile::SyncRange, ShardHash)>,
+        /// Shard checksums, capped at `MAX_SYNC_SHARDS = 4096` at the
+        /// type level: oversize wire payloads are rejected by the
+        /// deserialiser before any per-shard scan/sketch work.
+        shards: tox_proto::BoundedVec<
+            (tox_reconcile::SyncRange, ShardHash),
+            { tox_proto::constants::MAX_SYNC_SHARDS },
+        >,
     },
     SyncReconFail {
         conversation_id: ConversationId,
         range: tox_reconcile::SyncRange,
     },
     /// Per-peer CPU budget exhausted; includes retry delay in ms.
+    /// `retry_after_ms` is peer-supplied; the handler clamps it against
+    /// `SYNC_RATE_LIMITED_MAX_MS` before applying it as a local timeout,
+    /// preventing a malicious peer from silencing our sync for weeks.
     SyncRateLimited {
         conversation_id: ConversationId,
-        retry_after_ms: u32,
+        retry_after_ms: tox_proto::Untrusted<u32>,
     },
     /// Confirms successful WrappedKey entry decryption (off-DAG).
+    /// `recipient_pk` is a peer-supplied identity claim; the handler
+    /// must verify it matches the transport-authenticated `sender_pk`
+    /// before applying any side-effect (see §3 handlers).
     KeywrapAck {
         keywrap_hash: NodeHash,
-        recipient_pk: PhysicalDevicePk,
+        recipient_pk: tox_proto::Claimed<PhysicalDevicePk>,
     },
     ReconPowChallenge {
         conversation_id: ConversationId,
@@ -89,10 +110,18 @@ pub enum ProtocolMessage {
     BlobAvail(cas::BlobInfo),
     BlobReq(cas::BlobReq),
     BlobData(cas::BlobData),
+    BlobFetch(cas::BlobFetch),
+    BlobProgress(cas::BlobProgress),
+    BlobCancel(NodeHash),
     /// Off-DAG request from trust-restored device asking admin for re-inclusion.
+    /// `sender_pk` is a peer-supplied identity claim used by the
+    /// handler to drive the snapshot-membership check. It must
+    /// verify against the transport-authenticated sender before the
+    /// rotation side-effect fires — otherwise the admin becomes a
+    /// membership oracle and any peer can trigger k_conv rotations.
     ReinclusionRequest {
         conversation_id: ConversationId,
-        sender_pk: PhysicalDevicePk,
+        sender_pk: tox_proto::Claimed<PhysicalDevicePk>,
         healing_snapshot_hash: NodeHash,
     },
     /// Off-DAG admin response indicating if reinclusion was accepted.
@@ -109,6 +138,21 @@ pub enum ProtocolMessage {
     AdminGossip {
         conversation_id: ConversationId,
         hash: NodeHash,
+    },
+    /// Forward-compat catch-all for unrecognised protocol-message
+    /// discriminants from a newer peer.  `tox_proto`'s deserialiser
+    /// routes any unknown discriminant here, preserving the wire bytes
+    /// in `data` so the packet round-trips losslessly. We never
+    /// *emit* this variant ourselves — `get_message_type` panics if
+    /// asked to classify it for transit. The handler arm for
+    /// `Unknown` is a no-op + `debug!` log: an old peer cannot
+    /// meaningfully act on a message type it doesn't understand, but
+    /// dropping the packet at deserialise would lose forward-compat.
+    /// See `Content::Unknown` in `dag.rs` for the same pattern.
+    #[tox(catch_all)]
+    Unknown {
+        discriminant: u32,
+        data: Vec<u8>,
     },
 }
 

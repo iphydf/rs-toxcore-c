@@ -3,8 +3,7 @@ use crate::dag::{
     ChainKey, ConversationId, HeaderKey, KConv, LogicalIdentityPk, MerkleNode, MessageKey,
     NodeAuth, NodeHash, PhysicalDevicePk, SenderKey, WireNode,
 };
-use ed25519_dalek::Verifier;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Genesis flag: only admins may invite.
 pub const FLAG_ADMIN_ONLY_INVITE: u64 = 0x01;
@@ -22,7 +21,11 @@ pub struct Pending {
 #[derive(Clone)]
 pub struct Established {
     pub epochs: HashMap<u64, ConversationKeys>,
-    pub sender_ratchets: HashMap<PhysicalDevicePk, (u64, ChainKey, Option<NodeHash>, u64)>, // (last_seq, next_chain_key, last_node_hash, epoch_id)
+    /// BTreeMap so the Phase 2 fallback in `identify_sender_and_unpack`
+    /// tries senders in deterministic order. With sender_hint collisions
+    /// or forward-stepping, two senders could spuriously match different
+    /// nodes depending on iteration order.
+    pub sender_ratchets: BTreeMap<PhysicalDevicePk, (u64, ChainKey, Option<NodeHash>, u64)>, // (last_seq, next_chain_key, last_node_hash, epoch_id)
     pub skipped_keys: HashMap<(PhysicalDevicePk, u64), (MessageKey, i64)>,
     pub current_epoch: u64,
     pub message_count: u32,
@@ -127,7 +130,7 @@ impl ConversationData<Pending> {
             id: self.id,
             state: Established {
                 epochs,
-                sender_ratchets: HashMap::new(),
+                sender_ratchets: BTreeMap::new(),
                 skipped_keys: HashMap::new(),
                 current_epoch: epoch,
                 message_count: 0,
@@ -157,7 +160,7 @@ impl ConversationData<Established> {
             id,
             state: Established {
                 epochs,
-                sender_ratchets: HashMap::new(),
+                sender_ratchets: BTreeMap::new(),
                 skipped_keys: HashMap::new(),
                 current_epoch: 0,
                 message_count: 0,
@@ -268,7 +271,7 @@ impl ConversationData<Established> {
             if let Some(sender_key) = self.state.sender_keys.get(&(*sender_pk, epoch)) {
                 ChainKey::from(*sender_key.as_bytes())
             } else {
-                crate::crypto::ratchet_init_sender(&keys.k_conv, sender_pk)
+                crate::crypto::ratchet_init_sender(&keys.k_conv, &self.id, sender_pk)
             };
 
         if counter > 2000 {
@@ -377,7 +380,10 @@ impl ConversationData<Established> {
         {
             let sig = ed25519_dalek::Signature::from_bytes(sig_bytes.as_ref());
             let auth_data = node.serialize_for_auth();
-            if vk.verify(&auth_data, &sig).is_ok() {
+            // verify_strict for consistency with the other Content-node
+            // signature verifiers in verification.rs (which uniformly
+            // use verify_strict). See audit round 9 finding 2(a).
+            if vk.verify_strict(&auth_data, &sig).is_ok() {
                 return true;
             }
         }
@@ -463,7 +469,7 @@ impl ConversationData<Established> {
             } else if let Some(sender_key) = self.state.sender_keys.get(&(sender_pk, epoch)) {
                 ChainKey::from(*sender_key.as_bytes())
             } else {
-                crate::crypto::ratchet_init_sender(&keys.k_conv, &sender_pk)
+                crate::crypto::ratchet_init_sender(&keys.k_conv, &self.id, &sender_pk)
             };
 
             // K_header: check JIT override first, then derive from SenderKey
@@ -477,11 +483,15 @@ impl ConversationData<Established> {
                     .cloned()
                     .unwrap_or_else(|| {
                         SenderKey::from(
-                            *crate::crypto::ratchet_init_sender(&keys.k_conv, &sender_pk)
-                                .as_bytes(),
+                            *crate::crypto::ratchet_init_sender(
+                                &keys.k_conv,
+                                &self.id,
+                                &sender_pk,
+                            )
+                            .as_bytes(),
                         )
                     });
-                crate::crypto::derive_k_header_epoch(&keys.k_conv, &sender_key)
+                crate::crypto::derive_k_header_epoch(&keys.k_conv, &self.id, &sender_key)
             };
 
             // Step forward trying each position

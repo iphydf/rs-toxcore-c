@@ -3,8 +3,11 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library",
 rust_library(
     name = "tox-proto",
     srcs = [
+        "src/bounded_bytes.rs",
+        "src/bounded_vec.rs",
         "src/constants.rs",
         "src/lib.rs",
+        "src/untrusted.rs",
     ],
     edition = "2024",
     proc_macro_deps = [
@@ -104,6 +107,16 @@ rust_test(
 )
 
 rust_test(
+    name = "untrusted-test",
+    srcs = ["tests/untrusted_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-proto",
+    ],
+)
+
+rust_test(
     name = "forward-compat-test",
     srcs = ["tests/forward_compat_test.rs"],
     edition = "2024",
@@ -111,6 +124,38 @@ rust_test(
     deps = [
         ":tox-proto",
         "//rs-toxcore-c/merkle-tox-core",
+    ],
+)
+
+rust_test(
+    name = "adversarial-deserialize-test",
+    srcs = ["tests/adversarial_deserialize_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-proto",
+    ],
+)
+
+rust_test(
+    name = "bounded-vec-test",
+    srcs = ["tests/bounded_vec_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-proto",
+        "@crates//:rmp",
+    ],
+)
+
+rust_test(
+    name = "bounded-bytes-test",
+    srcs = ["tests/bounded_bytes_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        ":tox-proto",
+        "@crates//:rmp",
     ],
 )
 
@@ -138,7 +183,11 @@ rust_clippy(
         ":array-regression-test",
         ":flat-test",
         ":bitflags-test",
+        ":untrusted-test",
         ":forward-compat-test",
+        ":adversarial-deserialize-test",
+        ":bounded-bytes-test",
+        ":bounded-vec-test",
         ":proto_bench",
     ],
 )

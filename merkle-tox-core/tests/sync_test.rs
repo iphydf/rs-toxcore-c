@@ -17,7 +17,7 @@ fn test_blob_discovery() {
 
     let blob_hash = NodeHash::from([0xAAu8; 32]);
     let node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 1,
@@ -28,9 +28,9 @@ fn test_blob_discovery() {
             name: "test.png".to_string(),
             mime_type: "image/png".to_string(),
             size: 1024,
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
         },
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -62,7 +62,7 @@ fn test_sync_reconciliation() {
 
     let remote_heads = SyncHeads {
         conversation_id,
-        heads: vec![NodeHash::from([3u8; 32]), NodeHash::from([4u8; 32])],
+        heads: tox_proto::bounded_vec![NodeHash::from([3u8; 32]), NodeHash::from([4u8; 32])],
         flags: 0,
         anchor_hash: None,
     };
@@ -89,7 +89,7 @@ fn test_shallow_sync_snapshot_stop() {
 
     // Receive a Snapshot node
     let snapshot = MerkleNode {
-        parents: vec![NodeHash::from([0xBBu8; 32])], // This parent is far in history
+        parents: tox_proto::bounded_vec![NodeHash::from([0xBBu8; 32])], // This parent is far in history
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 100,
@@ -98,11 +98,11 @@ fn test_shallow_sync_snapshot_stop() {
         content: Content::Control(ControlAction::Snapshot(
             merkle_tox_core::dag::SnapshotData {
                 basis_hash: NodeHash::from([0xBBu8; 32]),
-                members: vec![],
-                last_seq_numbers: vec![],
+                members: tox_proto::BoundedVec::new(),
+                last_seq_numbers: tox_proto::BoundedVec::new(),
             },
         )),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::Signature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -139,14 +139,14 @@ fn test_shallow_sync_limits() {
         .activate(0);
 
     let node_rank_11 = MerkleNode {
-        parents: vec![NodeHash::from([0x11u8; 32])],
+        parents: tox_proto::bounded_vec![NodeHash::from([0x11u8; 32])],
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 11,
         topological_rank: 11,
         network_timestamp: 1100,
         content: Content::Text("hello".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -160,14 +160,14 @@ fn test_shallow_sync_limits() {
     session.common.missing_nodes_cold.clear();
 
     let node_rank_10 = MerkleNode {
-        parents: vec![NodeHash::from([0x10u8; 32])],
+        parents: tox_proto::bounded_vec![NodeHash::from([0x10u8; 32])],
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 10,
         topological_rank: 10,
         network_timestamp: 1000,
         content: Content::Text("hello".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -186,14 +186,14 @@ fn test_shallow_sync_limits() {
             .activate(0);
 
     let node_time_400 = MerkleNode {
-        parents: vec![NodeHash::from([0x44u8; 32])],
+        parents: tox_proto::bounded_vec![NodeHash::from([0x44u8; 32])],
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 5,
         topological_rank: 5,
         network_timestamp: 400,
         content: Content::Text("hello".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -235,7 +235,7 @@ fn test_sync_session_iblt() {
 
     let sketch = tox_reconcile::SyncSketch {
         conversation_id,
-        cells: iblt.into_cells(),
+        cells: tox_proto::BoundedVec::try_from_iter(iblt.into_cells()).expect("Tier-bounded"),
         range,
     };
 

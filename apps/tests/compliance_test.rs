@@ -1,4 +1,4 @@
-use merkle_tox_core::cas::{BlobData, BlobInfo, BlobStatus};
+use merkle_tox_core::cas::{BlobInfo, BlobStatus};
 use merkle_tox_core::dag::{
     ChainKey, Content, ConversationId, Ed25519Signature, KConv, LogicalIdentityPk, MerkleNode,
     NodeAuth, NodeHash, NodeType, PhysicalDevicePk, WireFlags, WireNode,
@@ -22,14 +22,15 @@ fn create_fs(path: &Path) -> FsStore {
 
 fn make_node(parents: Vec<NodeHash>, seq: u64, rank: u64) -> MerkleNode {
     MerkleNode {
-        parents,
+        parents: tox_proto::BoundedVec::try_from_iter(parents)
+            .expect("test fixtures must respect MAX_PARENTS"),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: seq,
         topological_rank: rank,
         network_timestamp: 1000,
         content: Content::Text(format!("Node {}", seq)),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     }
@@ -196,7 +197,6 @@ fn test_store_compliance_blobs() {
         let info = BlobInfo {
             hash: blob_hash,
             size: 1024,
-            bao_root: Some([0xCCu8; 32]),
             status: BlobStatus::Downloading,
             received_mask: None,
             decryption_key: None,
@@ -262,7 +262,6 @@ fn test_store_compliance_blob_transitions() {
         let info = BlobInfo {
             hash,
             size: total_size,
-            bao_root: None,
             status: BlobStatus::Pending,
             received_mask: None,
             decryption_key: None,
@@ -303,7 +302,6 @@ fn test_store_compliance_boundary_conditions() {
         let info = BlobInfo {
             hash,
             size: 5,
-            bao_root: None,
             status: BlobStatus::Available,
             received_mask: None,
             decryption_key: None,
@@ -408,7 +406,7 @@ fn test_store_compliance_wire_nodes() {
         let conv_id = ConversationId::from([0x66u8; 32]);
         let hash = NodeHash::from([0x77u8; 32]);
         let wire = WireNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             sender_hint: [0u8; 4],
             encrypted_routing: vec![0u8; 40],
             payload_data: vec![0u8; 8],
@@ -534,7 +532,6 @@ fn test_store_compliance_blob_proofs() {
         let info = BlobInfo {
             hash,
             size: 1024,
-            bao_root: None,
             status: BlobStatus::Available,
             received_mask: None,
             decryption_key: None,
@@ -543,10 +540,8 @@ fn test_store_compliance_blob_proofs() {
         store.put_blob_info(info).unwrap();
         store.put_chunk(&conv_id, &hash, 0, &data, None).unwrap();
 
-        let (retrieved_data, _proof) = store.get_chunk_with_proof(&hash, 0, 1024).unwrap();
+        let retrieved_data = store.get_chunk(&hash, 0, 1024).unwrap();
         assert_eq!(retrieved_data, data);
-        // For a 1024 byte blob, the proof might be empty as it fits in a single chunk,
-        // but it depends on the Bao implementation details.
     });
 }
 
@@ -673,7 +668,6 @@ fn test_store_compliance_blob_chunk_proofs() {
         let info = BlobInfo {
             hash,
             size: 1024,
-            bao_root: None,
             status: BlobStatus::Pending,
             received_mask: None,
             decryption_key: None,
@@ -684,26 +678,8 @@ fn test_store_compliance_blob_chunk_proofs() {
             .put_chunk(&conv_id, &hash, 0, &data, Some(&proof))
             .unwrap();
 
-        let (retrieved_data, retrieved_proof) = store.get_chunk_with_proof(&hash, 0, 1024).unwrap();
+        let retrieved_data = store.get_chunk(&hash, 0, 1024).unwrap();
         assert_eq!(retrieved_data, data);
-
-        // If the store supports proofs, it should return a valid proof.
-        // If we provided a junk proof during put_chunk, the store might have
-        // ignored it and generated a real one upon completion.
-        if !retrieved_proof.is_empty() {
-            // Check if it's at least a valid proof for the data if we have a root.
-            if let Some(info) = store.get_blob_info(&hash)
-                && let Some(root) = info.bao_root
-            {
-                let blob_data = BlobData {
-                    hash,
-                    offset: 0,
-                    data: retrieved_data,
-                    proof: retrieved_proof,
-                };
-                assert!(blob_data.verify(&root));
-            }
-        }
     });
 }
 
@@ -738,7 +714,7 @@ fn test_store_compliance_multiple_opaque_nodes() {
         let h1 = NodeHash::from([0x11u8; 32]);
         let h2 = NodeHash::from([0x22u8; 32]);
         let wire = WireNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             sender_hint: [0u8; 4],
             encrypted_routing: vec![0u8; 40],
             payload_data: vec![0u8; 8],
@@ -777,7 +753,6 @@ fn test_store_compliance_bao_verification() {
         let info = BlobInfo {
             hash: blob_hash,
             size: data.len() as u64,
-            bao_root: None,
             status: BlobStatus::Pending,
             received_mask: None,
             decryption_key: None,
@@ -792,27 +767,12 @@ fn test_store_compliance_bao_verification() {
             .unwrap();
 
         let info = store.get_blob_info(&blob_hash).unwrap();
-        // If it's available, it might have a root (FS backend does this automatically in put_chunk completion)
-        if let Some(root) = info.bao_root {
-            let (chunk, proof) = store.get_chunk_with_proof(&blob_hash, 0, 65536).unwrap();
-            let blob_data = BlobData {
-                hash: blob_hash,
-                offset: 0,
-                data: chunk,
-                proof: proof.clone(),
-            };
-            assert!(
-                blob_data.verify(&root),
-                "Bao verification failed for {:?}",
-                blob_hash
-            );
-            assert!(
-                !proof.is_empty(),
-                "Bao proof should not be empty for a multi-chunk blob"
-            );
-        } else if info.status == BlobStatus::Available {
-            panic!("Blob is Available but has no bao_root");
-        }
+        // Chunk-boundary verification happens in the engine handler at
+        // receive time (see doc/merkle-tox-cas.md §3), not in the store.
+        // The store's responsibility is just to round-trip bytes
+        // faithfully, which is asserted by the round-trip check earlier
+        // in this test.
+        let _ = info;
     });
 }
 
@@ -823,7 +783,7 @@ fn test_store_compliance_opaque_eviction() {
 
         // 1. Add an Admin node (Anchor)
         let admin_wire = WireNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             sender_hint: [0u8; 4],
             encrypted_routing: vec![0u8; 40],
             payload_data: vec![0u8; 8],
@@ -841,7 +801,7 @@ fn test_store_compliance_opaque_eviction() {
         let junk_payload = vec![0u8; 1024 * 1024]; // 1MB
         for i in 0..110 {
             let mut junk_wire = WireNode {
-                parents: vec![],
+                parents: tox_proto::BoundedVec::new(),
                 sender_hint: [0u8; 4],
                 encrypted_routing: junk_payload.clone(),
                 payload_data: vec![0u8; 8],

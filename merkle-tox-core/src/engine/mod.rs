@@ -21,10 +21,10 @@ pub use self::conversation::{Conversation, ConversationData};
 pub use self::processor::{VerificationStatus, VerifiedNode};
 use parking_lot::Mutex;
 use rand::rngs::StdRng;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 pub struct MerkleToxEngine {
     pub self_pk: PhysicalDevicePk,
@@ -34,9 +34,23 @@ pub struct MerkleToxEngine {
     pub identity_manager: IdentityManager,
     pub clock: NetworkClock,
     /// Maps (Peer PK, Conversation ID) to SyncSession.
-    pub sessions: HashMap<(PhysicalDevicePk, ConversationId), PeerSession>,
-    pub conversations: HashMap<ConversationId, Conversation>,
-    pub blob_syncs: HashMap<NodeHash, SwarmSync>,
+    /// BTreeMap for deterministic iteration order — see ab_compare.
+    pub sessions: BTreeMap<(PhysicalDevicePk, ConversationId), PeerSession>,
+    /// BTreeMap so per-conversation iteration (rotation triggers, gossip,
+    /// etc.) is deterministic.
+    pub conversations: BTreeMap<ConversationId, Conversation>,
+    /// Active blob downloads, BTreeMap for deterministic iteration.
+    pub blob_syncs: BTreeMap<NodeHash, SwarmSync>,
+    /// Active push streams: (blob_hash, peer) → push state.
+    /// BTreeMap for deterministic iteration order.
+    pub push_streams: BTreeMap<(NodeHash, PhysicalDevicePk), crate::cas::PushStream>,
+    /// Maps blob hash to the conversation it was exported from.
+    /// Used to gate `BlobFetch` — a requester must be an active
+    /// participant of the blob's conversation. Populated when a
+    /// `HistoryExport` node is processed or authored locally; kept
+    /// engine-local (not serialised on the wire) so we don't leak
+    /// conversation membership through `BlobAvail` broadcasts.
+    pub blob_conversations: HashMap<NodeHash, ConversationId>,
     /// Maps generated ephemeral Public Key to Private Key.
     pub ephemeral_keys: HashMap<EphemeralX25519Pk, EphemeralX25519Sk>,
     /// Maps peer_pk to last seen announcement.
@@ -76,7 +90,9 @@ pub struct MerkleToxEngine {
     /// Pending KeyWrap ACKs: keywrap_hash to pending state.
     /// When authoring KeyWrap consuming OPK, enters pending state
     /// and buffers content until KEYWRAP_ACK received.
-    pub keywrap_pending: HashMap<NodeHash, KeyWrapPending>,
+    /// BTreeMap so retry order is deterministic when multiple pending
+    /// handshakes time out in the same poll.
+    pub keywrap_pending: BTreeMap<NodeHash, KeyWrapPending>,
     /// OPK IDs consumed by received KeyWraps.
     /// Maps opk_id to (keywrap_hash, sender_pk, topological_rank) for collision detection.
     pub consumed_opk_ids: HashMap<NodeHash, (NodeHash, PhysicalDevicePk, u64)>,
@@ -98,6 +114,16 @@ pub struct MerkleToxEngine {
     pub keywrap_ack_counts: HashMap<ConversationId, (u32, u32)>, // (acks_received, total_recipients)
     /// Blacklist state per peer for 3-tier exponential escalation.
     pub peer_blacklist: HashMap<PhysicalDevicePk, BlacklistState>,
+    /// Consecutive voucher-timeout counter per peer. Reset on any
+    /// successful `MerkleNode` receipt. When a peer reaches
+    /// `WITHHOLDING_THRESHOLD`, they're blacklisted under §3.11.
+    pub withholding_count: HashMap<PhysicalDevicePk, u32>,
+    /// Peers that have decoded an IBLT sketch against us successfully at
+    /// least once this session. Used to gate the sketch-decode
+    /// blacklist: peers NOT in this set are in "initial sync" and get
+    /// a grace period on decode failures (see
+    /// `record_sketch_decode_failure`). Cleared on disconnect.
+    pub sketch_decode_succeeded: HashSet<PhysicalDevicePk>,
     /// Last time a gossip sketch was broadcast per conversation.
     pub last_gossip_time: HashMap<ConversationId, Instant>,
     /// Our DelegationCertificate per conversation, captured from our
@@ -111,6 +137,40 @@ pub struct MerkleToxEngine {
     /// Network timestamp (ms) of our last Announcement per conversation.
     /// Used for 30-day rotation trigger in `poll()`.
     pub last_announcement_time_ms: HashMap<ConversationId, i64>,
+    /// Live engine-level counters. Cheap atomic counters used for
+    /// observability of message flow and blob ingestion. Read via
+    /// `MerkleToxEngine::stats_snapshot()`.
+    pub stats: EngineStatsCounters,
+}
+
+/// Atomic counters backing `EngineStatsSnapshot`.
+#[derive(Debug, Default)]
+pub struct EngineStatsCounters {
+    /// Total ProtocolMessages handled by `handle_message`.
+    pub messages_handled: std::sync::atomic::AtomicU64,
+    /// BlobData messages that reached the handler.
+    pub blob_data_received: std::sync::atomic::AtomicU64,
+    /// BlobData messages whose chunk write was actually issued.
+    pub blob_data_stored: std::sync::atomic::AtomicU64,
+}
+
+/// Plain-old-data snapshot of engine counters.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EngineStatsSnapshot {
+    pub messages_handled: u64,
+    pub blob_data_received: u64,
+    pub blob_data_stored: u64,
+}
+
+impl EngineStatsCounters {
+    pub fn snapshot(&self) -> EngineStatsSnapshot {
+        use std::sync::atomic::Ordering;
+        EngineStatsSnapshot {
+            messages_handled: self.messages_handled.load(Ordering::Relaxed),
+            blob_data_received: self.blob_data_received.load(Ordering::Relaxed),
+            blob_data_stored: self.blob_data_stored.load(Ordering::Relaxed),
+        }
+    }
 }
 
 /// State for pending KeyWrap awaiting KEYWRAP_ACK.
@@ -179,6 +239,48 @@ pub const HANDSHAKE_RETRY_BASE_MS: u64 = 2000;
 /// Maximum delay for exponential backoff on handshake retries (8 seconds).
 pub const HANDSHAKE_RETRY_MAX_MS: u64 = 8000;
 
+/// Upper bound, in milliseconds, accepted from a peer's `SyncRateLimited`
+/// payload. One minute matches the per-peer CPU refill window in
+/// `merkle-tox-reconcile.md` (`SKETCH_CPU_WINDOW_MS = 60_000`); a legitimate
+/// responder never needs longer. Exposed so call sites — including the
+/// adversarial regression test — share the same ceiling.
+pub const SYNC_RATE_LIMITED_MAX_MS: u32 = 60_000;
+
+/// Upper bound on per-session `missing_admin_nodes` queue length. The
+/// deque is drained one hash per `poll()` via priority fetch; a hostile
+/// peer can `AdminGossip` unique hashes faster than drain, so we cap
+/// the backlog. 256 is four full `FetchBatchReq` batches of priority
+/// work — more than enough for a legitimately-lagging peer, bounded
+/// enough to deny memory amplification.
+pub const MAX_MISSING_ADMIN_NODES: usize = 256;
+
+/// Consecutive voucher timeouts from a single peer, with no intervening
+/// successful `MerkleNode` receipt, before we treat the peer as a §3.11
+/// selective-withholder and blacklist them. At 1% uniform loss the
+/// false-positive rate for 3 independent timeouts is 1e-6 — well below
+/// the benign packet-loss regime our regression benches simulate. A
+/// threshold of 1 false-positives on every lossy run; a threshold of 3
+/// still catches a genuine withholder within a handful of retries.
+pub const WITHHOLDING_THRESHOLD: u32 = 3;
+
+// NOTE: sketch-decode blacklist no longer uses a consecutive-failure
+// threshold. Empirical ab_compare showed that gating on a counter (in
+// either direction) has conflicting effects across scenarios:
+//
+// - Late-joiner scenarios (#8) need a grace period — a fresh joiner's
+//   first sketch-decode almost always fails because their DAG is far
+//   behind; threshold-gating lets them catch up.
+// - Hostile-network scenarios (#10) need the OPPOSITE — under burst
+//   loss, 3 mutually-divergent peers that all survive the failure
+//   converge nowhere. Unconditional silencing of one peer forces a
+//   clean tiebreaker.
+//
+// The distinguishing signal is "has the peer ever decoded successfully
+// in this session?" A peer who has never succeeded is in initial sync
+// (spec: not yet "consistently" failing — there's no baseline). A peer
+// who HAS succeeded once and is now failing is the spec's "consistent
+// failure" case, matching the original unconditional-blacklist intent.
+
 /// Blacklist state for a peer with 3-tier exponential escalation.
 #[derive(Debug, Clone)]
 pub struct BlacklistState {
@@ -211,8 +313,11 @@ impl BlacklistState {
 }
 
 pub(crate) struct PendingCache {
-    pub nodes: HashMap<NodeHash, crate::dag::MerkleNode>,
-    pub wire_nodes: HashMap<NodeHash, (ConversationId, crate::dag::WireNode)>,
+    /// BTreeMaps for deterministic iteration: the overlay reads back
+    /// these caches during reverify cascades, so write order at one
+    /// pass affects read order at the next.
+    pub nodes: BTreeMap<NodeHash, crate::dag::MerkleNode>,
+    pub wire_nodes: BTreeMap<NodeHash, (ConversationId, crate::dag::WireNode)>,
     pub verified: HashSet<NodeHash>,
     pub heads: HashMap<ConversationId, Vec<NodeHash>>,
     pub admin_heads: HashMap<ConversationId, Vec<NodeHash>>,
@@ -223,8 +328,8 @@ pub(crate) struct PendingCache {
 impl PendingCache {
     fn new() -> Self {
         Self {
-            nodes: HashMap::new(),
-            wire_nodes: HashMap::new(),
+            nodes: BTreeMap::new(),
+            wire_nodes: BTreeMap::new(),
             verified: HashSet::new(),
             heads: HashMap::new(),
             admin_heads: HashMap::new(),
@@ -293,9 +398,11 @@ impl MerkleToxEngine {
             self_dh_sk: None,
             identity_manager: IdentityManager::new(),
             clock: NetworkClock::new(time_provider),
-            sessions: HashMap::new(),
-            conversations: HashMap::new(),
-            blob_syncs: HashMap::new(),
+            sessions: BTreeMap::new(),
+            conversations: BTreeMap::new(),
+            blob_syncs: BTreeMap::new(),
+            push_streams: BTreeMap::new(),
+            blob_conversations: HashMap::new(),
             ephemeral_keys: HashMap::new(),
             peer_announcements: HashMap::new(),
             highest_handled_pulse: HashMap::new(),
@@ -311,7 +418,7 @@ impl MerkleToxEngine {
             opaque_store_usage: HashMap::new(),
             handshake_count_since_announcement: HashMap::new(),
             trust_restored_devices: HashMap::new(),
-            keywrap_pending: HashMap::new(),
+            keywrap_pending: BTreeMap::new(),
             consumed_opk_ids: HashMap::new(),
             soft_anchor_dedup: HashMap::new(),
             self_certs: HashMap::new(),
@@ -320,10 +427,41 @@ impl MerkleToxEngine {
             handshake_retry_state: HashMap::new(),
             keywrap_ack_counts: HashMap::new(),
             peer_blacklist: HashMap::new(),
+            withholding_count: HashMap::new(),
+            sketch_decode_succeeded: HashSet::new(),
             last_gossip_time: HashMap::new(),
             promotion_locked: HashSet::new(),
             sketch_cpu_budgets: HashMap::new(),
             last_announcement_time_ms: HashMap::new(),
+            stats: EngineStatsCounters::default(),
+        }
+    }
+
+    /// Returns a plain-old-data snapshot of engine counters. Cheap; safe to
+    /// call from any thread.
+    pub fn stats_snapshot(&self) -> EngineStatsSnapshot {
+        self.stats.snapshot()
+    }
+
+    /// Whether *this device* is authorised to author admin actions in
+    /// the given conversation. Two paths:
+    ///
+    ///   1. An explicit cert targeting `self_pk` grants ADMIN.
+    ///   2. No self-cert AND `self_logical_pk` is the role-0 owner
+    ///      (founder) of the conversation.
+    ///
+    /// Do not use `identity_manager.is_admin(self_pk,
+    /// self_pk.to_logical())` for this check: the synthetic
+    /// `to_logical()` hits the founder shortcut in
+    /// `get_permissions_recursive`, making the gate return true for
+    /// every device regardless of actual permissions.
+    pub fn is_self_admin(&self, conversation_id: ConversationId) -> bool {
+        match self.self_certs.get(&conversation_id) {
+            Some(cert) => cert.permissions.contains(crate::dag::Permissions::ADMIN),
+            None => {
+                self.identity_manager.get_founder(&conversation_id)
+                    == Some(self.self_logical_pk)
+            }
         }
     }
 
@@ -366,7 +504,9 @@ impl MerkleToxEngine {
         let admin_nodes = store.get_verified_nodes_by_type(&conversation_id, NodeType::Admin)?;
         for node in &admin_nodes {
             let mut admin_ancestor_hashes = std::collections::HashSet::new();
-            let mut stack = node.parents.clone();
+            // Cumulative ancestor worklist — regular Vec, see the
+            // same pattern in `verification.rs` / `side_effects.rs`.
+            let mut stack: Vec<NodeHash> = node.parents.iter().cloned().collect();
             let mut visited = std::collections::HashSet::new();
 
             while let Some(parent_hash) = stack.pop() {
@@ -379,7 +519,7 @@ impl MerkleToxEngine {
                     if let Some(cached) = self.admin_ancestors_cache.lock().get(&parent_hash) {
                         admin_ancestor_hashes.extend(cached.iter().cloned());
                     } else {
-                        stack.extend(parent_node.parents.clone());
+                        stack.extend(parent_node.parents.iter().cloned());
                     }
                 }
             }
@@ -408,7 +548,20 @@ impl MerkleToxEngine {
                         );
                     }
                     ControlAction::AuthorizeDevice { cert } => {
-                        let _ = self.identity_manager.authorize_device(
+                        // Replay path: this node was already verified at
+                        // store-time (`get_verified_nodes_by_type`), so a
+                        // failure here means the stored state has
+                        // diverged from current identity-manager rules
+                        // (e.g. rule tightening across version upgrades,
+                        // store corruption, or an incomplete causal
+                        // context — `admin_ancestor_hashes` reconstruction
+                        // got the wrong set). Silently dropping the
+                        // result loses the only diagnostic an operator
+                        // would have. Surface as `warn!`; do NOT propagate
+                        // via `?` because one bad cert shouldn't abort
+                        // the entire conversation reload — the surviving
+                        // certs still carry valid grants.
+                        if let Err(e) = self.identity_manager.authorize_device(
                             &ctx,
                             conversation_id,
                             node.author_pk,
@@ -416,7 +569,19 @@ impl MerkleToxEngine {
                             node.network_timestamp,
                             node.topological_rank,
                             node.hash(),
-                        );
+                        ) {
+                            warn!(
+                                conversation_id = ?conversation_id,
+                                node_hash = ?node.hash(),
+                                author_pk = ?node.author_pk,
+                                error = %e,
+                                "AuthorizeDevice replay failed; cert dropped from \
+                                 reconstructed identity state. The node was verified \
+                                 at store-time, so this indicates either rule drift \
+                                 across an upgrade or an inconsistency in the \
+                                 admin-ancestor reconstruction.",
+                            );
+                        }
                     }
                     ControlAction::RevokeDevice {
                         target_device_pk, ..
@@ -454,21 +619,29 @@ impl MerkleToxEngine {
                         pre_keys,
                         last_resort_key,
                     } => {
-                        use ed25519_dalek::{Verifier, VerifyingKey};
+                        use ed25519_dalek::VerifyingKey;
                         let valid_pre_keys =
                             if let Ok(vk) = VerifyingKey::from_bytes(node.sender_pk.as_bytes()) {
-                                pre_keys
-                                    .iter()
-                                    .filter(|spk| {
-                                        let sig = ed25519_dalek::Signature::from_bytes(
-                                            spk.signature.as_ref(),
-                                        );
-                                        vk.verify(spk.public_key.as_bytes(), &sig).is_ok()
-                                    })
-                                    .cloned()
-                                    .collect()
+                                tox_proto::BoundedVec::try_from_iter(
+                                    pre_keys
+                                        .iter()
+                                        .filter(|spk| {
+                                            let sig = ed25519_dalek::Signature::from_bytes(
+                                                spk.signature.as_ref(),
+                                            );
+                                            // verify_strict mirrors the
+                                            // pre-key filter in
+                                            // side_effects.rs; see audit
+                                            // round 9 finding 2(a).
+                                            vk.verify_strict(spk.public_key.as_bytes(), &sig).is_ok()
+                                        })
+                                        .cloned(),
+                                )
+                                .expect(
+                                    "filtered subset of bounded pre_keys stays under cap",
+                                )
                             } else {
-                                Vec::new()
+                                tox_proto::BoundedVec::new()
                             };
                         self.peer_announcements.insert(
                             node.sender_pk,
@@ -649,14 +822,19 @@ impl MerkleToxEngine {
             admin_pk,
             ProtocolMessage::ReinclusionRequest {
                 conversation_id,
-                sender_pk: self.self_pk,
+                sender_pk: tox_proto::Claimed::new(self.self_pk),
                 healing_snapshot_hash: snapshot_hash,
             },
         )]
     }
 
     // Periodic background tasks (e.g., CAS swarm requests, background reconciliation).
-    pub fn poll(&mut self, now: Instant, store: &dyn NodeStore) -> MerkleToxResult<Vec<Effect>> {
+    pub fn poll(
+        &mut self,
+        now: Instant,
+        store: &dyn NodeStore,
+        _blob_store: Option<&dyn crate::sync::BlobStore>,
+    ) -> MerkleToxResult<Vec<Effect>> {
         self.clear_pending();
 
         let mut effects = Vec::new();
@@ -674,13 +852,39 @@ impl MerkleToxEngine {
             }
         }
 
-        // Evict stale vouchers (VOUCHER_TIMEOUT_MS = 10s).
-        for conv in self.conversations.values_mut() {
-            for vouch_map in conv.vouchers_mut().values_mut() {
-                vouch_map
-                    .retain(|_, &mut ts| now_ms - ts <= tox_proto::constants::VOUCHER_TIMEOUT_MS);
+        // Evict stale vouchers (VOUCHER_TIMEOUT_MS = 10s). While evicting,
+        // detect §3.11 selective-withholding: if the evicted peer has the
+        // voucher's hash in its in_flight_fetches, it was asked and never
+        // served — blacklist the peer and free the hash so a fallback peer
+        // can be tried.
+        let mut withheld_by: Vec<(ConversationId, PhysicalDevicePk, NodeHash)> = Vec::new();
+        for (conv_id, conv) in self.conversations.iter_mut() {
+            for (hash, vouch_map) in conv.vouchers_mut().iter_mut() {
+                vouch_map.retain(|peer, &mut ts| {
+                    let fresh = now_ms - ts <= tox_proto::constants::VOUCHER_TIMEOUT_MS;
+                    if !fresh {
+                        withheld_by.push((*conv_id, *peer, *hash));
+                    }
+                    fresh
+                });
             }
             conv.vouchers_mut().retain(|_, v| !v.is_empty());
+        }
+        for (conv_id, peer, hash) in withheld_by {
+            if let Some(PeerSession::Active(session)) = self.sessions.get_mut(&(peer, conv_id))
+                && session.common.in_flight_fetches.remove(&hash)
+            {
+                // §3.11 signal, but one miss is indistinguishable from a
+                // dropped reply under packet loss — require repeated
+                // consecutive misses (reset on any successful receipt;
+                // see `reset_withholding_count`) before blacklisting.
+                let count = self.withholding_count.entry(peer).or_insert(0);
+                *count += 1;
+                if *count >= WITHHOLDING_THRESHOLD {
+                    self.blacklist_escalate(peer);
+                    self.withholding_count.remove(&peer);
+                }
+            }
         }
 
         // Check trust-restored devices for 30-day expiry.
@@ -728,16 +932,32 @@ impl MerkleToxEngine {
                         u64::MAX,
                     );
                     for admin_pk in admins {
-                        if admin_pk != self.self_pk
-                            && self.identity_manager.is_admin(
-                                &ctx,
-                                cid,
-                                &admin_pk,
-                                &admin_pk.to_logical(),
-                                now_ms,
-                                u64::MAX,
-                            )
-                        {
+                        if admin_pk == self.self_pk {
+                            continue;
+                        }
+                        // Peer-admin check: resolve the candidate's
+                        // logical identity in this conversation
+                        // (either an explicit cert's logical_pk or
+                        // their master identity), then check
+                        // ADMIN permission against that real pair.
+                        // Using `admin_pk.to_logical()` here was a
+                        // no-op (founder shortcut always true), so
+                        // reinclusion requests were being sent to
+                        // every authorised device regardless of
+                        // their actual permission level.
+                        let Some(logical) =
+                            self.identity_manager.resolve_logical_pk(cid, &admin_pk)
+                        else {
+                            continue;
+                        };
+                        if self.identity_manager.is_admin(
+                            &ctx,
+                            cid,
+                            &admin_pk,
+                            &logical,
+                            now_ms,
+                            u64::MAX,
+                        ) {
                             effects.extend(self.request_reinclusion(cid, admin_pk, *anchor_hash));
                             break; // One request per poll cycle
                         }
@@ -749,20 +969,12 @@ impl MerkleToxEngine {
         let conv_ids: Vec<ConversationId> = self.conversations.keys().cloned().collect();
         for cid in conv_ids {
             if self.check_rotation_triggers(cid) {
-                // Only rotate if admin. Use global context: it bypasses
-                // per-node causal ancestry check, appropriate for this
-                // proactive self-check (no specific node evaluated).
-                let ctx = crate::identity::CausalContext::global();
-                let is_admin = self.identity_manager.is_admin(
-                    &ctx,
-                    cid,
-                    &self.self_pk,
-                    &self.self_pk.to_logical(), // Assuming self-admin means master of self
-                    now_ms,
-                    u64::MAX,
-                );
-
-                if is_admin {
+                // Only rotate if we are an admin. Uses the
+                // self-admin predicate (cert-with-ADMIN or founder
+                // role); the previous `is_admin(self_pk,
+                // self_pk.to_logical())` was a no-op that triggered
+                // auto-rotation on any device.
+                if self.is_self_admin(cid) {
                     info!("Automatic rotation triggered for conversation {:?}", cid);
                     let conv_effects = self.rotate_conversation_key(cid, store)?;
                     effects.extend(conv_effects);
@@ -810,12 +1022,15 @@ impl MerkleToxEngine {
 
         // KEYWRAP_ACK timeout (merkle-tox-handshake-ecies.md §2.A.3):
         // If no ACK within 30s, retry with different OPK (max 3 attempts).
+        // Uses the time provider's `now` (set by the harness) so simulations
+        // are deterministic — `Instant::elapsed()` would use real wall time.
         const KEYWRAP_ACK_TIMEOUT: Duration = Duration::from_secs(30);
         const MAX_KEYWRAP_RETRIES: u32 = 3;
+        let now_inst = self.clock.time_provider().now_instant();
         // Collect expired pending info before retain drops it.
-        let mut removed_pending: HashMap<NodeHash, KeyWrapPending> = HashMap::new();
+        let mut removed_pending: BTreeMap<NodeHash, KeyWrapPending> = BTreeMap::new();
         self.keywrap_pending.retain(|hash, pending| {
-            if pending.created_at.elapsed() < KEYWRAP_ACK_TIMEOUT {
+            if now_inst.saturating_duration_since(pending.created_at) < KEYWRAP_ACK_TIMEOUT {
                 true // keep: still waiting
             } else if pending.attempts < MAX_KEYWRAP_RETRIES {
                 debug!(
@@ -856,15 +1071,173 @@ impl MerkleToxEngine {
             }
         }
 
-        // Handle Blob requests
+        // Handle Blob requests + proactive re-advertisement
+        // Collect all session peers for re-advertisement targets.
+        let session_peers: Vec<PhysicalDevicePk> =
+            self.sessions.keys().map(|(pk, _)| *pk).collect();
+
         for sync in self.blob_syncs.values_mut() {
             sync.clear_stalled_fetches(now);
-            let reqs = sync.next_requests(4, now);
+
+            // Send or re-send BlobFetch to each seeder. First contact is
+            // immediate; subsequent retries fire only while we have
+            // received NO pieces from this peer AND enough wallclock
+            // time has elapsed since our last attempt. Without this
+            // retry path, a single dropped BlobFetch (1% uniform loss
+            // produces ~0.4 drops per scenario in ab_compare) leaves
+            // the receiver silently waiting forever — see task #26.
+            const BLOB_FETCH_RETRY_INTERVAL: Duration = Duration::from_secs(2);
+            let made_progress_count = sync
+                .tracker
+                .completed_ranges
+                .iter()
+                .map(|&(s, e)| e - s + 1)
+                .sum::<u64>()
+                + sync.tracker.incomplete_chunks.len() as u64;
+            for (peer, _) in sync.seeders.iter() {
+                let should_send = match sync.fetch_sent.get(peer) {
+                    None => true, // never contacted
+                    Some(&last_sent) => {
+                        // Retry only if we've heard nothing yet. Once
+                        // any chunk has started arriving we can trust
+                        // the push-stream protocol to carry the rest.
+                        made_progress_count == 0
+                            && now.saturating_duration_since(last_sent)
+                                >= BLOB_FETCH_RETRY_INTERVAL
+                    }
+                };
+                if should_send {
+                    let ranges = if sync.tracker.completed_ranges.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            tox_proto::BoundedVec::try_from_iter(
+                                sync.tracker
+                                    .completed_ranges
+                                    .iter()
+                                    .take(crate::cas::MAX_BLOB_PROGRESS_RANGES)
+                                    .map(|&(s, e)| {
+                                        (
+                                            tox_proto::Untrusted::new(s),
+                                            tox_proto::Untrusted::new(e),
+                                        )
+                                    }),
+                            )
+                            .expect("take bounds iterator at cap"),
+                        )
+                    };
+                    effects.push(Effect::SendPacket(
+                        *peer,
+                        ProtocolMessage::BlobFetch(crate::cas::BlobFetch {
+                            hash: sync.info.hash,
+                            completed_ranges: ranges,
+                        }),
+                    ));
+                    sync.fetch_sent.insert(*peer, now);
+                }
+            }
+
+            // Send periodic BlobProgress to active seeders (1/sec).
+            let has_progress = !sync.tracker.completed_ranges.is_empty()
+                || !sync.tracker.incomplete_chunks.is_empty();
+            if has_progress
+                && sync
+                    .last_progress
+                    .is_none_or(|t| now.saturating_duration_since(t) >= crate::cas::PROGRESS_INTERVAL)
+            {
+                // Wrap our trusted tracker state in `Untrusted<u64>`
+                // for wire transport. Bytes on the wire are identical
+                // to plain `u64`; the tag only matters at the
+                // receiver, where it forces a clamp against their
+                // own `num_chunks`.
+                let incomplete = tox_proto::BoundedVec::<
+                    (tox_proto::Untrusted<u64>, Vec<u8>),
+                    { crate::cas::MAX_BLOB_PROGRESS_RANGES },
+                >::try_from_iter(
+                    sync.tracker
+                        .incomplete_chunks
+                        .iter()
+                        .take(crate::cas::MAX_BLOB_PROGRESS_RANGES)
+                        .map(|(&k, v)| (tox_proto::Untrusted::new(k), v.clone())),
+                )
+                .expect("take bounds iterator at cap");
+                let completed = tox_proto::BoundedVec::<
+                    (tox_proto::Untrusted<u64>, tox_proto::Untrusted<u64>),
+                    { crate::cas::MAX_BLOB_PROGRESS_RANGES },
+                >::try_from_iter(
+                    sync.tracker
+                        .completed_ranges
+                        .iter()
+                        .take(crate::cas::MAX_BLOB_PROGRESS_RANGES)
+                        .map(|&(s, e)| (tox_proto::Untrusted::new(s), tox_proto::Untrusted::new(e))),
+                )
+                .expect("take bounds iterator at cap");
+                for (peer, _) in sync.fetch_sent.iter() {
+                    effects.push(Effect::SendPacket(
+                        *peer,
+                        ProtocolMessage::BlobProgress(crate::cas::BlobProgress {
+                            hash: sync.info.hash,
+                            completed_ranges: completed.clone(),
+                            incomplete_chunks: incomplete.clone(),
+                        }),
+                    ));
+                }
+                sync.last_progress = Some(now);
+            }
+
+            // Fallback: still use request-reply for seeders that don't support push
+            // (e.g. legacy peers). This also handles the case where push streams
+            // haven't started producing data yet.
+            let reqs = sync.next_requests(crate::cas::MAX_REQUESTS_PER_POLL, now);
             for (peer, req) in reqs {
-                tracing::debug!("Generated BlobReq for {:?} from {:?}", req.hash, peer);
                 effects.push(Effect::SendPacket(peer, ProtocolMessage::BlobReq(req)));
             }
             next_wakeup = next_wakeup.min(sync.next_wakeup(now));
+
+            // Proactive re-advertisement: if we have chunks, send updated BlobAvail
+            // to all session peers so they can request chunks from us (throttled to 1/sec).
+            if !sync.tracker.is_complete()
+                && !sync.tracker.completed_ranges.is_empty()
+                && sync
+                    .last_readvertise
+                    .is_none_or(|t| now.saturating_duration_since(t) >= crate::cas::READVERTISE_INTERVAL)
+            {
+                let readvertise_info = crate::cas::BlobInfo {
+                    hash: sync.info.hash,
+                    size: sync.info.size,
+                    status: crate::cas::BlobStatus::Downloading,
+                    received_mask: None,
+                    decryption_key: None,
+                };
+                for &peer in &session_peers {
+                    if peer == self.self_pk {
+                        continue;
+                    }
+                    // Skip full seeders (they already have everything)
+                    if sync.seeders.get(&peer) == Some(&None) {
+                        continue;
+                    }
+                    effects.push(Effect::SendPacket(
+                        peer,
+                        ProtocolMessage::BlobAvail(readvertise_info.clone()),
+                    ));
+                }
+                sync.last_readvertise = Some(now);
+            }
+        }
+
+        // Push-based blob streaming is driven by node.poll() which has access
+        // to session queue capacity. Clean up completed push streams here.
+        {
+            let completed: Vec<_> = self
+                .push_streams
+                .iter()
+                .filter(|(_, s)| s.pass_complete() && s.all_done())
+                .map(|(k, _)| *k)
+                .collect();
+            for key in completed {
+                self.push_streams.remove(&key);
+            }
         }
 
         // Handle SyncSession heads advertisements and background fetching
@@ -927,7 +1300,19 @@ impl MerkleToxEngine {
                 }
 
                 // Proactive Blob discovery: Query blobs marked missing in this session
-                for blob_hash in s.common.missing_blobs.drain() {
+                let missing = std::mem::take(&mut s.common.missing_blobs);
+                for blob_hash in missing {
+                    // Populate `blob_conversations` here too — without this,
+                    // the BlobAvail authorization gate (handlers/mod.rs)
+                    // rejects the seeder's response because the responder's
+                    // BlobAvail arrives before `side_effects.rs:343` /
+                    // `verification.rs:684` finish processing the
+                    // referencing DAG node. The (blob_hash, conv_id)
+                    // binding is unambiguous here: we are sending a
+                    // BlobQuery *for this conv_id*, so the blob belongs
+                    // to it. `or_insert` keeps the first conversation
+                    // claim and avoids races with the verification path.
+                    self.blob_conversations.entry(blob_hash).or_insert(*cid);
                     effects.push(Effect::SendPacket(
                         *peer_pk,
                         ProtocolMessage::BlobQuery(blob_hash),
@@ -999,7 +1384,8 @@ impl MerkleToxEngine {
                 }
                 let sketch = tox_reconcile::SyncSketch {
                     conversation_id: cid,
-                    cells: iblt.into_cells(),
+                    cells: tox_proto::BoundedVec::try_from_iter(iblt.into_cells())
+                        .expect("Tier::cell_count() is bounded by MAX_SKETCH_CELLS"),
                     range,
                 };
                 // Send to all active peers for this conversation
@@ -1157,6 +1543,35 @@ impl MerkleToxEngine {
                 expires_at_ms: 0,
             });
         state.escalate(now);
+    }
+
+    /// Clears the §3.11 withholding counter for a peer. Called on any
+    /// successful `MerkleNode` receipt from that peer — a peer who
+    /// serves data is, by definition, not withholding.
+    pub fn reset_withholding_count(&mut self, peer_pk: PhysicalDevicePk) {
+        self.withholding_count.remove(&peer_pk);
+    }
+
+    /// Records an IBLT sketch-decode failure for this peer. Only
+    /// blacklists if the peer has previously proven decodability (via
+    /// `record_sketch_decode_success`). Without that baseline the peer
+    /// is assumed to be in initial sync — decode failures there are
+    /// expected, not evidence of misbehaviour. See the SKETCH_DECODE
+    /// commentary at the top of this file for the scenario 8 / 10
+    /// empirical trade-off behind this rule.
+    pub fn record_sketch_decode_failure(&mut self, peer_pk: PhysicalDevicePk) {
+        if self.sketch_decode_succeeded.contains(&peer_pk) {
+            self.blacklist_escalate(peer_pk);
+        }
+    }
+
+    /// Marks the peer as having decoded at least one sketch against us
+    /// this session. Subsequent decode failures will now trigger the
+    /// blacklist immediately — the peer demonstrated that decoding
+    /// works in principle, so "consistent" failure afterwards is the
+    /// spec-level signal.
+    pub fn record_sketch_decode_success(&mut self, peer_pk: PhysicalDevicePk) {
+        self.sketch_decode_succeeded.insert(peer_pk);
     }
 
     /// Returns true if a peer is currently blacklisted.
@@ -1435,7 +1850,11 @@ impl<'a> crate::sync::NodeStore for EngineStore<'a> {
                 nodes.push(node.clone());
             }
         }
-        nodes.sort_by_key(|n| n.topological_rank);
+        // Total order: rank then hash. Sibling nodes with the same rank
+        // would otherwise keep insertion order, leaking the HashMap
+        // iteration order of `cache.nodes` (now BTreeMap, but the
+        // underlying store may still be HashMap-backed).
+        nodes.sort_by_key(|n| (n.topological_rank, n.hash()));
         Ok(nodes)
     }
     fn get_node_hashes_in_range(

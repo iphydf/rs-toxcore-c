@@ -16,14 +16,14 @@ fn test_fs_store_size_calculation() {
     let conv_id = ConversationId::from([1u8; 32]);
 
     let node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 100,
         content: Content::Text("Size Test".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -46,14 +46,14 @@ fn test_fs_store_compaction_ops() {
 
     for i in 1..=10 {
         let node = MerkleNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             author_pk: LogicalIdentityPk::from([1u8; 32]),
             sender_pk: PhysicalDevicePk::from([1u8; 32]),
             sequence_number: i,
             topological_rank: i - 1,
             network_timestamp: 100,
             content: Content::Text(format!("Node {}", i)),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
             pow_nonce: 0,
         };

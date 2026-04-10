@@ -309,7 +309,7 @@ enum Content {
 
     /// ID 6: File/Image reference in the CAS
     Blob {
-        hash: [u8; 32],      // Bao root hash of the file content (see merkle-tox-cas.md)
+        hash: [u8; 32],      // Chunk-Merkle root hash of the file content (see merkle-tox-cas.md §3)
         name: String,        // Filename
         mime_type: String,
         size: u64,

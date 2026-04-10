@@ -159,6 +159,32 @@ fn test_partitioned_swarm_convergence() {
 
     // 3. Heal partitions: allow all communication
     hub.clear_partitions();
+
+    // Re-trigger sync for all peer pairs (the datagram transport doesn't
+    // retransmit lost CapsAnnounce packets from phase 2 that were blocked
+    // by the partition).
+    for (i, node) in nodes.iter().enumerate().take(node_count) {
+        let peer_pks: Vec<_> = (0..node_count)
+            .filter(|&j| j != i)
+            .map(|j| identities[j].device_pk)
+            .collect();
+        let mut n = node.lock().unwrap();
+        let node_ref = &mut *n;
+        for peer_pk in peer_pks {
+            let effects = node_ref
+                .engine
+                .start_sync(conv_id, Some(peer_pk), &node_ref.store);
+            let now_inst = node_ref.time_provider.now_instant();
+            let now_ms = node_ref.time_provider.now_system_ms() as u64;
+            let mut dummy_wakeup = now_inst;
+            for effect in effects {
+                node_ref
+                    .process_effect(effect, now_inst, now_ms, &mut dummy_wakeup)
+                    .unwrap();
+            }
+        }
+    }
+
     let heal_start = tp.now_instant();
     let timeout = Duration::from_secs(300);
 
@@ -223,6 +249,6 @@ fn test_partitioned_swarm_convergence() {
         }
 
         hub.poll();
-        tp.advance(Duration::from_millis(50));
+        tp.advance(Duration::from_millis(10));
     }
 }

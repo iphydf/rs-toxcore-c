@@ -34,8 +34,26 @@ impl<F: FileSystem> StateFile<F> {
         let data = tox_proto::serialize(state).map_err(|e| io::Error::other(e.to_string()))?;
         let mut tmp_path = self.path.clone();
         tmp_path.set_extension("tmp");
-        self.fs.write(&tmp_path, &data)?;
+        // Tmp+rename atomicity requires three barriers, not two:
+        // 1. Write tmp file contents.
+        // 2. fsync tmp file so data hits disk before the directory
+        //    metadata change.
+        // 3. Rename tmp → final (atomic on POSIX).
+        // 4. fsync the parent directory so the rename is durable.
+        // Without (2) the rename can land on a file whose contents
+        // haven't yet hit disk; without (4) the rename itself can
+        // be lost across crash on filesystems that don't guarantee
+        // metadata-write ordering against data writes (ext4 default,
+        // btrfs, zfs without sync=always).
+        {
+            let mut handle = self.fs.open(&tmp_path, true, true, true)?;
+            handle.write_all(&data)?;
+            handle.sync_data()?;
+        }
         self.fs.rename(&tmp_path, &self.path)?;
+        if let Some(parent) = self.path.parent() {
+            self.fs.sync_dir(parent)?;
+        }
         Ok(())
     }
 }
@@ -144,7 +162,8 @@ impl<F: FileSystem> RatchetFile<F> {
             self.handle.write_all(&slot_buf)?;
         }
 
-        // Update counts and active buffer
+        // Update counts (the per-buffer slot count) before the active
+        // pointer flip.
         if next == 0 {
             self.handle.seek(SeekFrom::Start(8))?;
             self.handle.write_all(&(slots.len() as u32).to_le_bytes())?;
@@ -153,8 +172,25 @@ impl<F: FileSystem> RatchetFile<F> {
             self.handle.write_all(&(slots.len() as u32).to_le_bytes())?;
         }
 
+        // CRITICAL durability ordering for the double-buffer trick:
+        // the new buffer's payload + count MUST be on disk before
+        // the active-pointer flip, otherwise crash recovery loads
+        // a buffer pointer that points at zeros (or torn data),
+        // wiping all per-device sequence-number state. Without this
+        // fsync, ext4 with deferred allocation can land the 4-byte
+        // active-pointer metadata write before the buffer payload —
+        // silent loss of the next batch of inbound packets.
+        self.handle.sync_data()?;
+
         self.handle.seek(SeekFrom::Start(4))?;
         self.handle.write_all(&next.to_le_bytes())?;
+        // Second fsync so the active-pointer flip itself is durable;
+        // otherwise a crash between the flip and the next routine
+        // fsync could let the receiver come back believing the
+        // *prior* buffer is still active, losing any updates that
+        // had been written into `next` and counted on for sequence
+        // monotonicity by the caller.
+        self.handle.sync_data()?;
         Ok(())
     }
 }

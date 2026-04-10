@@ -3,10 +3,35 @@ use std::time::Duration;
 
 use merkle_tox_core::dag::{ConversationId, NodeHash, PhysicalDevicePk};
 use merkle_tox_core::node::MerkleToxNode;
-use merkle_tox_core::sync::BlobStore;
+use merkle_tox_core::sync::{BlobStore, NodeStore};
 use merkle_tox_core::testing::InMemoryStore;
 
 use crate::harness::CountingTransport;
+
+/// Tracks one author-time + per-recipient verify-time triple. The
+/// author's own slot is left at the authoring instant; recipient slots
+/// fill in once each node observes the marker as verified.
+#[derive(Debug, Clone)]
+pub struct MarkerSample {
+    pub node_hash: NodeHash,
+    pub author_idx: usize,
+    pub authored_at: Duration,
+    /// `verified_at[i]` is `Some(t)` when verifier `i` first sees the
+    /// marker as verified, else `None`. `verified_at[author_idx]` is
+    /// pre-populated to `Some(authored_at)` since the author trivially
+    /// has it the moment they author.
+    pub verified_at: Vec<Option<Duration>>,
+}
+
+/// Aggregate per-message latency stats for one scenario run.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct LatencyHistogram {
+    pub samples: usize,
+    pub p50_ms: u64,
+    pub p95_ms: u64,
+    pub max_ms: u64,
+    pub mean_ms: u64,
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NodeMetrics {
@@ -31,6 +56,16 @@ pub struct AggregatedMetrics {
     pub phase_name: String,
     pub phase_idx: usize,
     pub score: f32,
+    /// Largest admin/content frontier (max heads observed at any node)
+    /// seen across the whole scenario. A wide frontier means slow
+    /// consolidation: would have surfaced the MAX_PARENTS=16 issue
+    /// directly, since its peak admin frontier was N (= node count).
+    #[serde(default)]
+    pub peak_admin_frontier: u32,
+    #[serde(default)]
+    pub peak_content_frontier: u32,
+    #[serde(default)]
+    pub peak_frontier_at: Option<Duration>,
 }
 
 impl Default for AggregatedMetrics {
@@ -46,6 +81,9 @@ impl Default for AggregatedMetrics {
             phase_name: String::new(),
             phase_idx: 0,
             score: 0.0,
+            peak_admin_frontier: 0,
+            peak_content_frontier: 0,
+            peak_frontier_at: None,
         }
     }
 }
@@ -63,6 +101,10 @@ pub struct MetricsCollector {
     pub aggregated: AggregatedMetrics,
     pub blob_hashes: Vec<NodeHash>,
     pub useful_bytes: u64,
+    /// Author-tagged content nodes whose end-to-end verify time we
+    /// want to measure. Populated by `note_marker_authored` and
+    /// updated each tick by `observe_marker_propagation`.
+    pub markers: Vec<MarkerSample>,
     last_bytes_tx: u64,
     last_sample_time: Duration,
     convergence_reached: bool,
@@ -83,11 +125,113 @@ impl MetricsCollector {
             aggregated: AggregatedMetrics::default(),
             blob_hashes: Vec::new(),
             useful_bytes: 0,
+            markers: Vec::new(),
             last_bytes_tx: 0,
             last_sample_time: Duration::ZERO,
             convergence_reached: false,
             blobs_completed: false,
         }
+    }
+
+    /// Register a freshly-authored marker content node. The author's
+    /// own slot in `verified_at` is set to the authoring instant since
+    /// they trivially have it; recipients fill in via
+    /// `observe_marker_propagation`.
+    pub fn note_marker_authored(
+        &mut self,
+        node_hash: NodeHash,
+        author_idx: usize,
+        node_count: usize,
+        authored_at: Duration,
+    ) {
+        let mut verified_at = vec![None; node_count];
+        if author_idx < node_count {
+            verified_at[author_idx] = Some(authored_at);
+        }
+        self.markers.push(MarkerSample {
+            node_hash,
+            author_idx,
+            authored_at,
+            verified_at,
+        });
+    }
+
+    /// Per-tick: stamp first-verified-at-this-node for each registered
+    /// marker. O(markers × nodes) per call, intended for small marker
+    /// counts (~5).
+    ///
+    /// "Verified" here means `has_node` is true — the node has reached
+    /// the verified store. We don't gate on `is_verified` because some
+    /// content nodes legitimately route via the opaque-then-promote
+    /// path: at the moment they're promoted to verified the
+    /// `verified=true` flag flips, but the recipient's tick may have
+    /// already passed `is_verified` once with `false`. `has_node` is
+    /// the more reliable "has the recipient seen this hash" signal.
+    pub fn observe_marker_propagation(
+        &mut self,
+        nodes: &[crate::harness::BenchNode],
+        conv_id: &ConversationId,
+        virtual_elapsed: Duration,
+    ) {
+        for marker in &mut self.markers {
+            for (idx, bn) in nodes.iter().enumerate() {
+                if marker.verified_at[idx].is_some() {
+                    continue;
+                }
+                if bn.node.store.is_verified(&marker.node_hash) {
+                    marker.verified_at[idx] = Some(virtual_elapsed);
+                }
+            }
+            // Suppress unused-conv_id warning when the field becomes
+            // useful for per-conversation marker scoping later.
+            let _ = conv_id;
+        }
+    }
+
+    /// Flatten verified-at deltas across all markers and recipients
+    /// (excluding each marker's author) into a histogram.
+    pub fn latency_histogram(&self) -> LatencyHistogram {
+        let mut deltas_ms: Vec<u64> = Vec::new();
+        for marker in &self.markers {
+            for (idx, t) in marker.verified_at.iter().enumerate() {
+                if idx == marker.author_idx {
+                    continue;
+                }
+                if let Some(t) = t {
+                    deltas_ms.push(t.saturating_sub(marker.authored_at).as_millis() as u64);
+                }
+            }
+        }
+        if deltas_ms.is_empty() {
+            return LatencyHistogram::default();
+        }
+        deltas_ms.sort_unstable();
+        let n = deltas_ms.len();
+        let p = |q: f64| -> u64 {
+            // nearest-rank percentile, 1-indexed
+            let idx = ((q * n as f64).ceil() as usize).clamp(1, n) - 1;
+            deltas_ms[idx]
+        };
+        let sum: u64 = deltas_ms.iter().sum();
+        LatencyHistogram {
+            samples: n,
+            p50_ms: p(0.50),
+            p95_ms: p(0.95),
+            max_ms: *deltas_ms.last().unwrap(),
+            mean_ms: sum / n as u64,
+        }
+    }
+
+    /// True when at least one marker is registered AND at least one
+    /// recipient slot is still `None`. Useful for gating an
+    /// early-converge exit.
+    pub fn markers_outstanding(&self) -> bool {
+        self.markers.iter().any(|m| {
+            m.verified_at
+                .iter()
+                .enumerate()
+                .any(|(idx, t)| idx != m.author_idx && t.is_none())
+        })
     }
 
     pub fn collect(
@@ -104,6 +248,8 @@ impl MetricsCollector {
         let mut min_verified: usize = usize::MAX;
         let mut max_verified: usize = 0;
         let mut total_bytes_tx: u64 = 0;
+        let mut admin_frontier_max: u32 = 0;
+        let mut content_frontier_max: u32 = 0;
 
         for bn in nodes {
             let status = bn.node.status(conv_id);
@@ -126,7 +272,23 @@ impl MetricsCollector {
             min_verified = min_verified.min(status.verified_count);
             max_verified = max_verified.max(status.verified_count);
             total_bytes_tx += bytes_tx;
+
+            let admin_heads = bn.node.store.get_admin_heads(conv_id).len() as u32;
+            let content_heads = bn.node.store.get_heads(conv_id).len() as u32;
+            admin_frontier_max = admin_frontier_max.max(admin_heads);
+            content_frontier_max = content_frontier_max.max(content_heads);
         }
+
+        let prior_peak = self.aggregated.peak_admin_frontier
+            .max(self.aggregated.peak_content_frontier);
+        let new_peak = admin_frontier_max.max(content_frontier_max);
+        if new_peak > prior_peak {
+            self.aggregated.peak_frontier_at = Some(virtual_elapsed);
+        }
+        self.aggregated.peak_admin_frontier =
+            self.aggregated.peak_admin_frontier.max(admin_frontier_max);
+        self.aggregated.peak_content_frontier =
+            self.aggregated.peak_content_frontier.max(content_frontier_max);
 
         let convergence_pct = if max_verified > 0 {
             (min_verified as f32 / max_verified as f32) * 100.0
@@ -147,7 +309,13 @@ impl MetricsCollector {
         self.last_bytes_tx = total_bytes_tx;
         self.last_sample_time = virtual_elapsed;
 
-        if convergence_pct >= 99.9 && !self.convergence_reached {
+        // Only count convergence after the scenario has actually authored
+        // something — otherwise the trivial "genesis-only" state at t=0
+        // satisfies min==max and latches dag_convergence_time to 0ms.
+        if self.useful_bytes > 0
+            && convergence_pct >= 99.9
+            && !self.convergence_reached
+        {
             self.convergence_reached = true;
             self.aggregated.dag_convergence_time = Some(virtual_elapsed);
         }
@@ -280,6 +448,30 @@ pub struct ScenarioResult {
     pub blob_completion_time_ms: Option<u64>,
     pub total_bytes_tx: u64,
     pub timed_out: bool,
+    /// Real wall-clock time spent simulating this scenario, distinct
+    /// from `dag_convergence_time_ms` which is virtual sim time. Lets
+    /// us see "how long does this take to simulate" — relevant when
+    /// surfacing O(N²) cost in large-group scenarios.
+    #[serde(default)]
+    pub wall_clock_ms: Option<u64>,
+    /// Author-to-verified latency stats across the scenario's marker
+    /// messages. `None` when no markers were registered.
+    #[serde(default)]
+    pub latency: Option<LatencyHistogram>,
+    /// Largest admin-track frontier (max heads across nodes) seen
+    /// during the scenario. Wide frontiers mean slow consolidation.
+    #[serde(default)]
+    pub peak_admin_frontier: u32,
+    /// Largest content-track frontier seen during the scenario.
+    #[serde(default)]
+    pub peak_content_frontier: u32,
+    /// User-facing payload bytes the scenario *intended* to deliver
+    /// (sum of message text + blob seed sizes). Compared against
+    /// `total_bytes_tx` (wire bytes) to surface protocol overhead.
+    /// At small N this is dominated by handshake amortisation; at
+    /// large N it surfaces JIT-SKD / KeyWrap fan-out cost.
+    #[serde(default)]
+    pub useful_bytes: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

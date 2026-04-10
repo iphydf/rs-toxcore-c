@@ -145,6 +145,13 @@ impl PackIndex {
             r.to_bytes(&mut buf);
             file.write_all(&buf)?;
         }
+        // fsync the pack index so the index records are durable before
+        // the caller advances `state.bin` to point at this pack. The
+        // compaction commit ordering depends on this — see
+        // `merkle-tox-fs/src/lib.rs::compact_internal` for the full
+        // sequence (pack data fsync → pack index fsync → packs/ dir
+        // sync → journal truncate → state.bin save).
+        file.sync_data()?;
         Ok(())
     }
 

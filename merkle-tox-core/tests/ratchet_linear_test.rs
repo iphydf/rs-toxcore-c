@@ -26,7 +26,7 @@ fn test_epoch_prefixed_sequence_numbers() {
 
     // 1. Author node in Epoch 0
     let effects = engine
-        .author_node(conv_id, Content::Text("Msg 1".into()), vec![], &store)
+        .author_node(conv_id, Content::Text("Msg 1".into()), Vec::new(), &store)
         .unwrap();
     let node1 = effects
         .iter()
@@ -48,7 +48,7 @@ fn test_epoch_prefixed_sequence_numbers() {
 
     // 3. Author node in Epoch 1
     let effects = engine
-        .author_node(conv_id, Content::Text("Msg 2".into()), vec![], &store)
+        .author_node(conv_id, Content::Text("Msg 2".into()), Vec::new(), &store)
         .unwrap();
     let node2 = effects
         .iter()
@@ -66,7 +66,7 @@ fn test_epoch_prefixed_sequence_numbers() {
 
     // 4. Author another node in Epoch 1
     let effects = engine
-        .author_node(conv_id, Content::Text("Msg 3".into()), vec![], &store)
+        .author_node(conv_id, Content::Text("Msg 3".into()), Vec::new(), &store)
         .unwrap();
     let node3 = effects
         .iter()
@@ -113,7 +113,7 @@ fn test_per_sender_ratchet_isolation() {
     // 1. Alice authors Msg A1
     //    JIT piggybacking authors a JIT SKD for Bob first (seq=1), then "A1" (seq=2).
     let effects = alice_engine
-        .author_node(conv_id, Content::Text("A1".into()), vec![], &alice_store)
+        .author_node(conv_id, Content::Text("A1".into()), Vec::new(), &alice_store)
         .unwrap();
     let all_a_nodes = merkle_tox_core::testing::get_all_nodes_from_effects(&effects);
     let node_a1 = all_a_nodes.last().unwrap();
@@ -123,7 +123,7 @@ fn test_per_sender_ratchet_isolation() {
     // 2. Bob authors Msg B1
     //    Similarly: JIT SKD for Alice (seq=1), then "B1" (seq=2).
     let effects = bob_engine
-        .author_node(conv_id, Content::Text("B1".into()), vec![], &bob_store)
+        .author_node(conv_id, Content::Text("B1".into()), Vec::new(), &bob_store)
         .unwrap();
     let all_b_nodes = merkle_tox_core::testing::get_all_nodes_from_effects(&effects);
     let node_b1 = all_b_nodes.last().unwrap();
@@ -186,7 +186,7 @@ fn test_out_of_order_reverification() {
     // Bob authors B1 and B2
     // JIT piggybacking: first author_node produces [JIT_SKD, B1], second produces [B2]
     let effects = bob_engine
-        .author_node(conv_id, Content::Text("B1".into()), vec![], &bob_store)
+        .author_node(conv_id, Content::Text("B1".into()), Vec::new(), &bob_store)
         .unwrap();
     let all_b1_nodes = merkle_tox_core::testing::get_all_nodes_from_effects(&effects);
     let node_b1_text = all_b1_nodes.last().unwrap().clone();
@@ -194,7 +194,7 @@ fn test_out_of_order_reverification() {
     merkle_tox_core::testing::apply_effects(effects, &bob_store);
 
     let effects = bob_engine
-        .author_node(conv_id, Content::Text("B2".into()), vec![], &bob_store)
+        .author_node(conv_id, Content::Text("B2".into()), Vec::new(), &bob_store)
         .unwrap();
     let all_b2_nodes = merkle_tox_core::testing::get_all_nodes_from_effects(&effects);
     let node_b2_text = all_b2_nodes.last().unwrap().clone();

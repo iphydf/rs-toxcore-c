@@ -109,13 +109,13 @@ known vulnerabilities or redundancies.
 ## 9. Application-Layer Time Sync (Dismissed)
 
 *   **Original Proposal**: Perform time synchronization via high-level protocol
-    messages (TIME_SYNC_REQ/RES) over the reliable ARQ transport.
-*   **Decision**: Dismissed to avoid **ARQ Jitter**.
-*   **Rationale**: ARQ transports retransmit lost packets, which introduces
-    variable and unpredictable delays, making accurate RTT and offset
-    calculations impossible. By moving time sync to the transport-layer
-    heartbeats (PING/PONG), we get "free" measurements that bypass
-    retransmission buffers and reflect the pure wire latency.
+    messages (TIME_SYNC_REQ/RES) over the application protocol.
+*   **Decision**: Dismissed to avoid **retransmission jitter**.
+*   **Rationale**: If time sync messages are subject to application-level retry
+    logic, retransmissions introduce variable and unpredictable delays, making
+    accurate RTT and offset calculations impossible. By measuring time at the
+    transport layer via heartbeats (PING/PONG), we get "free" measurements that
+    reflect the pure wire latency.
 *   **Result**: Move time measurement to the `tox-sequenced` transport layer.
     The logic layer now only handles the **Median Consensus** and **Slewing**.
 
@@ -159,3 +159,221 @@ known vulnerabilities or redundancies.
 *   **Result**: Relied on cryptographic authentication (`SoftAnchor`
     Anti-Branching rule) which is computationally cheap to verify ($O(1)$) and
     bounds the attack surface.
+
+## 13. Transport-Level Reliable Delivery for Blob Data (Dismissed)
+
+*   **Original Proposal**: Send blob data as reliable, fragmented messages
+    through the `tox-sequenced` transport layer (the same path used for control
+    messages like SyncHeads and MerkleNode). A 64KB blob chunk would be
+    fragmented into ~49 transport fragments, reassembled at the receiver, and
+    ACKed as a single message.
+*   **Decision**: Dismissed due to **head-of-line blocking** and **feedback
+    starvation**.
+*   **Rationale**:
+    1.  **Head-of-line blocking**: A 64KB message fragmented into 49 pieces
+        stalls entirely if one fragment is lost. The receiver cannot use any of
+        the 48 successfully received fragments until the missing one arrives.
+        With a 200ms retransmission timeout, one lost fragment delays 64KB of
+        data by at least 200ms.
+    2.  **Feedback starvation**: The sender receives no delivery signal until
+        all 49 fragments arrive and the receiver sends a message-level ACK.
+        This delays congestion control feedback by the time it takes to
+        complete an entire message (~200ms with 20ms polling), preventing the
+        bandwidth estimator from converging.
+    3.  **Redundant reliability**: The CAS layer already tracks which blob
+        pieces are missing (via bitmask) and can request retransmission
+        precisely. Transport-level retransmission duplicates this with less
+        information — it retransmits fragments, not content-addressed pieces.
+    4.  **Spurious retransmissions**: With many concurrent large messages
+        sharing a small congestion window, individual messages take longer to
+        complete than the retransmission timeout, triggering unnecessary
+        retransmissions that waste 2-3× bandwidth.
+*   **Result**: Blob data is sent as single-packet sequenced DATA packets
+    (~1300 bytes each). The transport tracks delivery for congestion control
+    but does NOT retransmit — the CAS layer handles retransmission via
+    `BLOB_PROGRESS` bitmask feedback and credit-based flow control. See
+    `merkle-tox-cas.md` Section 4.
+
+## 14. Removing Fragment Reassembly from Transport (Dismissed)
+
+*   **Original Proposal**: Eliminate the FRAGMENT packet type entirely.
+    Require all protocol messages to fit in a single packet (~1350 bytes), or
+    handle splitting at the application layer per message type.
+*   **Decision**: Dismissed due to **complexity duplication**.
+*   **Rationale**: Several protocol messages legitimately exceed the packet
+    MTU — SyncSketch (IBLT cells, 3-49KB), large MerkleNodes (KeyWrap with
+    many recipients, Snapshot with many members), and SyncShardChecksums
+    (48KB for large archives). These messages are atomic units: an IBLT
+    requires all cells to decode, a WireNode requires all fields to verify
+    its signature. Without transport-level fragmentation, each message type
+    would need its own `(message_id, part_index, total_parts, data)` framing
+    and reassembly buffer — reimplementing FRAGMENT at the application layer,
+    duplicated across handlers.
+*   **Alternatives considered**:
+    -   *Reduce FetchBatchReq size*: MAX_BATCH_SIZE can be reduced from 64 to
+        ~38 hashes to fit in one packet. This avoids fragmentation for batch
+        requests specifically, but does not help SyncSketch or MerkleNode.
+    -   *Split IBLT across datagrams*: Send individual cells and accept that
+        loss → decode failure → fallback to shard checksums. Wastes a
+        reconciliation round on every lost cell.
+    -   *Application-level generic fragmenter*: A reusable split/reassemble
+        utility in merkle-tox-core. This is just FRAGMENT in a different
+        layer, with no benefit.
+*   **Result**: Keep FRAGMENT (0x04) in the transport as a minimal
+    reassembly mechanism. It provides multi-packet framing with a 5-second
+    timeout — no reliability, no retransmission. If any fragment is lost, the
+    entire message is dropped and the application's self-healing protocols
+    (sync reconciliation, re-request) handle the miss.
+
+## 15. All-Datagram Transport — No Reliable Messages (Adopted)
+
+*   **Original Proposal**: `tox-sequenced` provided TCP-like reliable delivery
+    with per-fragment ACKs, selective retransmission, and message-level
+    completion guarantees. All protocol messages (control, DAG nodes, blob
+    data) used the same reliable message path.
+*   **Decision**: Redesign `tox-sequenced` as a **congestion-controlled
+    datagram transport** with no reliability.
+*   **Rationale**: The transport should control the **rate** (congestion
+    control, pacing). The application should control the **content** (what to
+    send and retry). The application has semantic knowledge the transport
+    lacks:
+    -   **DAG nodes are content-addressed**: the sync protocol knows which
+        nodes are missing and re-requests them. Transport retransmission is
+        redundant.
+    -   **Blob chunks are unordered**: any piece is independently useful.
+        Bitmask-based CAS tracking is more efficient than per-fragment ACKs.
+    -   **Control messages are request/response**: the application knows when
+        a response is overdue and can retry with updated state, rather than
+        blindly retransmitting a stale request.
+*   **Result**: Two transport primitives:
+    1.  **DATA** (sequenced datagram): single-packet, tracked by ACK bitmaps
+        for congestion control. Used for all single-packet messages including
+        bulk blob data. The CC gets per-packet loss visibility across all
+        traffic.
+    2.  **FRAGMENT** (multi-packet): reassembly with timeout, no reliability.
+        Used for oversized protocol messages (SyncSketch, large MerkleNode).
+    The transport emits `DatagramLost`/`DatagramDelivered` events. The
+    application decides whether to retransmit based on its semantics.
+
+## 16. Unsequenced Datagrams for Blob Data (Dismissed)
+
+*   **Original Proposal**: Add a separate DATAGRAM (unsequenced) packet type
+    for blob data, without sequence numbers or ACK bitmap tracking. The CAS
+    layer would handle all feedback via BLOB_PROGRESS bitmasks, and the
+    transport would be unaware of individual blob packet delivery.
+*   **Decision**: Dismissed. All packets use sequenced DATA.
+*   **Rationale**: On a P2P network with variable connection quality (NAT
+    traversal, UDP hole punching, TCP relay fallback), the congestion
+    controller needs *some* per-packet loss signal to distinguish "sending
+    too fast" from "slow but lossless link." Without sequence numbers, the
+    sender has no way to identify which specific packet was lost or to time
+    a per-packet RTO. Bandwidth estimation can run on cumulative byte
+    counters, but loss-driven CC reactions (AIMD halving, BBR's loss-rate
+    threshold) need a per-packet anchor.
+*   **Result**: Kept sequence numbers on every DATA packet. The transport
+    knows what it sent and when, and can detect loss via timer (Section 17).
+    The application still handles reliability — the transport never
+    retransmits, it only reports loss via `DatagramLost(seq)` events.
+
+## 17. ACK Encoding: Bounded SACK Ranges (Final Shape)
+
+The ACK packet went through three iterations on the way to its final
+shape. This section records the journey because each step taught
+something the next one needed.
+
+### 17a. Iteration 1 — Unbounded bitmap (original; dismissed)
+
+The receiver maintained a sliding-window bitmap of received sequence
+numbers and sent it on the wire in every ACK. The sender resolved
+individual `sent_datagrams` entries against the bitmap; gaps older
+than `2 × RTT` triggered `DatagramLost(seq)` events.
+
+**Failure**: under sustained loss with a non-contiguous receive
+pattern, `advance_base` could not advance past the oldest gap. The
+bitmap grew without bound, eventually exceeding `MAX_DATAGRAM_SIZE`
+and causing every ACK send to fail with
+`TOX_ERR_FRIEND_CUSTOM_PACKET_TOO_LONG`. The connection then wedged
+permanently — no acks reached the sender, `bytes_acked` stayed
+pinned, the send window stayed closed.
+
+### 17b. Iteration 2 — Cumulative-only ACK (intermediate; abandoned)
+
+To make the ACK fixed-size, we considered a TCP Tahoe-style
+cumulative-only ACK: `{base_seq, recv_bytes}`. Loss detection moved
+entirely to a sender-side RFC 6298 RTO timer.
+
+**Failure**: in real-loss conditions, the receiver's `base_seq`
+anchors at the oldest unfilled gap, while seqs above the gap may be
+arriving fine. The sender has no way to know about those above-base
+receipts; from its perspective they're just unresolved entries
+aging past RTO. We measured **~92% false-positive loss** under 4 %
+real wire loss in the e2e bench. The CC reacted by collapsing cwnd,
+throughput dropped to ~3 Mbps. Architecturally correct (ack channel
+no longer wedges), but not viable in practice.
+
+A separate flaw exposed during this iteration: `outstanding_bytes`
+was defined as `bytes_sent − bytes_acked`, peer-driven. After cwnd
+collapse, `bytes_acked` couldn't advance until alice resumed
+sending, but alice couldn't send because the cwnd gate read
+`outstanding` as still-pinned. **Fix retained** in the final shape:
+`outstanding_bytes` now sums unresolved `sent_datagrams` entry sizes
+(local view), so resolved-as-lost entries free up window without
+waiting for the peer's recv counter.
+
+### 17c. Iteration 3 — Cumulative + bounded SACK ranges (adopted)
+
+The ACK now carries
+`{base_seq, recv_bytes, sack_ranges: SmallVec<(u32, u32), 8>}`. SACK
+ranges report above-base receipts compactly: each
+`(start_seq, length)` pair covers a run of received seqs that the
+sender can resolve immediately. Capped at 8 ranges, ~80 bytes
+maximum on the wire — the wedge from §17a remains structurally
+impossible.
+
+**Why this is the right shape**:
+
+-   **Wedge-safe by construction.** The SACK list size is bounded
+    independent of loss pattern, traffic volume, or window size.
+-   **Accurate under loss.** SACK tells the sender exactly which
+    above-base seqs arrived, eliminating the false-positive loss
+    storm of §17b. End-to-end measurement: 11× fewer loss events on
+    a 100 MB transfer.
+-   **No application-layer regression.** CAS retransmission still
+    runs off `BLOB_PROGRESS` bitmasks (~100 ms cadence). The transport
+    just emits more accurate `DatagramDelivered`/`DatagramLost`
+    timing.
+-   **CC integration unchanged.** BBR/AIMD/Cubic continue to consume
+    `(rtt, sample, bytes_acked, in_flight)`. Critically, the
+    delivery-rate sample's `bytes_delivered` field comes from
+    `delta_recv_bytes` (the peer's authoritative recv counter), NOT
+    from SACK-resolved bytes. SACK accelerates *resolution* of
+    `sent_datagrams`; it does not feed the bandwidth estimator.
+    Re-counting SACK bytes there would double-count and produce
+    fabricated throughput estimates.
+-   **Backstop preserved.** The RFC 6298 RTO timer remains as a
+    fallback for tail loss (last few seqs of a burst, peer goes
+    silent) and any other condition SACK can't cover. With SACK
+    present it fires only for genuinely lost packets.
+
+**What it costs**:
+
+-   ~80 bytes per ACK in the worst case (vs. 12 bytes for cumulative
+    only). Negligible vs. data packet sizes.
+-   Per-seq receipt info is now visible to the peer. This weakens
+    transport-metadata privacy slightly (loss patterns are
+    inferable). The implementation applies ±5 ms random jitter to
+    ACK *transmission timing* (constant `ACK_JITTER_MS` in
+    `tox-sequenced/src/session.rs`), matching the PONG timestamp
+    jitter in `merkle-tox-clock.md` §3.3. The jitter is regenerated
+    on every flush call and bounds observable inter-ACK timing
+    variation without changing the averaged emission cadence.
+
+### Summary
+
+ACK packet: `{base_seq, recv_bytes, sack_ranges}`. The sender
+resolves `sent_datagrams` entries via cumulative ack (seq < base),
+selective ack (covered by a SACK range), and timer-based loss (RTO).
+The cwnd gate uses local-view `outstanding_bytes`. The receiver
+maintains a bounded `RecvTracker` (1024-bit internal bitmap + base)
+purely as runtime state — never serialized to the wire — used only
+to compute `base_seq` and the next SACK range list at flush time.

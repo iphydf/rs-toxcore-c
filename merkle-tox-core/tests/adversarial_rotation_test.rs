@@ -131,7 +131,7 @@ fn test_pcs_exclusion_adversarial() {
     let mut evil_node = merkle_tox_core::testing::test_node();
     evil_node.author_pk = malicious_id.master_pk;
     evil_node.sender_pk = malicious_id.device_pk;
-    evil_node.parents = vec![msg_e1.hash()];
+    evil_node.parents = tox_proto::bounded_vec![msg_e1.hash()];
     evil_node.topological_rank = msg_e1.topological_rank + 1;
     evil_node.content = Content::Text("I am still here!".to_string());
 

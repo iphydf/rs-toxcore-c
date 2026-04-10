@@ -36,6 +36,33 @@ pub struct FsStore<F: FileSystem = StdFileSystem> {
 
 const COMPACT_THRESHOLD: usize = 500;
 
+/// Acquire `LOCK_EX` on a conversation `.lock` file before a write, per
+/// spec §3.2.2. Caller is responsible for downgrading back to `LOCK_SH`
+/// after the write via `release_conv_lock` (or `try_lock_shared` directly).
+///
+/// We can't use RAII here because the natural pattern (guard borrows
+/// from `ctx.lock_file`, ctx borrows from `inner.conversations`) clashes
+/// with downstream code paths that need `&mut inner` while the guard is
+/// alive (notably `compact_internal`). The explicit acquire/release
+/// pattern stays compatible with the existing borrow shape.
+fn acquire_conv_lock_ex(lock_file: &dyn FileHandle) -> MerkleToxResult<()> {
+    lock_file.try_lock_exclusive().map_err(|_| {
+        MerkleToxError::Io(Error::other(
+            "Failed to acquire exclusive conversation lock for write \
+             (another process holds LOCK_SH or LOCK_EX) — spec §3.2.2",
+        ))
+    })
+}
+
+/// Best-effort downgrade from `LOCK_EX` back to `LOCK_SH`. If this fails
+/// the fd stays in `LOCK_EX`, which is safe (same-fd subsequent EX
+/// upgrades are no-ops; only future cross-process shared attaches are
+/// blocked, and they would have been blocked during the active write
+/// anyway).
+fn release_conv_lock(lock_file: &dyn FileHandle) {
+    let _ = lock_file.try_lock_shared();
+}
+
 struct FsInner<F: FileSystem> {
     conversations: HashMap<ConversationId, ConversationContext<F>>,
     node_to_conv: HashMap<NodeHash, ConversationId>,
@@ -147,18 +174,12 @@ impl<F: FileSystem> FsStore<F> {
         self.ensure_conversation(id)?;
         let mut inner = self.inner.write();
         {
-            let ctx = inner.conversations.get_mut(id).unwrap();
-            ctx.lock_file.try_lock_exclusive().map_err(|_| {
-                MerkleToxError::Io(Error::other(
-                    "Failed to upgrade to exclusive lock for compaction",
-                ))
-            })?;
+            let ctx = inner.conversations.get(id).unwrap();
+            acquire_conv_lock_ex(&*ctx.lock_file)?;
         }
         let res = self.compact_internal(&mut inner, id);
-        {
-            if let Some(ctx) = inner.conversations.get_mut(id) {
-                let _ = ctx.lock_file.try_lock_shared(); // downgrade back
-            }
+        if let Some(ctx) = inner.conversations.get(id) {
+            release_conv_lock(&*ctx.lock_file);
         }
         res
     }
@@ -225,10 +246,26 @@ impl<F: FileSystem> FsStore<F> {
             return Ok(());
         }
 
-        let pack_id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64;
+        // pack_id only needs to be unique within the conversation —
+        // it's a filename component and an entry in `active_packs`,
+        // never compared against wall-clock time. The previous
+        // `SystemTime::now().duration_since(UNIX_EPOCH).unwrap()`
+        // pattern panicked on any pre-1970 clock (NTP step before
+        // sync, CMOS reset, container clock drift), crashing the node
+        // mid-compaction and risking journal/pack inconsistency.
+        //
+        // Use the current pack-set max + 1, with a SystemTime-derived
+        // fallback only when the set is empty (first compaction). The
+        // SystemTime path is now also fallible-safe via `unwrap_or`,
+        // so a pre-epoch clock at first-compaction time picks `1`
+        // rather than crashing.
+        let pack_id = match ctx.state.active_packs.iter().max().copied() {
+            Some(prev_max) => prev_max.saturating_add(1),
+            None => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(1),
+        };
         let data_path = ctx
             .path
             .join("packs")
@@ -251,14 +288,25 @@ impl<F: FileSystem> FsStore<F> {
             data_file.write_all(&[record_type])?;
             data_file.write_all(&payload)?;
         }
+        // CRITICAL: fsync the pack data before persisting any
+        // reference to it. If a power loss happened between the
+        // journal truncate (below) and the pack data hitting disk,
+        // recovery would see a wiped journal AND a torn pack — the
+        // nodes that had been in the journal would be lost.
+        data_file.sync_data()?;
 
         let pack_index = pack::PackIndex::build(index_records, pack::DEFAULT_FANOUT_BITS, 2);
-        pack_index.save(&*self.fs, &index_path)?;
+        pack_index.save(&*self.fs, &index_path)?; // index also fsyncs internally
+        // Sync the `packs/` directory so the new pack + index files
+        // are visible after recovery (file existence is metadata
+        // that's separate from file contents).
+        self.fs.sync_dir(&ctx.path.join("packs"))?;
 
         // 2. Commit
         ctx.state.active_packs.push(pack_id);
 
         let next_gen_id = pack_id; // use same timestamp for generation id
+        // Journal truncate fsyncs internally — see journal.rs.
         ctx.journal.lock().truncate(next_gen_id)?;
         ctx.state.active_journal_id = next_gen_id;
 
@@ -758,9 +806,7 @@ impl<F: FileSystem> NodeStore for FsStore<F> {
 
         {
             let ctx = inner.conversations.get_mut(conversation_id).unwrap();
-            ctx.lock_file.try_lock_exclusive().map_err(|_| {
-                MerkleToxError::Io(Error::other("Failed to acquire exclusive lock for write"))
-            })?;
+            acquire_conv_lock_ex(&*ctx.lock_file)?;
             let (_, offset) = ctx
                 .journal
                 .lock()
@@ -784,7 +830,7 @@ impl<F: FileSystem> NodeStore for FsStore<F> {
             for parent in &node.parents {
                 ctx.child_index.entry(*parent).or_default().push(hash);
             }
-            ctx.lock_file.try_lock_shared().ok(); // downgrade back
+            release_conv_lock(&*ctx.lock_file);
         }
         inner.node_to_conv.insert(hash, *conversation_id);
 
@@ -810,8 +856,14 @@ impl<F: FileSystem> NodeStore for FsStore<F> {
         self.ensure_conversation(conversation_id)?;
         let mut inner = self.inner.write();
         let ctx = inner.conversations.get(conversation_id).unwrap();
-        let data = tox_proto::serialize(&node)?;
-        ctx.opaque.put_node(hash, &data)?;
+        acquire_conv_lock_ex(&*ctx.lock_file)?;
+        let res = (|| -> MerkleToxResult<()> {
+            let data = tox_proto::serialize(&node)?;
+            ctx.opaque.put_node(hash, &data)?;
+            Ok(())
+        })();
+        release_conv_lock(&*ctx.lock_file);
+        res?;
         inner.node_to_conv.insert(*hash, *conversation_id);
         Ok(())
     }
@@ -824,7 +876,10 @@ impl<F: FileSystem> NodeStore for FsStore<F> {
         self.ensure_conversation(conversation_id)?;
         let mut inner = self.inner.write();
         let ctx = inner.conversations.get(conversation_id).unwrap();
-        ctx.opaque.remove_node(hash)?;
+        acquire_conv_lock_ex(&*ctx.lock_file)?;
+        let res = ctx.opaque.remove_node(hash);
+        release_conv_lock(&*ctx.lock_file);
+        res?;
         inner.node_to_conv.remove(hash);
         Ok(())
     }
@@ -1030,12 +1085,16 @@ impl<F: FileSystem> NodeStore for FsStore<F> {
         self.ensure_conversation(conversation_id)?;
         let inner = self.inner.read();
         let ctx = inner.conversations.get(conversation_id).unwrap();
+        acquire_conv_lock_ex(&*ctx.lock_file)?;
         let keys_dir = ctx.path.join("keys");
-        self.fs.create_dir_all(&keys_dir)?;
-
-        let key_path = keys_dir.join(format!("{:016x}.key", epoch));
-        self.fs.write(&key_path, k_conv.as_bytes())?;
-        Ok(())
+        let res = (|| -> MerkleToxResult<()> {
+            self.fs.create_dir_all(&keys_dir)?;
+            let key_path = keys_dir.join(format!("{:016x}.key", epoch));
+            self.fs.write(&key_path, k_conv.as_bytes())?;
+            Ok(())
+        })();
+        release_conv_lock(&*ctx.lock_file);
+        res
     }
 
     fn get_conversation_keys(
@@ -1075,11 +1134,13 @@ impl<F: FileSystem> NodeStore for FsStore<F> {
         self.ensure_conversation(conversation_id)?;
         let mut inner = self.inner.write();
         let ctx = inner.conversations.get_mut(conversation_id).unwrap();
+        acquire_conv_lock_ex(&*ctx.lock_file)?;
         ctx.state.message_count = message_count;
         ctx.state.last_rotation_time = last_rotation_time;
         let state_file = StateFile::new(self.fs.clone(), ctx.path.join("state.bin"));
-        state_file.save(&ctx.state)?;
-        Ok(())
+        let res = state_file.save(&ctx.state).map_err(MerkleToxError::Io);
+        release_conv_lock(&*ctx.lock_file);
+        res
     }
 
     fn get_epoch_metadata(
@@ -1108,19 +1169,24 @@ impl<F: FileSystem> NodeStore for FsStore<F> {
         self.ensure_conversation(conversation_id)?;
         let mut inner = self.inner.write();
         let ctx = inner.conversations.get_mut(conversation_id).unwrap();
-        ctx.journal.lock().append(
-            JournalRecordType::RatchetAdvance,
-            &tox_proto::serialize(&(node_hash, chain_key.clone(), epoch_id))?,
-        )?;
-        ctx.hot_ratchets
-            .insert(*node_hash, (chain_key.clone(), epoch_id));
-        if let Some(info) = ctx.volatile_nodes.get(node_hash) {
-            ctx.latest_ratchets.insert(
-                info.sender_pk,
-                (chain_key, info.sequence_number, *node_hash, epoch_id),
-            );
-        }
-        Ok(())
+        acquire_conv_lock_ex(&*ctx.lock_file)?;
+        let res = (|| -> MerkleToxResult<()> {
+            ctx.journal.lock().append(
+                JournalRecordType::RatchetAdvance,
+                &tox_proto::serialize(&(node_hash, chain_key.clone(), epoch_id))?,
+            )?;
+            ctx.hot_ratchets
+                .insert(*node_hash, (chain_key.clone(), epoch_id));
+            if let Some(info) = ctx.volatile_nodes.get(node_hash) {
+                ctx.latest_ratchets.insert(
+                    info.sender_pk,
+                    (chain_key, info.sequence_number, *node_hash, epoch_id),
+                );
+            }
+            Ok(())
+        })();
+        release_conv_lock(&*ctx.lock_file);
+        res
     }
 
     fn get_ratchet_key(
@@ -1233,15 +1299,19 @@ impl<F: FileSystem> BlobStoreTrait for FsStore<F> {
             info.status = BlobStatus::Downloading;
         }
 
-        // Basic completion check if received_mask is managed (for compliance tests)
-        let chunk_index = offset / merkle_tox_core::cas::CHUNK_SIZE;
+        // Mark ALL chunks covered by this write
+        let first_chunk = offset / merkle_tox_core::cas::CHUNK_SIZE;
+        let last_byte = offset + data.len() as u64;
+        let last_chunk = if last_byte == 0 { 0 } else { (last_byte - 1) / merkle_tox_core::cas::CHUNK_SIZE };
         let mut mask = info.received_mask.unwrap_or_default();
-        let byte_idx = (chunk_index / 8) as usize;
-        let bit_idx = (chunk_index % 8) as u8;
-        if byte_idx >= mask.len() {
-            mask.resize(byte_idx + 1, 0);
+        for chunk_index in first_chunk..=last_chunk {
+            let byte_idx = (chunk_index / 8) as usize;
+            let bit_idx = (chunk_index % 8) as u8;
+            if byte_idx >= mask.len() {
+                mask.resize(byte_idx + 1, 0);
+            }
+            mask[byte_idx] |= 1 << bit_idx;
         }
-        mask[byte_idx] |= 1 << bit_idx;
 
         // Check if all chunks are received
         let num_chunks = info.size.div_ceil(merkle_tox_core::cas::CHUNK_SIZE);
@@ -1285,16 +1355,6 @@ impl<F: FileSystem> BlobStoreTrait for FsStore<F> {
         }
     }
 
-    fn get_chunk_with_proof(
-        &self,
-        hash: &NodeHash,
-        offset: u64,
-        length: u32,
-    ) -> MerkleToxResult<(Vec<u8>, Vec<u8>)> {
-        self.blob_store
-            .get_chunk_with_proof(hash, offset, length)
-            .map_err(MerkleToxError::Io)
-    }
 }
 
 impl<F: FileSystem> GlobalStore for FsStore<F> {
@@ -1321,13 +1381,17 @@ impl<F: FileSystem> ReconciliationStore for FsStore<F> {
         self.ensure_conversation(conversation_id)?;
         let inner = self.inner.read();
         let ctx = inner.conversations.get(conversation_id).unwrap();
-        let sketches_dir = ctx.path.join("sketches");
-        self.fs.create_dir_all(&sketches_dir)?;
-
-        let sketch_name = format!("{:016x}_{:016x}.bin", range.min_rank, range.max_rank);
-        let sketch_path = sketches_dir.join(sketch_name);
-        self.fs.write(&sketch_path, sketch)?;
-        Ok(())
+        acquire_conv_lock_ex(&*ctx.lock_file)?;
+        let res = (|| -> MerkleToxResult<()> {
+            let sketches_dir = ctx.path.join("sketches");
+            self.fs.create_dir_all(&sketches_dir)?;
+            let sketch_name = format!("{:016x}_{:016x}.bin", range.min_rank, range.max_rank);
+            let sketch_path = sketches_dir.join(sketch_name);
+            self.fs.write(&sketch_path, sketch)?;
+            Ok(())
+        })();
+        release_conv_lock(&*ctx.lock_file);
+        res
     }
 
     fn get_sketch(

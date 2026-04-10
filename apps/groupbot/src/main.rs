@@ -165,6 +165,15 @@ impl GroupBot {
         let tox_shared = Arc::new(ReentrantMutex::new(tox));
         let transport = ToxTransport {
             tox: tox_shared.clone(),
+            send_ok: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err_sendq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err_not_connected: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err_other: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            recv_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_lock_wait_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_lookup_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_ffi_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
         let self_pk = transport.local_pk();
         let engine = merkle_tox_core::engine::MerkleToxEngine::with_sk(

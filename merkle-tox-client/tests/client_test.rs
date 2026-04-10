@@ -650,14 +650,14 @@ async fn test_client_automated_x3dh_onboarding() {
 
 fn make_test_node(content: Content, author_pk: LogicalIdentityPk) -> MerkleNode {
     MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk,
         sender_pk: PhysicalDevicePk::from(*author_pk.as_bytes()),
         sequence_number: 1,
         topological_rank: 1,
         network_timestamp: 1000,
         content,
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::Signature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     }
@@ -704,7 +704,7 @@ async fn author_and_process(
     let node_ref = &mut *node_lock;
     let effects = node_ref
         .engine
-        .author_node(conversation_id, content, vec![], &node_ref.store)
+        .author_node(conversation_id, content, Vec::new(), &node_ref.store)
         .unwrap();
 
     let hash = effects

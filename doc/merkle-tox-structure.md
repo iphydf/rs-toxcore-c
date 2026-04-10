@@ -11,7 +11,7 @@ independent libraries in `rs-toxcore-c`.
 rs-toxcore-c/
 ├── tox-proto/               # Layer 0: Serialization & Protocol Primitives
 ├── tox-proto-derive/        # Layer 0 (Macro): Positional Serialization
-├── tox-sequenced/           # Layer 1: Reliability & ARQ
+├── tox-sequenced/           # Layer 1: Congestion-Controlled Datagram Transport
 ├── merkle-tox-core/         # Layer 2: DAG, CAS, & Sync Logic (Mechanisms)
 ├── merkle-tox-client/       # Layer 3: Orchestration & High-Level API (Policy)
 ├── merkle-tox-sqlite/       # Layer 4: SQLite Persistence
@@ -36,7 +36,7 @@ rs-toxcore-c/
 ### `//rs-toxcore-c/tox-sequenced:tox-sequenced`
 
 -   **Type**: `rust_library`
--   **Responsibilities**: Reliable delivery over lossy Tox custom packets.
+-   **Responsibilities**: Congestion-controlled datagram delivery over lossy Tox custom packets.
 -   **Dependencies**: `//rs-toxcore-c/tox-proto:tox-proto`, `@crates//:serde`.
 
 ### `//rs-toxcore-c/merkle-tox-core:merkle-tox-core`
@@ -82,7 +82,7 @@ rs-toxcore-c/
 
 ## 3. Implementation Workflow
 
-1.  **[x] `tox-sequenced`**: Establish reliability and fragmentation.
+1.  **[x] `tox-sequenced`**: Establish congestion-controlled datagram transport.
 2.  **[x] `merkle-tox-core`**: Build the pure-logic sync engine.
 3.  **[x] `merkle-tox-sqlite`**: Add the database storage layer.
 4.  **[ ] `toxxi` Integration**: Update the UI client to use these crates for

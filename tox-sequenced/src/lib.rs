@@ -1,22 +1,23 @@
 //! # Tox Sequenced
 //!
-//! A reliable, congestion-controlled transport layer built on top of Tox custom lossy packets.
+//! A congestion-controlled datagram transport built on top of Tox custom lossy packets.
 //!
-//! This library provides a "Reliable UDP" style protocol that handles fragmentation,
-//! retransmission (ARQ), and congestion control for large messages (up to 1MB).
+//! This library provides sequenced datagrams with congestion control, pacing,
+//! and priority scheduling. It does NOT provide reliability — the application
+//! handles retransmission based on its semantic knowledge (content addressing,
+//! DAG structure, chunk bitmasks).
 //!
 //! ## Architecture
 //!
-//! - **Reliability**: Uses Selective Repeat ARQ (Selective ACKs and NACKs).
 //! - **Congestion Control**: Pluggable algorithms including BBR, Cubic, and AIMD.
-//! - **Memory Management**: Shared reassembly quotas to prevent memory exhaustion.
+//! - **Priority Scheduling**: Deficit Round Robin across 5 priority levels.
+//! - **Fragment Reassembly**: Drop-on-timeout reassembly for large messages.
 //! - **Serialization**: Built on `rmp-serde` for efficient MessagePack encoding.
 
 pub mod bitset;
 pub mod congestion;
 pub mod error;
 pub mod flat_map;
-pub mod outgoing;
 pub mod protocol;
 pub mod quota;
 pub mod reassembly;
@@ -27,18 +28,21 @@ pub mod time;
 
 use tox_proto::ToxProto;
 
+/// Events emitted by the transport session to the application.
 #[derive(Debug, Clone, PartialEq, Eq, ToxProto)]
 pub enum SessionEvent {
-    /// A complete message has been received.
-    MessageCompleted(protocol::MessageId, MessageType, Vec<u8>),
-    /// A message that was being sent has failed (e.g., timed out).
-    MessageFailed(protocol::MessageId, String),
-    /// An outgoing message has been acknowledged by the peer.
-    MessageAcked(protocol::MessageId),
-    /// An outgoing message slot has become available.
+    /// A single-packet DATA datagram was received.
+    DataReceived(u32, MessageType, Vec<u8>),
+    /// An outgoing sequenced datagram was acknowledged by the peer.
+    DatagramDelivered(u32),
+    /// An outgoing sequenced datagram was not acknowledged within 2×RTT.
+    DatagramLost(u32),
+    /// A fragmented message was fully reassembled.
+    MessageCompleted(u32, MessageType, Vec<u8>),
+    /// A fragmented message timed out (missing fragments after 5s).
+    MessageDropped(u32),
+    /// Send window has capacity for new datagrams.
     ReadyToSend,
-    /// The congestion window has changed.
-    CongestionWindowChanged(usize),
 }
 
 pub use bitset::BitSet;
@@ -49,5 +53,4 @@ pub use congestion::cubic::Cubic;
 pub use congestion::{Algorithm, AlgorithmType, CongestionControl};
 pub use error::SequencedError;
 pub use protocol::{MessageType, Packet};
-pub use reassembly::MessageReassembler;
-pub use session::SequenceSession;
+pub use session::{FlushDiag, SequenceSession};

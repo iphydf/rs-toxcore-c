@@ -23,11 +23,12 @@ fn test_scheduler_prioritization_behavior() {
     let p4_count = counts.get(&4).copied().unwrap_or(0);
     println!("P0 count: {}, P4 count: {}", p0_count, p4_count);
 
-    // Behavior: P0 should have significantly more packets than P4
-    // Default weights are 4096 vs 512 (8:1 ratio)
+    // Behavior: Both P0 and P4 should get served.
+    // P4 (Bulk) has a larger quantum than P0 (Critical) to allow blob
+    // transfers to fill the congestion window, but P0 still gets served.
     assert!(
-        p0_count > p4_count * 5,
-        "P0 should be served much more than P4"
+        p0_count > 0,
+        "P0 should not be completely starved"
     );
     assert!(p4_count > 0, "P4 should not be completely starved");
 }
@@ -89,13 +90,12 @@ fn test_scheduler_empty_behavior() {
 fn test_scheduler_large_packet_deficit() {
     let mut scheduler = PriorityScheduler::new();
 
-    // P4 has quantum 512
+    // P4 has quantum 1300
     scheduler.update_message(4, 4);
 
-    // Try to send a 1000 byte packet.
-    // First call: deficit 512, packet 1000 -> too big.
+    // Try to send a 1500 byte packet.
+    // First call: deficit 1300, packet 1500 -> too big.
     // But DRR should eventually accumulate enough deficit.
-    // In our implementation, we add quantum if deficit <= 0.
 
     // Try multiple rounds
     let mut found = false;

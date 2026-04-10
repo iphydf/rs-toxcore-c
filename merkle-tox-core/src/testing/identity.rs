@@ -34,6 +34,22 @@ impl TestIdentity {
         }
     }
 
+    /// Build a TestIdentity from a seeded RNG. Use this in benchmarks
+    /// and other contexts that require deterministic key generation.
+    pub fn from_rng<R: rand::RngCore + rand::CryptoRng>(rng: &mut R) -> Self {
+        let master_sk = signing_key_from_rng(rng);
+        let master_pk = LogicalIdentityPk::from(master_sk.verifying_key().to_bytes());
+        let device_sk = signing_key_from_rng(rng);
+        let device_pk = PhysicalDevicePk::from(device_sk.verifying_key().to_bytes());
+
+        Self {
+            master_sk,
+            master_pk,
+            device_sk,
+            device_pk,
+        }
+    }
+
     /// Creates an authorization certificate for the device signed by the master key.
     /// Uses a zero conversation_id (suitable for tests that don't check scoping).
     pub fn make_device_cert(&self, perms: Permissions, expires: i64) -> DelegationCertificate {
@@ -120,6 +136,43 @@ impl TestRoom {
         } else {
             let mut id = [0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut id);
+            (ConversationId::from(id), None)
+        };
+
+        Self {
+            conv_id,
+            k_conv,
+            keys,
+            identities,
+            genesis_node,
+        }
+    }
+
+    /// Build a TestRoom from a seeded RNG. All identities and the
+    /// conversation key are derived from the given RNG, so two calls
+    /// with the same seed produce identical rooms.
+    pub fn new_seeded<R: rand::RngCore + rand::CryptoRng>(
+        identities_count: usize,
+        rng: &mut R,
+    ) -> Self {
+        let mut k_conv = [0u8; 32];
+        rng.fill_bytes(&mut k_conv);
+        let keys = crate::crypto::ConversationKeys::derive(&KConv::from(k_conv));
+        let mut identities = Vec::new();
+        for _ in 0..identities_count {
+            identities.push(TestIdentity::from_rng(rng));
+        }
+
+        let (conv_id, genesis_node) = if identities_count >= 2 {
+            let node = crate::builder::NodeBuilder::new_1on1_genesis(
+                identities[0].master_pk,
+                identities[1].master_pk,
+                &keys,
+            );
+            (ConversationId::from(node.hash()), Some(node))
+        } else {
+            let mut id = [0u8; 32];
+            rng.fill_bytes(&mut id);
             (ConversationId::from(id), None)
         };
 
@@ -306,7 +359,7 @@ pub fn create_signed_content_node(
     let mut node = test_node();
     node.author_pk = author_pk;
     node.sender_pk = sender_pk;
-    node.parents = parents;
+    node.parents = tox_proto::BoundedVec::try_from_iter(parents).expect("test fixtures must respect MAX_PARENTS");
     node.content = content;
     node.topological_rank = topological_rank;
     node.sequence_number = sequence_number;
@@ -354,7 +407,7 @@ pub fn create_admin_node(
 ) -> MerkleNode {
     let mut node = test_node();
     node.author_pk = author_pk;
-    node.parents = parents;
+    node.parents = tox_proto::BoundedVec::try_from_iter(parents).expect("test fixtures must respect MAX_PARENTS");
     node.content = Content::Control(action);
     node.topological_rank = rank;
     node.sequence_number = seq;
@@ -370,15 +423,24 @@ pub fn random_signing_key() -> SigningKey {
     SigningKey::from_bytes(&bytes)
 }
 
+/// Generates an Ed25519 signing key from a seeded RNG.
+pub fn signing_key_from_rng<R: rand::RngCore + rand::CryptoRng>(rng: &mut R) -> SigningKey {
+    let mut bytes = [0u8; 32];
+    rng.fill_bytes(&mut bytes);
+    SigningKey::from_bytes(&bytes)
+}
+
 /// Creates PackKeys::Content for a test content node.
 /// Derives k_msg from the ratchet init for the sender, using the sequence counter.
 /// Uses deterministic nonces derived from node data for reproducibility.
 pub fn test_pack_content_keys(
     keys: &crate::crypto::ConversationKeys,
+    conversation_id: &ConversationId,
     sender_pk: &PhysicalDevicePk,
     sequence_number: u64,
 ) -> crate::crypto::PackContentKeys {
-    let chain_key = crate::crypto::ratchet_init_sender(&keys.k_conv, sender_pk);
+    let chain_key =
+        crate::crypto::ratchet_init_sender(&keys.k_conv, conversation_id, sender_pk);
     let sender_key = crate::dag::SenderKey::from(*chain_key.as_bytes());
     let counter = sequence_number & 0xFFFFFFFF;
 
@@ -390,7 +452,8 @@ pub fn test_pack_content_keys(
 
     let k_msg = crate::crypto::ratchet_message_key(&ck);
     let _k_next = crate::crypto::ratchet_step(&ck);
-    let k_header = crate::crypto::derive_k_header_epoch(&keys.k_conv, &sender_key);
+    let k_header =
+        crate::crypto::derive_k_header_epoch(&keys.k_conv, conversation_id, &sender_key);
 
     // Deterministic nonces for test reproducibility
     let routing_nonce_full = blake3::derive_key(
@@ -445,14 +508,14 @@ pub fn transfer_ephemeral_keys(
 /// Creates a base test node with default values.
 pub fn test_node() -> MerkleNode {
     MerkleNode {
-        parents: Vec::new(),
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 1000,
         content: Content::Text("dummy".to_string()),
-        metadata: Vec::new(),
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(crate::dag::Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     }
@@ -461,7 +524,7 @@ pub fn test_node() -> MerkleNode {
 /// Creates a dummy Merkle node with the given parents.
 pub fn create_dummy_node(parents: Vec<NodeHash>) -> MerkleNode {
     let mut node = test_node();
-    node.parents = parents;
+    node.parents = tox_proto::BoundedVec::try_from_iter(parents).expect("test fixtures must respect MAX_PARENTS");
     node.content = Content::Text("dummy".to_string());
     node
 }

@@ -1,25 +1,23 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use merkle_tox_core::cas::BlobData;
 use merkle_tox_core::dag::{
     Content, ConversationId, Ed25519Signature, LogicalIdentityPk, MerkleNode, NodeAuth, NodeHash,
     PhysicalDevicePk,
 };
 use merkle_tox_core::sync::SyncHeads;
 use std::hint::black_box;
-use std::io::Read;
 use tox_proto::{deserialize, serialize};
 use tox_reconcile::{IbltSketch, SyncRange, SyncSketch, Tier};
 
 fn make_dummy_node(content: Content) -> MerkleNode {
     MerkleNode {
-        parents: vec![NodeHash::from([1; 32]), NodeHash::from([2; 32])],
+        parents: tox_proto::bounded_vec![NodeHash::from([1; 32]), NodeHash::from([2; 32])],
         author_pk: LogicalIdentityPk::from([3; 32]),
         sender_pk: PhysicalDevicePk::from([4; 32]),
         sequence_number: 42,
         topological_rank: 10,
         network_timestamp: 123456789,
         content,
-        metadata: vec![0; 64],
+        metadata: tox_proto::BoundedBytes::try_from_vec(vec![0; 64]).expect("test fixture under MAX_METADATA_SIZE"),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     }
@@ -48,44 +46,12 @@ fn bench_joiner_hot_path(c: &mut Criterion) {
 }
 
 fn bench_blob_hot_path(c: &mut Criterion) {
-    let mut g = c.benchmark_group("blob_ops");
-
-    // 1. Create 64KB of data (1 chunk)
-    let chunk_size = 64 * 1024;
-    let data = vec![0u8; chunk_size];
-
-    // 2. Generate a real Bao outboard and hash.
-    let (outboard, hash) = bao::encode::outboard(&data);
-
-    // 3. Extract a slice proof.
-    // For a single chunk, the slice proof is effectively the hashes in the outboard.
-    // We can use SliceExtractor directly on the data and outboard.
-    let mut extractor = bao::encode::SliceExtractor::new_outboard(
-        std::io::Cursor::new(&data),
-        std::io::Cursor::new(&outboard),
-        0,
-        chunk_size as u64,
-    );
-    let mut proof = Vec::new();
-    extractor.read_to_end(&mut proof).unwrap();
-
-    let blob_data = BlobData {
-        hash: NodeHash::from(*hash.as_bytes()),
-        offset: 0,
-        data: data.clone(),
-        proof,
-    };
-
-    let bao_root: [u8; 32] = hash.into();
-
-    g.bench_function("blob_chunk_verify_64kb_realistic", |b| {
-        b.iter(|| {
-            // This is the actual verification logic we use in production
-            black_box(blob_data.verify(black_box(&bao_root)))
-        })
-    });
-
-    g.finish();
+    // The previous microbench measured `bao::encode::outboard` + a bao
+    // slice verify, which mapped onto the old per-piece bao proof path.
+    // That path has been replaced by the domain-separated ChunkMerkleTree
+    // scheme (see `doc/merkle-tox-cas.md` §3); a new bench will land with
+    // the ChunkMerkleTree implementation.
+    let _ = c;
 }
 
 fn bench_merkle_node(c: &mut Criterion) {
@@ -106,7 +72,7 @@ fn bench_merkle_node(c: &mut Criterion) {
         name: "test.bin".to_string(),
         mime_type: "application/octet-stream".to_string(),
         size: 1024 * 1024,
-        metadata: vec![0; 32],
+        metadata: tox_proto::BoundedBytes::try_from_vec(vec![0; 32]).expect("test fixture under MAX_METADATA_SIZE"),
     });
     g.bench_function("serialize_blob_node", |b| {
         b.iter(|| black_box(serialize(black_box(&blob_node)).unwrap()))
@@ -120,7 +86,10 @@ fn bench_sync_messages(c: &mut Criterion) {
 
     let heads = SyncHeads {
         conversation_id: ConversationId::from([9; 32]),
-        heads: vec![NodeHash::from([10; 32]); 16],
+        heads: tox_proto::BoundedVec::try_from_iter(
+            std::iter::repeat_n(NodeHash::from([10; 32]), 16),
+        )
+        .expect("16 < MAX_HEADS_SYNC"),
         flags: 0,
         anchor_hash: None,
     };
@@ -137,7 +106,7 @@ fn bench_sync_messages(c: &mut Criterion) {
     }
     let sketch = SyncSketch {
         conversation_id: ConversationId::from([11; 32]),
-        cells: iblt.into_cells(),
+        cells: tox_proto::BoundedVec::try_from_iter(iblt.into_cells()).expect("Tier-bounded"),
         range: SyncRange {
             min_rank: 0,
             max_rank: 1000,

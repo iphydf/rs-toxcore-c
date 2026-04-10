@@ -120,6 +120,14 @@ impl<F: FileSystem> Journal<F> {
         self.handle.write_all(node_hash.as_bytes())?;
         self.handle.write_all(&[record_type as u8])?;
         self.handle.write_all(payload)?;
+        // fsync each appended record so it survives a crash. The
+        // journal is the on-disk record of recently-added nodes;
+        // without this, a power loss between `append` and the next
+        // compaction can lose all volatile records (compaction
+        // truncates the journal — see `truncate` below). Spec
+        // §4.1 ("Recovery") relies on per-record durability for
+        // correct mid-batch resumption.
+        self.handle.sync_data()?;
 
         Ok((node_hash, offset))
     }
@@ -140,6 +148,10 @@ impl<F: FileSystem> Journal<F> {
         self.handle
             .write_all(&(records.len() as u32).to_le_bytes())?;
         self.handle.write_all(checksum.as_bytes())?;
+        // fsync the footer so the "this journal is sealed" marker
+        // is durable; otherwise a crash before compaction could
+        // leave a journal that looks open and gets re-truncated.
+        self.handle.sync_data()?;
         // IndexTable omitted for simplicity in this iteration, but footer magic is present
         self.has_footer = true;
         Ok(())
@@ -233,6 +245,16 @@ impl<F: FileSystem> Journal<F> {
         self.handle.seek(SeekFrom::Start(0))?;
         self.handle.write_all(&generation_id.to_le_bytes())?;
         self.handle.write_all(&[0u8; 8])?; // reserved
+        // CRITICAL durability boundary. `truncate` is called by the
+        // compaction path after the new pack has been finalised but
+        // before `state.bin` is updated to point at it. If we don't
+        // fsync here, the truncate's `set_len(16)` may hit disk
+        // before the new pack data — recovery would then see a
+        // wiped journal AND no pack to recover from. The
+        // post-truncate fsync ensures the new generation_id and
+        // truncated tail are durable in lockstep. Caller is
+        // responsible for fsyncing the new pack before calling this.
+        self.handle.sync_data()?;
         self.generation_id = generation_id;
         Ok(())
     }

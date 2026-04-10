@@ -8,8 +8,7 @@ use std::panic;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tox_sequenced::{
-    Algorithm, AlgorithmType, CongestionControl, MessageType, Packet, SequenceSession,
-    protocol::{FragmentCount, FragmentIndex, MessageId},
+    Algorithm, AlgorithmType, CongestionControl, MessageType, Packet, SequenceSession, SessionEvent,
 };
 
 use clap::Parser;
@@ -54,7 +53,7 @@ struct Args {
 struct RunMetrics {
     duration: Duration,
     total_data_bytes: usize,
-    retransmitted_bytes: usize,
+    lost_datagrams: usize,
     rtt_samples: Vec<Duration>,
     message_latencies: Vec<Duration>,
     is_completed: bool,
@@ -69,11 +68,12 @@ impl RunMetrics {
         (self.total_data_bytes as f32 * 8.0) / self.duration.as_secs_f32() / 1_000_000.0
     }
 
-    fn retransmit_rate(&self) -> f32 {
-        if self.total_data_bytes == 0 {
+    fn loss_rate(&self) -> f32 {
+        let total = self.total_data_bytes + self.lost_datagrams;
+        if total == 0 {
             return 0.0;
         }
-        (self.retransmitted_bytes as f32 / self.total_data_bytes as f32) * 100.0
+        (self.lost_datagrams as f32 / total as f32) * 100.0
     }
 
     fn rtt_percentiles(&self) -> (Duration, Duration) {
@@ -102,8 +102,7 @@ impl RunMetrics {
         let (_rtt_p50, rtt_p99) = self.rtt_percentiles();
 
         // 1. Goodput (Actual useful data rate)
-        // We score effective throughput: raw * (1 - loss_rate)
-        let goodput = (self.throughput_mbps() * (1.0 - self.retransmit_rate() / 100.0)).max(0.0);
+        let goodput = self.throughput_mbps().max(0.0);
         // We define a "good enough" sync speed target (e.g. 2Mbps)
         let target_bw = s.bandwidth.map(|b| b / 1_000_000.0).unwrap_or(2.0);
 
@@ -151,7 +150,7 @@ struct AggregatedMetrics {
     runs: usize,
     total_duration: Duration,
     total_data_bytes: usize,
-    total_retransmitted_bytes: usize,
+    total_lost_datagrams: usize,
     rtt_samples: VecDeque<Duration>,
     msg_lat_samples: VecDeque<Duration>,
     last_score: f32,
@@ -168,7 +167,7 @@ impl AggregatedMetrics {
             runs: 0,
             total_duration: Duration::ZERO,
             total_data_bytes: 0,
-            total_retransmitted_bytes: 0,
+            total_lost_datagrams: 0,
             rtt_samples: VecDeque::with_capacity(1000),
             msg_lat_samples: VecDeque::with_capacity(1000),
             last_score: 0.0,
@@ -183,7 +182,7 @@ impl AggregatedMetrics {
         self.runs += 1;
         self.total_duration += m.duration;
         self.total_data_bytes += m.total_data_bytes;
-        self.total_retransmitted_bytes += m.retransmitted_bytes;
+        self.total_lost_datagrams += m.lost_datagrams;
 
         for rtt in m.rtt_samples {
             if self.rtt_samples.len() >= 1000 {
@@ -208,7 +207,7 @@ impl AggregatedMetrics {
         RunMetrics {
             duration: self.total_duration,
             total_data_bytes: self.total_data_bytes,
-            retransmitted_bytes: self.total_retransmitted_bytes,
+            lost_datagrams: self.total_lost_datagrams,
             rtt_samples: self.rtt_samples.iter().cloned().collect(),
             message_latencies: self.msg_lat_samples.iter().cloned().collect(),
             is_completed: true,
@@ -331,12 +330,11 @@ impl NetworkLink {
         }
 
         let size = match &packet {
-            Packet::Data { data, .. } => data.len() + 20,
+            Packet::Data { data, .. } | Packet::Fragment { data, .. } => data.len() + 20,
             _ => 40,
         };
 
         // Router Buffer Limit (Tail Drop)
-        // We only check if there is space in the BUFFER.
         if self.buffer_bytes + size > self.max_queue_size {
             return;
         }
@@ -364,7 +362,7 @@ impl NetworkLink {
             // Take packet from buffer
             let packet = self.buffer.pop_front().unwrap();
             let size = match &packet {
-                Packet::Data { data, .. } => data.len() + 20,
+                Packet::Data { data, .. } | Packet::Fragment { data, .. } => data.len() + 20,
                 _ => 40,
             };
             self.buffer_bytes -= size;
@@ -430,13 +428,14 @@ struct SimulationRunner<C: CongestionControl> {
     forward_link: NetworkLink,
     backward_link: NetworkLink,
     metrics: RunMetrics,
-    sent_map: HashMap<(MessageId, FragmentIndex), (Instant, usize)>,
-    msg_sent_times: HashMap<MessageId, Instant>,
-    first_seen: HashSet<(MessageId, FragmentIndex)>,
-    retransmitted: HashSet<(MessageId, FragmentIndex)>,
-    highest_acked_idx: HashMap<MessageId, FragmentIndex>,
-    total_fragments: HashMap<MessageId, FragmentCount>,
-    acked_fragments: HashMap<MessageId, u32>,
+    /// Track send time for each seq to measure RTT from DatagramDelivered events.
+    seq_send_times: HashMap<u32, Instant>,
+    /// Track send time for each message (identified by first seq/frag_id) for message latency.
+    msg_send_times: HashMap<u32, Instant>,
+    /// Set of seq/frag_ids we have sent (to track messages).
+    pending_messages: HashSet<u32>,
+    /// Track data sizes sent per seq for throughput measurement.
+    seq_data_sizes: HashMap<u32, usize>,
 }
 
 impl<C: CongestionControl + 'static> SimulationRunner<C> {
@@ -460,23 +459,21 @@ impl<C: CongestionControl + 'static> SimulationRunner<C> {
             forward_link: NetworkLink::new(scenario.clone()),
             backward_link: NetworkLink::new(Scenario::reliable_return(scenario.latency)),
             metrics: RunMetrics::default(),
-            sent_map: HashMap::new(),
-            msg_sent_times: HashMap::new(),
-            first_seen: HashSet::new(),
-            retransmitted: HashSet::new(),
-            highest_acked_idx: HashMap::new(),
-            total_fragments: HashMap::new(),
-            acked_fragments: HashMap::new(),
+            seq_send_times: HashMap::new(),
+            msg_send_times: HashMap::new(),
+            pending_messages: HashSet::new(),
+            seq_data_sizes: HashMap::new(),
         };
 
         let msg_data = vec![0u8; scenario.data_size / scenario.messages_count.max(1)];
         for _ in 0..scenario.messages_count {
-            if let Ok(mid) =
+            if let Ok(id) =
                 runner
                     .alice
-                    .send_message_at(MessageType::MerkleNode, &msg_data, start_time)
+                    .send_auto(MessageType::MerkleNode, &msg_data, start_time)
             {
-                runner.msg_sent_times.insert(mid, start_time);
+                runner.msg_send_times.insert(id, start_time);
+                runner.pending_messages.insert(id);
             }
         }
 
@@ -484,7 +481,7 @@ impl<C: CongestionControl + 'static> SimulationRunner<C> {
             for _ in 0..scenario.messages_count {
                 let _ = runner
                     .bob
-                    .send_message_at(MessageType::MerkleNode, &msg_data, start_time);
+                    .send_auto(MessageType::MerkleNode, &msg_data, start_time);
             }
             // Use full scenario for backward link too
             runner.backward_link = NetworkLink::new(scenario.clone());
@@ -537,11 +534,11 @@ impl<C: CongestionControl + 'static> SimulationRunner<C> {
     fn update_debug_state(&mut self, now: Instant, start: Instant) {
         let elapsed = now.duration_since(start);
         self.metrics.debug_state = format!(
-            "T={:.2}s | InFlight={} | Cwnd={} | RetrQ={}",
+            "T={:.2}s | InFlight={} | Cwnd={} | Pending={}",
             elapsed.as_secs_f32(),
             self.alice.in_flight(),
             self.alice.cwnd(),
-            self.alice.retransmit_queue_len()
+            self.pending_messages.len()
         );
     }
 
@@ -551,9 +548,21 @@ impl<C: CongestionControl + 'static> SimulationRunner<C> {
             .unwrap_or_default()
             .as_millis() as u64;
 
-        // Alice -> Bob
-        for p in self.alice.get_packets_to_send(now, now_ms) {
-            self.handle_alice_packet(p, now, start);
+        // Alice -> Bob: flush paced packets onto the forward link.
+        // We collect into a buffer to avoid borrow conflicts.
+        let mut alice_outgoing = Vec::new();
+        self.alice.flush(now, now_ms, &mut |packet| {
+            alice_outgoing.push(packet);
+            true
+        });
+        for p in alice_outgoing {
+            Self::track_outgoing_packet_static(
+                &mut self.seq_send_times,
+                &mut self.seq_data_sizes,
+                &p,
+                now,
+            );
+            self.forward_link.transmit(p, now, start);
         }
 
         // Advance links
@@ -563,7 +572,7 @@ impl<C: CongestionControl + 'static> SimulationRunner<C> {
         for p in forward_packets {
             let replies = self.bob.handle_packet(p, now);
             while let Some(event) = self.bob.poll_event() {
-                if let tox_sequenced::SessionEvent::MessageCompleted(..) = event {
+                if let SessionEvent::MessageCompleted(..) = event {
                     *completed += 1;
                 }
             }
@@ -572,19 +581,67 @@ impl<C: CongestionControl + 'static> SimulationRunner<C> {
             }
         }
 
-        // Bob Internal (Data & ACK generation)
-        for p in self.bob.get_packets_to_send(now, now_ms) {
+        // Bob Internal (flush ACKs and any outgoing data)
+        let mut bob_outgoing = Vec::new();
+        self.bob.flush(now, now_ms, &mut |packet| {
+            bob_outgoing.push(packet);
+            true
+        });
+        for p in bob_outgoing {
             self.backward_link.transmit(p, now, start);
         }
 
-        // Bob -> Alice
+        // Bob -> Alice: process incoming packets from backward link
         for p in backward_packets {
-            if let Packet::Ack(ack) = &p {
-                self.record_rtt_samples(ack, now);
-            }
             let replies = self.alice.handle_packet(p, now);
             for r in replies {
-                self.handle_alice_packet(r, now, start);
+                Self::track_outgoing_packet_static(
+                    &mut self.seq_send_times,
+                    &mut self.seq_data_sizes,
+                    &r,
+                    now,
+                );
+                self.forward_link.transmit(r, now, start);
+            }
+        }
+
+        // Process Alice's events (delivery confirmations, losses, completions)
+        while let Some(event) = self.alice.poll_event() {
+            match event {
+                SessionEvent::DatagramDelivered(seq) => {
+                    // Record RTT from send time to delivery confirmation
+                    if let Some(sent_time) = self.seq_send_times.remove(&seq) {
+                        self.metrics.rtt_samples.push(now.duration_since(sent_time));
+                    }
+                    if let Some(size) = self.seq_data_sizes.remove(&seq) {
+                        self.metrics.total_data_bytes += size;
+                    }
+                    // For single-packet messages, delivery = message completion
+                    if self.pending_messages.remove(&seq)
+                        && let Some(msg_sent_time) = self.msg_send_times.remove(&seq)
+                    {
+                        self.metrics
+                            .message_latencies
+                            .push(now.duration_since(msg_sent_time));
+                    }
+                }
+                SessionEvent::DatagramLost(seq) => {
+                    self.seq_send_times.remove(&seq);
+                    self.seq_data_sizes.remove(&seq);
+                    self.metrics.lost_datagrams += 1;
+                }
+                SessionEvent::MessageCompleted(frag_id, _msg_type, _data) => {
+                    // This fires on the receiver side; for Alice as sender we
+                    // track completion via DatagramDelivered. But if Alice also
+                    // receives (bidirectional), count it.
+                    let _ = (frag_id, _msg_type, _data);
+                }
+                SessionEvent::MessageDropped(frag_id) => {
+                    // A fragmented message we were receiving was dropped
+                    self.pending_messages.remove(&frag_id);
+                    self.msg_send_times.remove(&frag_id);
+                }
+                _ => {}
             }
         }
 
@@ -592,73 +649,29 @@ impl<C: CongestionControl + 'static> SimulationRunner<C> {
         self.bob.cleanup(now);
     }
 
-    fn handle_alice_packet(&mut self, p: Packet, now: Instant, start: Instant) {
-        if let Packet::Data {
-            message_id,
-            fragment_index,
-            total_fragments,
-            data,
-            ..
-        } = &p
-        {
-            let key = (*message_id, *fragment_index);
-            self.sent_map.insert(key, (now, data.len()));
-            self.total_fragments.insert(*message_id, *total_fragments);
-            if !self.first_seen.insert(key) {
-                self.retransmitted.insert(key);
-                self.metrics.retransmitted_bytes += data.len();
+    /// Track outgoing packets from Alice for RTT and throughput measurement.
+    fn track_outgoing_packet_static(
+        seq_send_times: &mut HashMap<u32, Instant>,
+        seq_data_sizes: &mut HashMap<u32, usize>,
+        p: &Packet,
+        now: Instant,
+    ) {
+        match p {
+            Packet::Data { seq, data, .. } => {
+                seq_send_times.entry(*seq).or_insert(now);
+                seq_data_sizes.entry(*seq).or_insert(data.len());
             }
-        }
-        self.forward_link.transmit(p, now, start);
-    }
-
-    fn record_rtt_samples(&mut self, ack: &tox_sequenced::protocol::SelectiveAck, now: Instant) {
-        let mid = ack.message_id;
-        let last_idx = self
-            .highest_acked_idx
-            .entry(mid)
-            .or_insert(FragmentIndex(0));
-
-        let mut new_acks = Vec::new();
-
-        // 1. Cumulative ACKs (only those we haven't processed)
-        for i in last_idx.0..ack.base_index.0 {
-            new_acks.push(FragmentIndex(i));
-        }
-        *last_idx = (*last_idx).max(ack.base_index);
-
-        // 2. Selective ACKs (Bitmask)
-        for i in 0..64 {
-            if (ack.bitmask & (1 << i)) != 0 {
-                new_acks.push(FragmentIndex(ack.base_index.0 + 1 + i as u16));
+            Packet::Fragment {
+                frag_id, data, ..
+            } => {
+                // Track fragment data for throughput; use frag_id for message-level tracking
+                seq_send_times.entry(*frag_id).or_insert(now);
+                seq_data_sizes
+                    .entry(*frag_id)
+                    .and_modify(|s| *s += data.len())
+                    .or_insert(data.len());
             }
-        }
-
-        for idx in new_acks {
-            let key = (mid, idx);
-            if let Some((sent_time, size)) = self.sent_map.remove(&key) {
-                self.metrics.total_data_bytes += size;
-
-                if !self.retransmitted.contains(&key) {
-                    self.metrics.rtt_samples.push(now.duration_since(sent_time));
-                }
-
-                let acked = self.acked_fragments.entry(mid).or_insert(0);
-                *acked += 1;
-
-                if let Some(&total) = self.total_fragments.get(&mid)
-                    && *acked == total.0 as u32
-                {
-                    if let Some(msg_sent_time) = self.msg_sent_times.remove(&mid) {
-                        self.metrics
-                            .message_latencies
-                            .push(now.duration_since(msg_sent_time));
-                    }
-                    // Cleanup tracking maps
-                    self.total_fragments.remove(&mid);
-                    self.acked_fragments.remove(&mid);
-                }
-            }
+            _ => {}
         }
     }
 }
@@ -806,7 +819,7 @@ fn run_headless(scenarios: Vec<Scenario>, args: &Args) {
 
     println!(
         "\n{:<25} | {:<10} | {:<6} | {:<10} | {:<10} | {:<10} | {:<8} | {:<8}",
-        "Scenario", "Algo", "Runs", "Thr/MLat", "p50RTT", "p99RTT", "Retr%", "Score"
+        "Scenario", "Algo", "Runs", "Thr/MLat", "p50RTT", "p99RTT", "Loss%", "Score"
     );
     println!(
         "{:-<25}-|-{:-<10}-|-{:-<6}-|-{:-<10}-|-{:-<10}-|-{:-<10}-|-{:-<8}-|-{:-<8}",
@@ -879,7 +892,7 @@ fn run_headless(scenarios: Vec<Scenario>, args: &Args) {
             speed_col,
             rtt_p50.as_secs_f32() * 1000.0,
             rtt_p99.as_secs_f32() * 1000.0,
-            m.retransmit_rate(),
+            m.loss_rate(),
             score,
             diff_str
         );
@@ -1007,16 +1020,12 @@ fn run_tui(scenarios: Vec<Scenario>, args: &Args) -> Result<(), io::Error> {
                 }
                 KeyCode::Enter => {
                     if let Some(selected) = app.table_state.selected() {
-                        // Map visual selection to actual scenario index
-                        // If already filtered, we are selecting within the filter, but the scenario is the same.
-                        // If not filtered, we grab the scenario from the global list.
                         let scenario_idx = if let Some(focus) = app.focused_scenario_idx {
                             focus
                         } else {
                             app.results[selected].scenario_index
                         };
                         app.focused_scenario_idx = Some(scenario_idx);
-                        // Reset selection to top of filtered view
                         app.table_state.select(Some(0));
                     }
                 }
@@ -1119,7 +1128,7 @@ fn ui(f: &mut Frame, app: &mut App) {
     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
     let normal_style = Style::default().bg(Color::Blue);
     let header_cells = [
-        "Scenario", " ", "Algo", "Runs", "Thr/MLat", "p50RTT", "p99RTT", "Retr%", "AvgScore",
+        "Scenario", " ", "Algo", "Runs", "Thr/MLat", "p50RTT", "p99RTT", "Loss%", "AvgScore",
     ]
     .iter()
     .map(|h| Cell::from(*h).style(Style::default().fg(Color::Yellow)));
@@ -1176,7 +1185,6 @@ fn ui(f: &mut Frame, app: &mut App) {
         // Check for Zombie (stuck > 1s)
         if item.last_update_time.elapsed() > Duration::from_secs(1) {
             row_style = row_style.fg(Color::DarkGray);
-            // Gray out stalled algorithms to mark them as inactive.
             color = Color::DarkGray;
         }
 
@@ -1187,7 +1195,6 @@ fn ui(f: &mut Frame, app: &mut App) {
         {
             winner_icon = "🏆";
             row_style = row_style.add_modifier(Modifier::BOLD);
-            // Make the algorithm name Gold if it's the winner
             color = Color::Yellow;
         }
 
@@ -1213,7 +1220,7 @@ fn ui(f: &mut Frame, app: &mut App) {
             Cell::from(speed_col),
             Cell::from(format!("{:.1}ms", rtt_p50.as_secs_f32() * 1000.0)),
             Cell::from(format!("{:.1}ms", rtt_p99.as_secs_f32() * 1000.0)),
-            Cell::from(format!("{:.1}%", m.retransmit_rate())),
+            Cell::from(format!("{:.1}%", m.loss_rate())),
             Cell::from(score_text),
         ])
         .style(row_style)
@@ -1276,12 +1283,12 @@ fn ui(f: &mut Frame, app: &mut App) {
         // Left: Text Details
         let m = item.current_metrics();
         let mut details_text = format!(
-            "Scenario: {}\nAlgo: {}\nBytes: {}\nRetr: {} ({:.1}%)\nTime: {:.2}s\nScore: {:.1}",
+            "Scenario: {}\nAlgo: {}\nBytes: {}\nLost: {} ({:.1}%)\nTime: {:.2}s\nScore: {:.1}",
             s.name,
             item.algo,
             m.total_data_bytes,
-            m.retransmitted_bytes,
-            m.retransmit_rate(),
+            m.lost_datagrams,
+            m.loss_rate(),
             m.duration.as_secs_f32(),
             item.avg_score
         );
@@ -1295,7 +1302,6 @@ fn ui(f: &mut Frame, app: &mut App) {
         f.render_widget(details, details_layout[0]);
 
         // Right: RTT Sparkline
-        // Convert Duration to u64 (ms) for sparkline
         let data: Vec<u64> = item
             .rtt_samples
             .iter()
@@ -1303,7 +1309,6 @@ fn ui(f: &mut Frame, app: &mut App) {
             .rev()
             .take(100)
             .collect();
-        // Reverse back to chronological order for display
         let data: Vec<u64> = data.into_iter().rev().collect();
 
         let sparkline = Sparkline::default()
@@ -1317,7 +1322,6 @@ fn ui(f: &mut Frame, app: &mut App) {
         f.render_widget(sparkline, details_layout[1]);
 
         // Right: Comparison Bar Chart
-        // Find results for all algorithms in this same scenario
         let mut barchart = BarChart::default()
             .block(
                 Block::default()
@@ -1427,11 +1431,11 @@ fn ui(f: &mut Frame, app: &mut App) {
         let mut barchart = BarChart::default()
             .block(
                 Block::default()
-                    .title("Throughput (Blue) vs Goodput (Green) [Mbps x100]")
+                    .title("Throughput [Mbps x100]")
                     .borders(Borders::ALL),
             )
-            .bar_width(3)
-            .bar_gap(0)
+            .bar_width(5)
+            .bar_gap(1)
             .group_gap(2);
 
         for res in &scenario_results {
@@ -1444,19 +1448,12 @@ fn ui(f: &mut Frame, app: &mut App) {
             };
 
             let total_mbps = m.throughput_mbps();
-            let goodput_mbps = total_mbps * (1.0 - m.retransmit_rate() / 100.0);
 
             barchart = barchart.data(
-                BarGroup::default().label(label).bars(&[
-                    Bar::default()
-                        .value((total_mbps * 100.0) as u64)
-                        .label("Tot")
-                        .style(Style::default().fg(Color::Blue)),
-                    Bar::default()
-                        .value((goodput_mbps * 100.0) as u64)
-                        .label("Gud")
-                        .style(Style::default().fg(Color::Green)),
-                ]),
+                BarGroup::default().label(label).bars(&[Bar::default()
+                    .value((total_mbps * 100.0) as u64)
+                    .label("Thr")
+                    .style(Style::default().fg(Color::Blue))]),
             );
         }
 

@@ -304,8 +304,8 @@ fn test_anchor_snapshot_rejects_message_only_cert() {
         ControlAction::AnchorSnapshot {
             data: SnapshotData {
                 basis_hash: genesis_node.hash(),
-                members: vec![],
-                last_seq_numbers: vec![],
+                members: tox_proto::BoundedVec::new(),
+                last_seq_numbers: tox_proto::BoundedVec::new(),
             },
             cert: message_only_cert,
         },
@@ -436,8 +436,8 @@ fn test_anchor_snapshot_rejects_wrong_conv_id_cert() {
         ControlAction::AnchorSnapshot {
             data: SnapshotData {
                 basis_hash: genesis_node.hash(),
-                members: vec![],
-                last_seq_numbers: vec![],
+                members: tox_proto::BoundedVec::new(),
+                last_seq_numbers: tox_proto::BoundedVec::new(),
             },
             cert: wrong_cert,
         },

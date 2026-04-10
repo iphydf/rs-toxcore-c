@@ -286,11 +286,15 @@ cross-conversation deduplication.
     1.  `total_size`: `u64`
     2.  `status`: `Available`, `Downloading`, or `Pending`.
     3.  `received_mask`: `Binary` (Bitmask of 64KB chunks).
-    4.  `bao_root`: `u8[32]` (The Blake3-Merkle root).
-*   **[hash].bao**: The Bao outboard file, used for $O(\log N)$ incremental
-    chunk verification during swarm sync.
 *   **Durability**: The `.info` file **MUST** be updated via the
     "Write-to-Temp + Rename" pattern during active downloads.
+
+Chunk-boundary verification is not backed by an on-disk proof artifact:
+the Merkle root is committed in the signed `Content::Blob` MerkleNode
+on the DAG, and each chunk's leaf hash + sibling-hash proof are
+recomputed on demand at push-stream creation time from the stored
+chunk data (see `ChunkMerkleTree::from_store` and
+`doc/merkle-tox-cas.md` §3).
 
 --------------------------------------------------------------------------------
 

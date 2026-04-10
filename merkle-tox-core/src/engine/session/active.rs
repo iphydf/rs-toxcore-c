@@ -156,7 +156,11 @@ impl SyncSession<Active> {
             local_iblt.insert(hash.as_ref());
         }
 
-        let mut remote_iblt = IbltSketch::from_cells_keyed(sketch.cells, k_iblt);
+        // `IbltSketch` is the in-memory builder; conversion from the
+        // wire-bounded `BoundedVec` to the unbounded `Vec` is fine
+        // because the cap has already been enforced at deserialise.
+        let mut remote_iblt =
+            IbltSketch::from_cells_keyed(sketch.cells.into_iter().collect(), k_iblt);
         remote_iblt.subtract(&local_iblt).map_err(|e| {
             MerkleToxError::Reconciliation(format!("Sketch subtraction failed: {}", e))
         })?;
@@ -197,6 +201,13 @@ impl SyncSession<Active> {
     }
 
     pub fn next_fetch_batch(&mut self, batch_size: usize) -> Option<FetchBatchReq> {
+        // `FetchBatchReq.hashes` is `BoundedVec<NodeHash, MAX_BATCH_SIZE>`,
+        // so cap the local accumulator at the same ceiling regardless
+        // of what the caller asked for. All current callers pass
+        // `MAX_BATCH_SIZE` exactly, but enforcing it here keeps the
+        // function safe against a future caller that passes a larger
+        // hint without realising the wire cap is binding.
+        let batch_size = batch_size.min(tox_proto::constants::MAX_BATCH_SIZE);
         let mut hashes = Vec::with_capacity(batch_size);
         // Admin-priority first
         while hashes.len() < batch_size {
@@ -235,6 +246,10 @@ impl SyncSession<Active> {
         if hashes.is_empty() {
             None
         } else {
+            // `hashes.len() <= batch_size <= MAX_BATCH_SIZE` by the
+            // loop guards above, so `try_from_iter` cannot fail.
+            let hashes = tox_proto::BoundedVec::try_from_iter(hashes)
+                .expect("loop invariant: hashes.len() <= MAX_BATCH_SIZE");
             Some(FetchBatchReq {
                 conversation_id: self.conversation_id,
                 hashes,
@@ -322,10 +337,14 @@ impl SyncSession<Active> {
         flags: u64,
         store: Option<&dyn NodeStore>,
     ) -> SyncHeads {
-        let mut heads: Vec<NodeHash> = self.common.local_heads.iter().cloned().collect();
-        if heads.len() > MAX_HEADS_SYNC {
-            heads.truncate(MAX_HEADS_SYNC);
-        }
+        // Take up to MAX_HEADS_SYNC heads. The cap is structural via
+        // `BoundedVec`, so `take(MAX_HEADS_SYNC)` is the only correct
+        // way to truncate; `try_from_iter` would panic if we fed it
+        // more than `MAX_HEADS_SYNC` items.
+        let heads = tox_proto::BoundedVec::try_from_iter(
+            self.common.local_heads.iter().cloned().take(MAX_HEADS_SYNC),
+        )
+        .expect("take(MAX_HEADS_SYNC) bounds the iterator at the cap");
         let anchor_hash =
             store.and_then(|s| s.get_admin_heads(&self.conversation_id).first().cloned());
         SyncHeads {
@@ -358,9 +377,16 @@ impl SyncSession<Active> {
             iblt.insert(hash.as_ref());
         }
 
+        // `tier.cell_count()` is `<= MAX_SKETCH_CELLS` by construction
+        // (`Tier::Large` is the maximum, and its cell count is exactly
+        // `MAX_SKETCH_CELLS`). `try_from_iter` therefore cannot fail;
+        // panicking at the source if a future Tier variant breaks this
+        // invariant is preferable to silently shipping an oversize
+        // sketch that the receiver will reject.
         Ok(tox_reconcile::SyncSketch {
             conversation_id: self.conversation_id,
-            cells: iblt.into_cells(),
+            cells: tox_proto::BoundedVec::try_from_iter(iblt.into_cells())
+                .expect("Tier::cell_count() is bounded by MAX_SKETCH_CELLS"),
             range,
         })
     }
@@ -368,8 +394,13 @@ impl SyncSession<Active> {
     pub fn make_sync_shard_checksums(
         &self,
         store: &dyn NodeStore,
-    ) -> MerkleToxResult<Vec<(SyncRange, ShardHash)>> {
-        let mut shards = Vec::new();
+    ) -> MerkleToxResult<
+        tox_proto::BoundedVec<(SyncRange, ShardHash), { tox_proto::constants::MAX_SYNC_SHARDS }>,
+    > {
+        let mut shards = tox_proto::BoundedVec::<
+            (SyncRange, ShardHash),
+            { tox_proto::constants::MAX_SYNC_SHARDS },
+        >::new();
         let heads = store.get_heads(&self.conversation_id);
         let max_rank = heads
             .iter()
@@ -388,14 +419,25 @@ impl SyncSession<Active> {
             for hash in hashes {
                 hasher.update(hash.as_ref());
             }
-            shards.push((range, ShardHash::from(*hasher.finalize().as_bytes())));
+            // Stop emitting shards once we hit the wire cap. A larger
+            // store would simply leave the higher ranks unsynced this
+            // round; the caller drives further rounds to finish.
+            if shards
+                .try_push((range, ShardHash::from(*hasher.finalize().as_bytes())))
+                .is_err()
+            {
+                break;
+            }
         }
         Ok(shards)
     }
 
     pub fn handle_sync_shard_checksums(
         &mut self,
-        remote_shards: Vec<(SyncRange, ShardHash)>,
+        remote_shards: tox_proto::BoundedVec<
+            (SyncRange, ShardHash),
+            { tox_proto::constants::MAX_SYNC_SHARDS },
+        >,
         store: &dyn NodeStore,
     ) -> MerkleToxResult<Vec<SyncRange>> {
         let mut different_shards = Vec::new();
@@ -523,12 +565,37 @@ impl SyncSession<Active> {
         sequence_number: u64,
         store: &dyn NodeStore,
     ) -> MerkleNode {
-        let parents: Vec<NodeHash> = self.common.local_heads.iter().cloned().collect();
+        // The local-heads set is bounded by the same DAG-shape rules
+        // that bound `parents`; if a future change lets it grow past
+        // `MAX_PARENTS`, the `take` below truncates rather than
+        // panicking — the resulting node would still be valid (a
+        // smaller-than-frontier parent set is fine), and the wire
+        // path can never serialise an over-cap value.
+        let parents = tox_proto::BoundedVec::<NodeHash, { crate::dag::MAX_PARENTS }>::
+            try_from_iter(
+                self.common
+                    .local_heads
+                    .iter()
+                    .cloned()
+                    .take(crate::dag::MAX_PARENTS),
+            )
+            .expect("take(MAX_PARENTS) bounds iterator at cap");
         let max_parent_rank = parents
             .iter()
             .filter_map(|p| store.get_rank(p))
             .max()
             .unwrap_or(0);
+
+        // Convert at the construction boundary; truncate at cap so
+        // this in-process helper never panics on oversize metadata
+        // (callers can pass arbitrary lengths in tests).
+        let metadata_bounded = tox_proto::BoundedBytes::try_from_vec(
+            metadata
+                .into_iter()
+                .take(crate::dag::MAX_METADATA_SIZE)
+                .collect(),
+        )
+        .expect("take(MAX_METADATA_SIZE) bounds at cap");
 
         MerkleNode {
             parents: parents.clone(),
@@ -542,7 +609,7 @@ impl SyncSession<Active> {
             },
             network_timestamp: timestamp,
             content,
-            metadata,
+            metadata: metadata_bounded,
             authentication: crate::dag::NodeAuth::EphemeralSignature(
                 crate::dag::Ed25519Signature::from([0u8; 64]),
             ), // Placeholder

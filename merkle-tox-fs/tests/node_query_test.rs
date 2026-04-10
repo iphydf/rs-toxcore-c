@@ -15,7 +15,7 @@ fn test_fs_store_get_verified_nodes_by_type() {
     let sync_key = ConversationId::from([1u8; 32]);
 
     let admin_node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
@@ -25,7 +25,7 @@ fn test_fs_store_get_verified_nodes_by_type() {
             target_device_pk: PhysicalDevicePk::from([2u8; 32]),
             reason: "test".to_string(),
         }),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::Signature(merkle_tox_core::dag::Ed25519Signature::from(
             [0u8; 64],
         )),
@@ -33,14 +33,14 @@ fn test_fs_store_get_verified_nodes_by_type() {
     };
 
     let content_node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 2,
         topological_rank: 1,
         network_timestamp: 101,
         content: Content::Text("Content".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -70,14 +70,14 @@ fn test_fs_store_get_node_hashes_in_range() {
     let mut hashes = Vec::new();
     for i in 0..10 {
         let node = MerkleNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             author_pk: LogicalIdentityPk::from([1u8; 32]),
             sender_pk: PhysicalDevicePk::from([1u8; 32]),
             sequence_number: i + 1,
             topological_rank: i,
             network_timestamp: 100 + i as i64,
             content: Content::Text(format!("Node {}", i)),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
             pow_nonce: 0,
         };
@@ -104,7 +104,7 @@ fn test_fs_store_get_opaque_node_hashes() {
     let sync_key = ConversationId::from([3u8; 32]);
 
     let wire_node = merkle_tox_core::dag::WireNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         sender_hint: [0u8; 4],
         encrypted_routing: vec![0u8; 40],
         payload_data: vec![0u8; 8],
@@ -128,26 +128,26 @@ fn test_fs_store_node_counts() {
     let sync_key = ConversationId::from([4u8; 32]);
 
     let n1 = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 100,
         content: Content::Text("V1".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
     let n2 = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 2,
         topological_rank: 1,
         network_timestamp: 101,
         content: Content::Text("S1".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };

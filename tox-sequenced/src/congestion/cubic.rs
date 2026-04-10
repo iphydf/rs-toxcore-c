@@ -98,7 +98,9 @@ impl CongestionControl for Cubic {
         }
     }
 
-    fn on_nack(&mut self, _now: Instant) {
+    fn on_loss(&mut self, _bytes_lost: usize, _now: Instant) {
+        // Cubic reacts to a loss *event* (β-multiplicative reduction)
+        // rather than byte volume; `_bytes_lost` is ignored.
         self.epoch_start = None; // Reset epoch
         if self.cwnd < self.w_max {
             self.w_max = self.cwnd * (1.0 + BETA) / 2.0;
@@ -135,5 +137,5 @@ impl CongestionControl for Cubic {
         self.last_rtt
     }
 
-    fn on_fragment_sent(&mut self, _bytes: usize, _now: Instant) {}
+    fn on_packet_sent(&mut self, _bytes: usize, _now: Instant) {}
 }

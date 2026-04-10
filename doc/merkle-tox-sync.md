@@ -48,7 +48,7 @@ Peers request nodes using `FETCH_BATCH_REQ`.
     `Content::Blob`, it cross-references the `hash` with its `cas_blobs` table.
     If the blob is missing, it triggers the swarm logic defined in
     `merkle-tox-cas.md` to fetch chunks from all peers who signaled inventory.
--   **Response**: A series of `DATA` packets from the `tox-sequenced` layer.
+-   **Response**: DAG nodes sent as `FRAGMENT` messages via `tox-sequenced`.
 -   **Queueing**: Peer A inspects the `parents` of received nodes and adds
     unknown ones to the next batch request.
 

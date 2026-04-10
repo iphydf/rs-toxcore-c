@@ -16,14 +16,14 @@ fn test_payload_length_in_index() {
     let conv_id = ConversationId::from([1u8; 32]);
 
     let node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 100,
         content: Content::Text("Testing payload length".to_string()),
-        metadata: vec![0u8; 128], // Add some metadata to ensure non-trivial length
+        metadata: tox_proto::BoundedBytes::try_from_vec(vec![0u8; 128]).expect("test fixture under MAX_METADATA_SIZE"), // Add some metadata to ensure non-trivial length
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };

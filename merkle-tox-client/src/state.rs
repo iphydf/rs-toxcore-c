@@ -91,8 +91,18 @@ pub struct ChatState {
     pub members: HashMap<LogicalIdentityPk, MemberInfo>,
     /// Set of all authorized device PKs in the conversation
     pub authorized_devices: HashSet<PhysicalDevicePk>,
-    /// Latest announcement per device: Device PK -> (PreKeys, LastResortKey)
-    pub announcements: HashMap<PhysicalDevicePk, (Vec<SignedPreKey>, SignedPreKey)>,
+    /// Latest announcement per device: Device PK -> (PreKeys, LastResortKey).
+    /// Mirrors the wire-side cap on `ControlAction::Announcement.pre_keys`.
+    pub announcements: HashMap<
+        PhysicalDevicePk,
+        (
+            tox_proto::BoundedVec<
+                SignedPreKey,
+                { tox_proto::constants::MAX_HANDSHAKES_PER_ANNOUNCEMENT as usize },
+            >,
+            SignedPreKey,
+        ),
+    >,
     /// Recent messages in the conversation
     pub messages: Vec<ChatMessage>,
     /// Messages received speculatively (not yet fully verified)

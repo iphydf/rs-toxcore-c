@@ -1,6 +1,6 @@
 use crate::dag::{ConversationId, NodeHash, PhysicalDevicePk, PowNonce};
 use crate::sync::{SyncRange, Tier};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
 pub mod active;
@@ -14,8 +14,10 @@ pub struct SessionCommon {
     pub shallow: bool,
     pub min_rank: u64,
     pub min_timestamp: i64,
-    pub local_heads: HashSet<NodeHash>,
-    pub remote_heads: HashSet<NodeHash>,
+    /// BTreeSet for deterministic iteration — leaks into SyncHeads.heads
+    /// order, which determines FetchBatchReq order on the receiver.
+    pub local_heads: BTreeSet<NodeHash>,
+    pub remote_heads: BTreeSet<NodeHash>,
     /// Admin node hashes needing priority fetch (drained before hot).
     pub missing_admin_nodes: VecDeque<NodeHash>,
     /// Hot-window missing nodes (priority). Fetched before cold.
@@ -23,7 +25,9 @@ pub struct SessionCommon {
     /// Cold-window missing nodes.
     pub missing_nodes_cold: VecDeque<NodeHash>,
     pub in_flight_fetches: HashSet<NodeHash>,
-    pub missing_blobs: HashSet<NodeHash>,
+    /// BTreeSet for deterministic drain order (BlobQuery dispatch
+    /// order is observable on the wire).
+    pub missing_blobs: BTreeSet<NodeHash>,
     pub peer_features: u64,
     pub time_samples: Vec<i64>,
     pub vouchers: HashMap<NodeHash, HashSet<PhysicalDevicePk>>,

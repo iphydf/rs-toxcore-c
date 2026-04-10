@@ -790,13 +790,12 @@ impl BlobStore for Storage {
 
     fn get_blob_info(&self, hash: &NodeHash) -> Option<BlobInfo> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare_cached("SELECT hash, total_size, bao_root, status, received_chunks FROM cas_blobs WHERE hash = ?1").ok()?;
+        let mut stmt = conn.prepare_cached("SELECT hash, total_size, status, received_chunks FROM cas_blobs WHERE hash = ?1").ok()?;
         stmt.query_row(params![hash.as_bytes()], |r| {
             let hash_bytes: Vec<u8> = r.get(0)?;
             let size: i64 = r.get(1)?;
-            let bao_root: Option<Vec<u8>> = r.get(2)?;
-            let status_str: String = r.get(3)?;
-            let received_mask: Option<Vec<u8>> = r.get(4)?;
+            let status_str: String = r.get(2)?;
+            let received_mask: Option<Vec<u8>> = r.get(3)?;
 
             let bytes: [u8; 32] = hash_bytes.try_into().map_err(|_| {
                 rusqlite::Error::InvalidColumnType(0, "hash".into(), rusqlite::types::Type::Blob)
@@ -811,7 +810,6 @@ impl BlobStore for Storage {
             Ok(BlobInfo {
                 hash: NodeHash::from(bytes),
                 size: size as u64,
-                bao_root: bao_root.and_then(|b| b.try_into().ok()),
                 status,
                 received_mask,
                 decryption_key: None,
@@ -831,12 +829,11 @@ impl BlobStore for Storage {
             BlobStatus::Error => "Error",
         };
         conn.execute(
-            "INSERT INTO cas_blobs (hash, total_size, bao_root, status, received_chunks) VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(hash) DO UPDATE SET status = ?4, received_chunks = ?5",
+            "INSERT INTO cas_blobs (hash, total_size, status, received_chunks) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(hash) DO UPDATE SET status = ?3, received_chunks = ?4",
             params![
                 info.hash.as_bytes(),
                 info.size as i64,
-                info.bao_root,
                 status_str,
                 info.received_mask,
             ],
@@ -930,23 +927,13 @@ impl BlobStore for Storage {
             }
 
             let status = if complete { "Available" } else { "Downloading" };
-            let mut bao_root: Option<Vec<u8>> = None;
-            if complete {
-                file.seek(SeekFrom::Start(0)).map_err(MerkleToxError::Io)?;
-                let mut full_data = vec![0u8; total_size as usize];
-                file.read_exact(&mut full_data)
-                    .map_err(MerkleToxError::Io)?;
-                let (_, root) = bao::encode::outboard(&full_data);
-                bao_root = Some(root.as_bytes().to_vec());
-            }
 
             tx.execute(
-                    "UPDATE cas_blobs SET received_chunks = ?1, status = ?2, file_path = ?3, bao_root = ?4 WHERE hash = ?5",
+                    "UPDATE cas_blobs SET received_chunks = ?1, status = ?2, file_path = ?3 WHERE hash = ?4",
                     params![
                         mask,
                         status,
                         path.to_string_lossy(),
-                        bao_root,
                         hash.as_bytes()
                     ],
                 )
@@ -994,15 +981,10 @@ impl BlobStore for Storage {
         }
 
         let status = if complete { "Available" } else { "Downloading" };
-        let mut bao_root: Option<Vec<u8>> = None;
-        if complete {
-            let (_, root) = bao::encode::outboard(&blob_data);
-            bao_root = Some(root.as_bytes().to_vec());
-        }
 
         tx.execute(
-            "UPDATE cas_blobs SET data = ?1, received_chunks = ?2, status = ?3, bao_root = ?4 WHERE hash = ?5",
-            params![blob_data, mask, status, bao_root, hash.as_bytes()],
+            "UPDATE cas_blobs SET data = ?1, received_chunks = ?2, status = ?3 WHERE hash = ?4",
+            params![blob_data, mask, status, hash.as_bytes()],
         )
         .map_err(|e| MerkleToxError::Storage(e.to_string()))?;
 
@@ -1060,59 +1042,6 @@ impl BlobStore for Storage {
         }
 
         Ok(data[offset as usize..(offset as usize + length as usize)].to_vec())
-    }
-
-    fn get_chunk_with_proof(
-        &self,
-        hash: &NodeHash,
-        offset: u64,
-        length: u32,
-    ) -> MerkleToxResult<(Vec<u8>, Vec<u8>)> {
-        let full_data = {
-            let conn = self.conn.lock().unwrap();
-            let res: Option<(Option<Vec<u8>>, Option<String>, i64)> = conn
-                .query_row(
-                    "SELECT data, file_path, total_size FROM cas_blobs WHERE hash = ?1",
-                    params![hash.as_bytes()],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-                )
-                .optional()
-                .map_err(|e| MerkleToxError::Storage(e.to_string()))?;
-
-            let (data_opt, file_path_opt, total_size) =
-                res.ok_or(MerkleToxError::BlobNotFound(*hash))?;
-
-            let data = if let Some(path_str) = file_path_opt {
-                self.vfs
-                    .read(Path::new(&path_str))
-                    .map_err(MerkleToxError::Io)?
-            } else {
-                data_opt.ok_or(MerkleToxError::BlobNotFound(*hash))?
-            };
-
-            if data.len() as i64 != total_size {
-                return Err(MerkleToxError::Storage(
-                    "Blob data size mismatch".to_string(),
-                ));
-            }
-            data
-        };
-
-        let (outboard, _root) = bao::encode::outboard(&full_data);
-
-        let mut slice = Vec::new();
-        let mut extractor = bao::encode::SliceExtractor::new_outboard(
-            std::io::Cursor::new(&full_data),
-            std::io::Cursor::new(outboard),
-            offset,
-            length as u64,
-        );
-        extractor
-            .read_to_end(&mut slice)
-            .map_err(MerkleToxError::Io)?;
-
-        let end = (offset as usize + length as usize).min(full_data.len());
-        Ok((full_data[offset as usize..end].to_vec(), slice))
     }
 }
 

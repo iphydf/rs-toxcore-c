@@ -234,7 +234,12 @@ fn test_node_blob_sync() {
 
     // 1. Alice authors a blob
     let blob_data = vec![0xDE, 0xAD, 0xBE, 0xEF];
-    let blob_hash = NodeHash::from(*blake3::hash(&blob_data).as_bytes());
+    let blob_hash = NodeHash::from(
+        merkle_tox_core::cas::ChunkMerkleTree::from_chunks(
+            blob_data.chunks(merkle_tox_core::cas::CHUNK_SIZE as usize),
+        )
+        .root(),
+    );
     {
         let mut a = alice_node.lock().unwrap();
         let node_ref = &mut *a;
@@ -259,7 +264,7 @@ fn test_node_blob_sync() {
                     name: "test.bin".to_string(),
                     mime_type: "application/octet-stream".to_string(),
                     size: blob_data.len() as u64,
-                    metadata: vec![],
+                    metadata: tox_proto::BoundedBytes::new(),
                 },
                 vec![],
                 &node_ref.store,

@@ -584,7 +584,7 @@ fn test_expired_prekey_skipped() {
     engine.peer_announcements.insert(
         peer_pk,
         ControlAction::Announcement {
-            pre_keys: vec![expired_spk, valid_spk],
+            pre_keys: tox_proto::bounded_vec![expired_spk, valid_spk],
             last_resort_key: last_resort,
         },
     );
@@ -875,7 +875,7 @@ fn test_ephemeral_key_erasure_at_50_pct_ack() {
         room.identities[1].device_pk,
         merkle_tox_core::ProtocolMessage::KeywrapAck {
             keywrap_hash: kw_hash,
-            recipient_pk: room.identities[1].device_pk,
+            recipient_pk: tox_proto::Claimed::new(room.identities[1].device_pk),
         },
         &store,
         None,
@@ -1335,7 +1335,7 @@ fn test_history_export_wire_encrypted() {
 
     // Verify HistoryExport is NOT an exception node (must be encrypted on wire)
     let he_node = merkle_tox_core::dag::MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([0u8; 32]),
         sender_pk: PhysicalDevicePk::from([0u8; 32]),
         sequence_number: 1,
@@ -1343,12 +1343,11 @@ fn test_history_export_wire_encrypted() {
         network_timestamp: 1000,
         content: Content::HistoryExport {
             blob_hash: NodeHash::from([0xBB; 32]),
-            blob_size: 0,
-            bao_root: None,
+            blob_size: tox_proto::Untrusted::new(0),
             ephemeral_pk: merkle_tox_core::dag::EphemeralX25519Pk::from([0xCC; 32]),
-            wrapped_keys: vec![],
+            wrapped_keys: tox_proto::BoundedVec::new(),
         },
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: merkle_tox_core::dag::NodeAuth::EphemeralSignature(
             merkle_tox_core::dag::Ed25519Signature::from([0u8; 64]),
         ),
@@ -1366,7 +1365,7 @@ fn test_history_export_wire_encrypted() {
             generation: 0,
             anchor_hash: NodeHash::from([0u8; 32]),
             ephemeral_pk: merkle_tox_core::dag::EphemeralX25519Pk::from([0u8; 32]),
-            wrapped_keys: vec![],
+            wrapped_keys: tox_proto::BoundedVec::new(),
         },
         ..he_node.clone()
     };
@@ -1379,9 +1378,9 @@ fn test_history_export_wire_encrypted() {
     let skd_node = merkle_tox_core::dag::MerkleNode {
         content: Content::SenderKeyDistribution {
             ephemeral_pk: merkle_tox_core::dag::EphemeralX25519Pk::from([0u8; 32]),
-            wrapped_keys: vec![],
+            wrapped_keys: tox_proto::BoundedVec::new(),
             ephemeral_signing_pk: merkle_tox_core::dag::EphemeralSigningPk::from([0u8; 32]),
-            disclosed_keys: vec![],
+            disclosed_keys: tox_proto::BoundedVec::new(),
         },
         ..he_node.clone()
     };

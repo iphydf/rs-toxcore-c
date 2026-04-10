@@ -15,8 +15,8 @@ Decouples protocol logic from physical networking and time.
 
 ### A. `Transport` Trait
 
-The system logic (Sync Engine + Reliability Layer) interacts with the network
-via a generic `Transport` trait.
+The system logic (Sync Engine + CAS Layer) interacts with the network via a
+generic `Transport` trait.
 
 ```rust
 pub trait Transport: Send + Sync {
@@ -52,7 +52,7 @@ The Tox instance is encapsulated in a generic container that orchestrates the
 internal components:
 
 1.  **`MerkleToxEngine`**: Pure DAG/Sync logic.
-2.  **`SequenceSession`**: Reliability and Congestion Control.
+2.  **`SequenceSession`**: Congestion Control and Pacing.
 3.  **`S: NodeStore`**: Persistence (SQLite, FS, or In-Memory).
 4.  **`T: Transport`**: Delivery mechanism.
 
@@ -142,7 +142,7 @@ The suite includes pre-defined scripts:
     environment. Verify that new members can still join and obtain the `K_conv`.
 -   **Large Blob Swarm**: One node seeds a 50MB file. 50 nodes attempt to
     download it simultaneously via the Multi-Source Swarm Protocol. Measure
-    bandwidth efficiency and Bao-verification CPU overhead.
+    bandwidth efficiency and chunk-Merkle verification CPU overhead.
 
 ## 6. Observability & Metrics API
 
@@ -150,7 +150,7 @@ Each `MerkleToxNode` exports a `NodeStatus` snapshot. The TUI polls this to
 build its visualizations.
 
 -   **Transport Metrics**: `cwnd`, `inflight_bytes`, `rtt_stats`,
-    `retransmit_count`.
+    `packets_lost`, `packets_delivered`.
 -   **DAG Metrics**: `heads` (List of hashes), `max_rank`, `verified_count`,
     `speculative_count`.
 -   **Identity Metrics**: `authorized_devices` count, `current_generation`.

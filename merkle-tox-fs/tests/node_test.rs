@@ -23,14 +23,14 @@ fn test_fs_store_put_get_node() {
     let store = FsStore::new(tmp_dir.path().to_path_buf(), Arc::new(StdFileSystem)).unwrap();
 
     let node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 12345,
         content: Content::Text("Hello FS Store".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -58,14 +58,14 @@ fn test_fs_store_sharding_layout() {
     let sync_key = ConversationId::from([1u8; 32]);
 
     let node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 100,
         content: Content::Text("test".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -96,14 +96,14 @@ fn test_fs_store_persistence_restart() {
     {
         let store = FsStore::new(root.clone(), Arc::new(StdFileSystem)).unwrap();
         let node = MerkleNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             author_pk: LogicalIdentityPk::from([1u8; 32]),
             sender_pk: PhysicalDevicePk::from([1u8; 32]),
             sequence_number: 42,
             topological_rank: 0,
             network_timestamp: 100,
             content: Content::Text("Persisted Restart".to_string()),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
             pow_nonce: 0,
         };
@@ -137,14 +137,14 @@ fn test_fs_store_speculative_handling() {
     let sync_key = ConversationId::from([1u8; 32]);
 
     let node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 100,
         content: Content::Text("Speculative".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -181,26 +181,26 @@ fn test_fs_store_conversation_discovery() {
     {
         let store = FsStore::new(root.clone(), Arc::new(StdFileSystem)).unwrap();
         let node1 = MerkleNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             author_pk: LogicalIdentityPk::from([1u8; 32]),
             sender_pk: PhysicalDevicePk::from([1u8; 32]),
             sequence_number: 1,
             topological_rank: 0,
             network_timestamp: 100,
             content: Content::Text("C1 Discovery".to_string()),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
             pow_nonce: 0,
         };
         let node2 = MerkleNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             author_pk: LogicalIdentityPk::from([2u8; 32]),
             sender_pk: PhysicalDevicePk::from([2u8; 32]),
             sequence_number: 1,
             topological_rank: 0,
             network_timestamp: 200,
             content: Content::Text("C2 Discovery".to_string()),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
             pow_nonce: 0,
         };
@@ -236,14 +236,14 @@ fn test_fs_store_node_lookup_trait() {
     let sync_key = ConversationId::from([1u8; 32]);
 
     let node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 5,
         network_timestamp: 100,
         content: Content::Text("test".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -270,14 +270,14 @@ fn test_fs_store_corrupt_node_file() {
     let sync_key = ConversationId::from([1u8; 32]);
 
     let node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 100,
         content: Content::Text("test".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -340,14 +340,14 @@ fn test_fs_store_get_node_across_conversations() {
     let conv2 = ConversationId::from([2u8; 32]);
 
     let node1 = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 100,
         content: Content::Text("C1".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -362,14 +362,14 @@ fn test_fs_store_get_node_across_conversations() {
 
     // Now add another node in conv2
     let node2 = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([2u8; 32]),
         sender_pk: PhysicalDevicePk::from([2u8; 32]),
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 100,
         content: Content::Text("C2".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -388,14 +388,14 @@ fn test_fs_store_node_lookup_packed() {
     let sync_key = ConversationId::from([1u8; 32]);
 
     let node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 123,
         network_timestamp: 100,
         content: Content::Text("packed lookup".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };
@@ -428,14 +428,14 @@ fn test_fs_store_mark_verified_idempotency() {
     let sync_key = ConversationId::from([1u8; 32]);
 
     let node = MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: LogicalIdentityPk::from([1u8; 32]),
         sender_pk: PhysicalDevicePk::from([1u8; 32]),
         sequence_number: 1,
         topological_rank: 0,
         network_timestamp: 100,
         content: Content::Text("test".to_string()),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
         pow_nonce: 0,
     };

@@ -5,6 +5,10 @@ pub enum ScenarioCategory {
     BlobTransfer,
     DagConvergence,
     Combined,
+    /// Scenarios with high node counts (≥32). Opt-in via
+    /// `--include-large-groups` because their wall-clock cost is
+    /// orders of magnitude above the small-group set.
+    LargeGroup,
 }
 
 impl std::fmt::Display for ScenarioCategory {
@@ -13,6 +17,7 @@ impl std::fmt::Display for ScenarioCategory {
             Self::BlobTransfer => write!(f, "Blob"),
             Self::DagConvergence => write!(f, "DAG"),
             Self::Combined => write!(f, "Combined"),
+            Self::LargeGroup => write!(f, "Large"),
         }
     }
 }
@@ -29,6 +34,8 @@ pub struct NetworkConfig {
     pub loss_model: LossModelConfig,
     pub latency: Duration,
     pub jitter: f32,
+    /// Per-link bandwidth limit in Mbps. None = unlimited.
+    pub bandwidth_mbps: Option<f32>,
 }
 
 impl NetworkConfig {
@@ -38,6 +45,7 @@ impl NetworkConfig {
             loss_model: LossModelConfig::Uniform,
             latency: Duration::ZERO,
             jitter: 0.0,
+            bandwidth_mbps: None,
         }
     }
 }
@@ -46,6 +54,11 @@ impl NetworkConfig {
 pub enum PhaseAction {
     Run,
     AuthorMessages { per_node: usize },
+    /// Authors `count` content nodes from one specific node and
+    /// registers each with the metrics collector as a latency marker.
+    /// Used in large-group scenarios to measure end-to-end propagation
+    /// without inflating the per-tick scan cost.
+    AuthorMarkerMessages { count: usize, author_idx: usize },
     SeedBlob { seeder_idx: usize, size: u64 },
     ConcurrentBlobs { transfers: Vec<(usize, u64)> },
     Partition { groups: Vec<Vec<usize>> },
@@ -90,6 +103,8 @@ pub fn all_scenarios() -> Vec<Scenario> {
         scenario_8_late_joiner(),
         scenario_9_realistic_group(),
         scenario_10_hostile_network(),
+        scenario_11_direct_transfer(),
+        scenario_12_fast_network(),
     ]
 }
 
@@ -165,7 +180,13 @@ fn scenario_3_large_file() -> Scenario {
         name: "Large file 100MB",
         category: ScenarioCategory::BlobTransfer,
         node_count: 4,
-        network: NetworkConfig::clean(),
+        network: NetworkConfig {
+            loss_rate: 0.0,
+            loss_model: LossModelConfig::Uniform,
+            latency: Duration::from_millis(20),
+            jitter: 0.1,
+            bandwidth_mbps: Some(10.0),
+        },
         phases: vec![
             ScenarioPhase {
                 name: "Seed blob",
@@ -225,6 +246,7 @@ fn scenario_5_lossy_blob() -> Scenario {
             loss_model: LossModelConfig::Uniform,
             latency: Duration::from_millis(20),
             jitter: 0.0,
+            bandwidth_mbps: None,
         },
         phases: vec![
             ScenarioPhase {
@@ -346,6 +368,7 @@ fn scenario_9_realistic_group() -> Scenario {
             loss_model: LossModelConfig::Uniform,
             latency: Duration::from_millis(30),
             jitter: 0.0,
+            bandwidth_mbps: None,
         },
         phases: vec![
             ScenarioPhase {
@@ -371,6 +394,70 @@ fn scenario_9_realistic_group() -> Scenario {
     }
 }
 
+fn scenario_11_direct_transfer() -> Scenario {
+    Scenario {
+        id: 11,
+        name: "1:1 large file",
+        category: ScenarioCategory::BlobTransfer,
+        node_count: 2,
+        network: NetworkConfig {
+            loss_rate: 0.0,
+            loss_model: LossModelConfig::Uniform,
+            latency: Duration::from_millis(2),
+            jitter: 0.0,
+            bandwidth_mbps: Some(1000.0), // 1 Gbps LAN
+        },
+        phases: vec![
+            ScenarioPhase {
+                name: "Seed blob",
+                duration: Duration::from_secs(1),
+                action: PhaseAction::SeedBlob {
+                    seeder_idx: 0,
+                    size: 100 * 1024 * 1024,
+                },
+            },
+            ScenarioPhase {
+                name: "Transfer",
+                duration: Duration::from_secs(90),
+                action: PhaseAction::Run,
+            },
+        ],
+        timeout: Duration::from_secs(120),
+    }
+}
+
+fn scenario_12_fast_network() -> Scenario {
+    Scenario {
+        id: 12,
+        name: "Fast network 100MB",
+        category: ScenarioCategory::BlobTransfer,
+        node_count: 4,
+        network: NetworkConfig {
+            loss_rate: 0.0,
+            loss_model: LossModelConfig::Uniform,
+            latency: Duration::from_millis(5),
+            jitter: 0.0,
+            bandwidth_mbps: Some(100.0), // 100 Mbps broadband
+        },
+        phases: vec![
+            ScenarioPhase {
+                name: "Seed blob",
+                duration: Duration::from_secs(1),
+                action: PhaseAction::SeedBlob {
+                    seeder_idx: 0,
+                    size: 100 * 1024 * 1024,
+                },
+            },
+            ScenarioPhase {
+                name: "Transfer",
+                duration: Duration::from_secs(60),
+                action: PhaseAction::Run,
+            },
+        ],
+        timeout: Duration::from_secs(120),
+    }
+}
+
 fn scenario_10_hostile_network() -> Scenario {
     Scenario {
         id: 10,
@@ -382,6 +469,7 @@ fn scenario_10_hostile_network() -> Scenario {
             loss_model: LossModelConfig::GilbertElliot { p: 0.10, r: 0.50 },
             latency: Duration::from_millis(200),
             jitter: 0.20,
+            bandwidth_mbps: None,
         },
         phases: vec![
             ScenarioPhase {

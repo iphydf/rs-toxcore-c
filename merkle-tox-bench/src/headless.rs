@@ -13,9 +13,16 @@ pub fn run_headless(scenarios: &[Scenario], seed: u64) -> BenchmarkReport {
         );
 
         let mut harness = SimulationHarness::new(scenario.node_count, &scenario.network, seed);
+        let wall_clock_start = std::time::Instant::now();
         let completed = harness.run_scenario(scenario);
+        let wall_clock_ms = wall_clock_start.elapsed().as_millis() as u64;
 
         let agg = &harness.metrics.aggregated;
+        let latency = if harness.metrics.markers.is_empty() {
+            None
+        } else {
+            Some(harness.metrics.latency_histogram())
+        };
         let result = ScenarioResult {
             scenario_id: scenario.id,
             scenario_name: scenario.name.to_string(),
@@ -26,6 +33,11 @@ pub fn run_headless(scenarios: &[Scenario], seed: u64) -> BenchmarkReport {
             blob_completion_time_ms: agg.blob_completion_time.map(|d| d.as_millis() as u64),
             total_bytes_tx: agg.total_bytes_tx,
             timed_out: !completed,
+            wall_clock_ms: Some(wall_clock_ms),
+            latency,
+            peak_admin_frontier: agg.peak_admin_frontier,
+            peak_content_frontier: agg.peak_content_frontier,
+            useful_bytes: harness.metrics.useful_bytes,
         };
 
         eprintln!(
@@ -135,6 +147,46 @@ pub fn print_summary(report: &BenchmarkReport) {
             format_bytes(r.total_bytes_tx),
             if r.timed_out { "YES" } else { "no" }
         );
+        if r.wall_clock_ms.is_some()
+            || r.latency.is_some()
+            || r.dag_convergence_time_ms.is_some()
+            || r.peak_admin_frontier > 0
+            || r.useful_bytes > 0
+        {
+            print!("      ");
+            if let Some(ms) = r.dag_convergence_time_ms {
+                print!("conv-time={}ms  ", ms);
+            }
+            if let Some(ms) = r.wall_clock_ms {
+                print!("wall={}s  ", ms / 1000);
+            }
+            if r.peak_admin_frontier > 0 || r.peak_content_frontier > 0 {
+                print!(
+                    "peak-frontier admin/content={}/{}  ",
+                    r.peak_admin_frontier, r.peak_content_frontier,
+                );
+            }
+            if r.useful_bytes > 0 && r.total_bytes_tx > 0 {
+                let overhead = r.total_bytes_tx as f64 / r.useful_bytes as f64;
+                print!(
+                    "bw={}useful/{} ({}× overhead)  ",
+                    format_bytes(r.useful_bytes),
+                    format_bytes(r.total_bytes_tx),
+                    if overhead >= 100.0 {
+                        format!("{:.0}", overhead)
+                    } else {
+                        format!("{:.1}", overhead)
+                    },
+                );
+            }
+            if let Some(l) = &r.latency {
+                print!(
+                    "latency p50/p95/max={}/{}/{}ms (n={})",
+                    l.p50_ms, l.p95_ms, l.max_ms, l.samples,
+                );
+            }
+            println!();
+        }
     }
 
     println!("{}", "-".repeat(80));

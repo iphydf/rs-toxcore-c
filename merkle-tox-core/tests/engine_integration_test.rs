@@ -149,14 +149,14 @@ fn test_concurrency_merging() {
         .put_node(
             &cid,
             MerkleNode {
-                parents: vec![],
+                parents: tox_proto::BoundedVec::new(),
                 author_pk: LogicalIdentityPk::from([0u8; 32]),
                 sender_pk: PhysicalDevicePk::from([0u8; 32]),
                 sequence_number: 0,
                 topological_rank: 0,
                 network_timestamp: 0,
                 content: Content::Text("Root".to_string()),
-                metadata: vec![],
+                metadata: tox_proto::BoundedBytes::new(),
                 authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
                 pow_nonce: 0,
             },
@@ -789,7 +789,7 @@ fn test_repro_stuck_sync() {
     // 3. Bob handles SyncHeads from Alice
     let sync_heads = merkle_tox_core::sync::SyncHeads {
         conversation_id: conv_id,
-        heads: vec![node_c.hash()],
+        heads: tox_proto::bounded_vec![node_c.hash()],
         flags: 0,
         anchor_hash: None,
     };
@@ -872,7 +872,7 @@ fn test_repro_stuck_sync() {
 
     // 6. Bob's poll should now request Node B
     let now = Instant::now();
-    let bob_effects = bob_engine.poll(now, &bob_store).unwrap();
+    let bob_effects = bob_engine.poll(now, &bob_store, None).unwrap();
     let bob_poll_msgs: Vec<_> = bob_effects
         .into_iter()
         .filter_map(|e| {
@@ -926,7 +926,7 @@ fn test_repro_stuck_sync() {
         .handle_message(alice_pk, merkle_node_b, &bob_store, None)
         .unwrap();
     merkle_tox_core::testing::apply_effects(effects, &bob_store);
-    let bob_effects = bob_engine.poll(now, &bob_store).unwrap();
+    let bob_effects = bob_engine.poll(now, &bob_store, None).unwrap();
     let bob_poll_msgs: Vec<_> = bob_effects
         .into_iter()
         .filter_map(|e| {
@@ -993,7 +993,12 @@ fn test_repro_stuck_sync() {
     let alice_heads = alice_store.get_heads(&conv_id);
     let sync_heads = ProtocolMessage::SyncHeads(merkle_tox_core::sync::SyncHeads {
         conversation_id: conv_id,
-        heads: alice_heads,
+        heads: tox_proto::BoundedVec::try_from_iter(
+            alice_heads
+                .into_iter()
+                .take(tox_proto::constants::MAX_HEADS_SYNC),
+        )
+        .expect("take(MAX_HEADS_SYNC) bounds iterator at cap"),
         flags: 0,
         anchor_hash: None,
     });
@@ -1006,8 +1011,8 @@ fn test_repro_stuck_sync() {
     // Drive sync until completion
     loop {
         let mut effects = Vec::new();
-        effects.extend(bob_engine.poll(now, &bob_store).unwrap());
-        effects.extend(alice_engine.poll(now, &alice_store).unwrap());
+        effects.extend(bob_engine.poll(now, &bob_store, None).unwrap());
+        effects.extend(alice_engine.poll(now, &alice_store, None).unwrap());
 
         if effects.is_empty() {
             break;
@@ -1343,7 +1348,7 @@ fn test_concurrent_children_ratchet_purge() {
         .author_node(
             room.conv_id,
             Content::Text("G1".to_string()),
-            Vec::new(),
+            vec![],
             &store,
         )
         .unwrap();
@@ -1355,7 +1360,7 @@ fn test_concurrent_children_ratchet_purge() {
         .author_node(
             room.conv_id,
             Content::Text("P1".to_string()),
-            Vec::new(),
+            vec![],
             &store,
         )
         .unwrap();
@@ -1370,7 +1375,7 @@ fn test_concurrent_children_ratchet_purge() {
         .author_node(
             room.conv_id,
             Content::Text("P2".to_string()),
-            Vec::new(),
+            vec![],
             &store,
         )
         .unwrap();
@@ -1505,8 +1510,8 @@ fn test_anchor_snapshot_speculative() {
         ControlAction::AnchorSnapshot {
             data: SnapshotData {
                 basis_hash: genesis_node.hash(),
-                members: vec![],
-                last_seq_numbers: vec![],
+                members: tox_proto::BoundedVec::new(),
+                last_seq_numbers: tox_proto::BoundedVec::new(),
             },
             cert: alice_cert,
         },
@@ -1594,12 +1599,12 @@ fn test_anchor_snapshot_applies_member_data() {
         ControlAction::AnchorSnapshot {
             data: SnapshotData {
                 basis_hash: genesis_node.hash(),
-                members: vec![MemberInfo {
+                members: tox_proto::bounded_vec![MemberInfo {
                     public_key: charlie.master_pk,
                     role: 1,
                     joined_at: 1000,
                 }],
-                last_seq_numbers: vec![],
+                last_seq_numbers: tox_proto::BoundedVec::new(),
             },
             cert: alice_cert,
         },
@@ -1762,7 +1767,7 @@ fn test_history_key_export_registers_blob_sync() {
     // Alice exports history referencing a specific blob.
     let blob_hash = NodeHash::from([0xBB_u8; 32]);
     let hke_effects = alice_engine
-        .author_history_key_export(room.conv_id, blob_hash, 1024, None, &alice_store)
+        .author_history_key_export(room.conv_id, blob_hash, 1024, &alice_store)
         .unwrap();
     apply_effects(hke_effects.clone(), &alice_store);
 

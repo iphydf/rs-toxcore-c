@@ -38,8 +38,8 @@ fn test_metadata_padding_uniformity() {
         1001,
     );
 
-    let ck_small = test_pack_content_keys(&keys, &sender_pk, 1);
-    let ck_larger = test_pack_content_keys(&keys, &sender_pk, 2);
+    let ck_small = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
+    let ck_larger = test_pack_content_keys(&keys, &conv_id, &sender_pk, 2);
 
     let wire_small = node_small
         .pack_wire(&PackKeys::Content(ck_small), false)
@@ -82,7 +82,7 @@ fn test_padding_malleability_attack() {
         1000,
     );
 
-    let ck = test_pack_content_keys(&keys, &sender_pk, 1);
+    let ck = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
     let k_msg = ck.k_msg.clone();
     let mut wire = node.pack_wire(&PackKeys::Content(ck), false).unwrap();
 
@@ -112,9 +112,14 @@ fn test_padding_malleability_attack() {
 
     // 2. Test that routing AEAD also rejects the tampered payload
     let sender_key = merkle_tox_core::dag::SenderKey::from(
-        *merkle_tox_core::crypto::ratchet_init_sender(&keys.k_conv, &sender_pk).as_bytes(),
+        *merkle_tox_core::crypto::ratchet_init_sender(&keys.k_conv, &conv_id, &sender_pk)
+            .as_bytes(),
     );
-    let k_header = merkle_tox_core::crypto::derive_k_header_epoch(&keys.k_conv, &sender_key);
+    let k_header = merkle_tox_core::crypto::derive_k_header_epoch(
+        &keys.k_conv,
+        &conv_id,
+        &sender_key,
+    );
     let routing_result = MerkleNode::try_decrypt_routing(&wire, &k_header);
     assert!(
         routing_result.is_none(),
@@ -144,7 +149,7 @@ fn test_sender_pk_metadata_privacy() {
         1000,
     );
 
-    let ck = test_pack_content_keys(&keys, &sender_pk, 1);
+    let ck = test_pack_content_keys(&keys, &conv_id, &sender_pk, 1);
     let wire_node = node.pack_wire(&PackKeys::Content(ck), false).unwrap();
 
     let proto_msg = ProtocolMessage::MerkleNode {

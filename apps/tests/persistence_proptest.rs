@@ -290,7 +290,7 @@ impl StoreTester {
                 let mut payload = vec![0u8; payload_len];
                 fill_random(&mut payload, &mut self.rng);
                 let wire = WireNode {
-                    parents: vec![],
+                    parents: tox_proto::BoundedVec::new(),
                     sender_hint: [0u8; 4],
                     encrypted_routing: vec![0u8; 40],
                     payload_data: payload,
@@ -378,7 +378,6 @@ impl StoreTester {
                 let info = BlobInfo {
                     hash: blob_hash,
                     size,
-                    bao_root: None,
                     status: BlobStatus::Pending,
                     received_mask: None,
                     decryption_key: None,
@@ -449,14 +448,15 @@ impl StoreTester {
         let mut sender_pk = [0u8; 32];
         sender_pk[0] = (sender_idx % 5) as u8;
         MerkleNode {
-            parents,
+            parents: tox_proto::BoundedVec::try_from_iter(parents)
+                .expect("test fixtures must respect MAX_PARENTS"),
             author_pk: LogicalIdentityPk::from([1u8; 32]),
             sender_pk: PhysicalDevicePk::from(sender_pk),
             sequence_number: (step as u64).wrapping_add(seq_off as u64),
             topological_rank: (step as u64).wrapping_add(rank_off as u64),
             network_timestamp: 1000 + step as i64,
             content: Content::Text(format!("Node {}", step)),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])),
             pow_nonce: 0,
         }
@@ -758,14 +758,9 @@ impl StoreTester {
 
             let info1 = s1.get_blob_info(&hash);
             let info2 = s2.get_blob_info(&hash);
-            // We ignore bao_root in comparison because sqlite doesn't compute it automatically
-            let normalize = |mut info: BlobInfo| {
-                info.bao_root = None;
-                info
-            };
             assert_eq!(
-                info1.map(normalize),
-                info2.map(normalize),
+                info1,
+                info2,
                 "Blob info mismatch between {} and {}",
                 s1.name(),
                 s2.name()

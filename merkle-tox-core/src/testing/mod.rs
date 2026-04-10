@@ -4,9 +4,9 @@ pub mod hub;
 pub mod identity;
 pub mod store;
 
-pub use cas::{create_available_blob_info, create_blob_data, create_blob_info};
+pub use cas::{create_available_blob_info, create_blob_info};
 pub use gateway::MerkleToxGateway;
-pub use hub::{SimulatedTransport, VirtualHub};
+pub use hub::{NodeTrafficCounters, SimulatedTransport, TrafficSnapshot, VirtualHub};
 pub use identity::{
     TestIdentity, TestRoom, create_admin_node, create_dummy_node, create_msg,
     create_signed_content_node, make_cert, random_signing_key, register_test_ephemeral_key,
@@ -24,7 +24,7 @@ pub fn create_genesis_pow(
 ) -> crate::dag::MerkleNode {
     let creator_pk = alice.master_pk;
     let mut node = crate::dag::MerkleNode {
-        parents: vec![],
+        parents: tox_proto::BoundedVec::new(),
         author_pk: alice.master_pk,
         sender_pk: alice.device_sk.verifying_key().to_bytes().into(),
         sequence_number: 1,
@@ -38,7 +38,7 @@ pub fn create_genesis_pow(
             created_at: 1000,
             pow_nonce: 0,
         }),
-        metadata: vec![],
+        metadata: tox_proto::BoundedBytes::new(),
         authentication: crate::dag::NodeAuth::Signature(crate::dag::Ed25519Signature::from(
             [0u8; 64],
         )),

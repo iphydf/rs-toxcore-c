@@ -11,6 +11,7 @@ rust_library(
     visibility = ["//visibility:public"],
     deps = [
         "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/tox-proto",
         "@crates//:blake3",
         "@crates//:ed25519-dalek",
         "@crates//:futures",
@@ -29,6 +30,7 @@ rust_test(
     deps = [
         ":merkle-tox-client",
         "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/tox-proto",
         "//rs-toxcore-c/merkle-tox-sqlite",
         "@crates//:blake3",
         "@crates//:ed25519-dalek",
@@ -47,6 +49,7 @@ rust_test(
     deps = [
         ":merkle-tox-client",
         "//rs-toxcore-c/merkle-tox-core",
+        "//rs-toxcore-c/tox-proto",
         "//rs-toxcore-c/merkle-tox-sqlite",
         "@crates//:blake3",
         "@crates//:ed25519-dalek",

@@ -52,8 +52,7 @@ pub const CREATE_TABLES: &str = "
         file_path TEXT,
         status TEXT NOT NULL,
         total_size INTEGER NOT NULL,
-        received_chunks BLOB,
-        bao_root BLOB
+        received_chunks BLOB
     );
 
     CREATE TABLE IF NOT EXISTS reconciliation_sketches (

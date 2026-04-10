@@ -1,4 +1,4 @@
-use super::{CongestionControl, DeliverySample};
+use super::{CongestionControl, DeliverySample, MAX_BW_CEILING};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use tox_proto::ToxProto;
@@ -15,7 +15,8 @@ const FULL_BW_COUNT_REQ: usize = 3;
 const STARTUP_MIN_PACING_RATE: f32 = 100_000.0;
 const MIN_PACING_RATE: f32 = 10_000.0;
 const MIN_CWND: usize = 4;
-const INITIAL_RTT: Duration = Duration::from_secs(10);
+const INITIAL_RTT: Duration = Duration::from_millis(100);
+
 
 const LOSS_THRESH: f32 = 0.02;
 const BW_PROBE_UP_GAIN: f32 = 1.25;
@@ -112,6 +113,10 @@ pub struct Bbrv2 {
 
     app_limited: bool,
 
+    /// During Startup, cwnd grows by bytes_acked (exponential growth) rather
+    /// than being purely BDP-derived.
+    startup_cwnd: usize,
+
     pub rng: rand::rngs::StdRng,
 }
 
@@ -143,6 +148,7 @@ impl Bbrv2 {
             loss_in_round: false,
             cruise_rounds: 0,
             app_limited: false,
+            startup_cwnd: MIN_CWND,
             rng,
         };
         bbr.enter_startup();
@@ -150,9 +156,22 @@ impl Bbrv2 {
     }
 
     fn update_bandwidth(&mut self, now: Instant, sample: DeliverySample) {
-        // Use a minimum duration floor to avoid extreme bandwidth spikes on ultra-fast links
-        let duration = sample.duration.max(Duration::from_millis(1));
-        let bw = sample.bytes_delivered as f32 / duration.as_secs_f32();
+        // Floor `sample.duration` at `min_rtt` so a single ACK that
+        // reports a multi-MB jump in `recv_bytes` (a normal occurrence
+        // when cumulative-base catches up across a SACK gap, or when
+        // ack-batching at the receiver coalesces deliveries) cannot
+        // read as "all those bytes arrived in <1 ms".  Sub-RTT samples
+        // are measurement artefacts: the smallest meaningful window
+        // for delivery rate is the round-trip time.  Without this
+        // floor a 2 MB jump over a 1 ms delta_time was being read as
+        // 16 Gbps, which combined with `STARTUP_PACING_GAIN ≈ 2.77`
+        // drove the pacer to tens of Gbps in startup, overran the
+        // bottleneck queue, and triggered loss-driven backoff to a
+        // ~50 % steady-state util ceiling.  See `bbr_test::
+        // test_bbrv2_bandwidth_spike_resists_subrtt_burst` for the
+        // pin.
+        let duration = sample.duration.max(self.min_rtt);
+        let bw = (sample.bytes_delivered as f32 / duration.as_secs_f32()).min(MAX_BW_CEILING);
         if bw.is_finite() && bw > 0.0 && (!sample.app_limited || bw > self.max_bw.get()) {
             self.max_bw.add(now, bw);
         }
@@ -195,6 +214,7 @@ impl Bbrv2 {
         self.filled_pipe = false;
         self.full_bw = 0.0;
         self.full_bw_count = 0;
+        self.startup_cwnd = MIN_CWND;
     }
 
     fn enter_drain(&mut self) {
@@ -345,6 +365,13 @@ impl CongestionControl for Bbrv2 {
             self.app_limited = s.app_limited;
         }
 
+        // During Startup, grow cwnd by bytes_acked for exponential growth.
+        if self.state == Bbrv2State::Startup && bytes_acked > 0 {
+            let mtu = crate::protocol::ESTIMATED_PAYLOAD_SIZE;
+            let acked_frags = bytes_acked.div_ceil(mtu);
+            self.startup_cwnd += acked_frags;
+        }
+
         match self.state {
             Bbrv2State::Startup => {
                 if self.filled_pipe {
@@ -397,9 +424,16 @@ impl CongestionControl for Bbrv2 {
         }
     }
 
-    fn on_nack(&mut self, now: Instant) {
+    fn on_loss(&mut self, bytes_lost: usize, now: Instant) {
         self.last_now = Some(now);
-        self.bytes_lost_in_round += crate::protocol::ESTIMATED_PAYLOAD_SIZE;
+        // BBRv2's loss-rate computation (handle_loss_in_round) divides
+        // bytes_lost_in_round by total sampled bytes; accurate byte
+        // accounting is essential. Per-call increment is the actual
+        // total of all packets declared lost in this scan, NOT a fixed
+        // ESTIMATED_PAYLOAD_SIZE — the previous fixed-size accounting
+        // undercounted bursty losses (one on_loss call per scan covers
+        // many packets) and made BBRv2 slower to react to congestion.
+        self.bytes_lost_in_round += bytes_lost;
 
         if !self.loss_in_round {
             self.loss_in_round = true;
@@ -436,6 +470,11 @@ impl CongestionControl for Bbrv2 {
 
         let mut target = (bdp * self.cwnd_gain / mtu) as usize;
 
+        // During Startup, use the larger of BDP-based and ack-growth-based cwnd.
+        if self.state == Bbrv2State::Startup {
+            target = target.max(self.startup_cwnd);
+        }
+
         let limit = (self.inflight_with_headroom() / mtu) as usize;
         target = target.min(limit);
 
@@ -450,7 +489,11 @@ impl CongestionControl for Bbrv2 {
         let mut rate = self.max_bw.get() * self.pacing_gain;
 
         if self.state == Bbrv2State::Startup {
-            rate = rate.max(STARTUP_MIN_PACING_RATE);
+            let cwnd_floor = self.startup_cwnd as f32
+                * crate::protocol::ESTIMATED_PAYLOAD_SIZE as f32
+                * self.pacing_gain
+                / self.min_rtt.as_secs_f32().max(0.001);
+            rate = rate.max(STARTUP_MIN_PACING_RATE).max(cwnd_floor);
         } else {
             rate = rate.max(MIN_PACING_RATE);
         }
@@ -459,14 +502,21 @@ impl CongestionControl for Bbrv2 {
             rate = rate.min(self.bw_hi * 0.95);
         }
 
-        rate
+        // Final ceiling: pacing must not exceed any plausible physical
+        // peer-to-peer link.  This catches the residual case where
+        // `cwnd_floor` (startup_cwnd * MTU * gain / min_rtt) blows up
+        // when `min_rtt` converges to a sub-millisecond real-LAN value
+        // and a single ACK has just inflated `startup_cwnd` via a
+        // multi-MB cumulative-base catch-up — see
+        // `update_bandwidth`'s docstring for the upstream phenomenon.
+        rate.min(MAX_BW_CEILING)
     }
 
     fn min_rtt(&self) -> Duration {
         self.min_rtt
     }
 
-    fn on_fragment_sent(&mut self, _bytes: usize, now: Instant) {
+    fn on_packet_sent(&mut self, _bytes: usize, now: Instant) {
         self.last_now = Some(now);
     }
 }

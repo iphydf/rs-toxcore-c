@@ -73,10 +73,11 @@ impl SimulationHarness {
 
         apply_network_config(&hub, network);
 
-        let room = TestRoom::new(node_count);
-        let conv_id = room.conv_id;
-
+        // Seed the room construction so all identities and the conversation
+        // key are deterministic across runs with the same seed.
         let mut rng = StdRng::seed_from_u64(seed);
+        let room = TestRoom::new_seeded(node_count, &mut rng);
+        let conv_id = room.conv_id;
         let mut nodes = Vec::with_capacity(node_count);
 
         for (i, identity) in room.identities.iter().enumerate() {
@@ -150,12 +151,24 @@ impl SimulationHarness {
         self.hub.poll();
 
         for bn in &mut self.nodes {
-            bn.node.poll();
+            // Receive before send: process incoming packets (ACKs) first so the
+            // congestion controller has up-to-date state before flushing new data.
+            // Without this, each tick sends based on stale cwnd/in_flight and has
+            // to wait an extra tick for ACKs to take effect.
             while let Ok((from, data)) = bn.rx.try_recv() {
                 bn.bytes_received
                     .fetch_add(data.len() as u64, Ordering::Relaxed);
                 bn.node.handle_packet(from, &data);
             }
+            bn.node.poll();
+        }
+
+        // Record marker propagation after all nodes have polled this tick.
+        // No-op when no markers are registered, so existing scenarios are
+        // unaffected.
+        if !self.metrics.markers.is_empty() {
+            self.metrics
+                .observe_marker_propagation(&self.nodes, &self.conv_id, self.virtual_elapsed);
         }
     }
 
@@ -207,6 +220,9 @@ impl SimulationHarness {
             PhaseAction::AuthorMessages { per_node } => {
                 self.author_messages(*per_node);
             }
+            PhaseAction::AuthorMarkerMessages { count, author_idx } => {
+                self.author_marker_messages(*count, *author_idx);
+            }
             PhaseAction::SeedBlob { seeder_idx, size } => {
                 self.seed_blob(*seeder_idx, *size);
             }
@@ -224,6 +240,49 @@ impl SimulationHarness {
             }
             PhaseAction::SetImpairments(config) => {
                 apply_network_config(&self.hub, config);
+            }
+        }
+    }
+
+    /// Authors `count` content nodes from `author_idx` and registers
+    /// each with the metrics collector for end-to-end latency
+    /// measurement. The `author_idx` slot is pre-filled (trivial-zero
+    /// latency); each other node's slot fills in once it observes the
+    /// marker as verified.
+    fn author_marker_messages(&mut self, count: usize, author_idx: usize) {
+        let conv_id = self.conv_id;
+        let node_count = self.nodes.len();
+        if author_idx >= node_count {
+            return;
+        }
+        let bn = &mut self.nodes[author_idx];
+        for i in 0..count {
+            let text = format!("Marker #{}", i);
+            let text_len = text.len() as u64;
+            let effects = bn.node.engine.author_node(
+                conv_id,
+                Content::Text(text),
+                vec![],
+                &bn.node.store,
+            );
+            let Ok(effects) = effects else {
+                continue;
+            };
+            let mut authored_hash = None;
+            for e in &effects {
+                if let merkle_tox_core::engine::Effect::WriteStore(_, node, _) = e {
+                    authored_hash = Some(node.hash());
+                    break;
+                }
+            }
+            let now = bn.node.time_provider.now_instant();
+            let now_ms = bn.node.time_provider.now_system_ms() as u64;
+            let mut wakeup = now;
+            let _ = bn.node.process_effects(effects, now, now_ms, &mut wakeup);
+            if let Some(hash) = authored_hash {
+                self.metrics
+                    .note_marker_authored(hash, author_idx, node_count, self.virtual_elapsed);
+                self.metrics.useful_bytes += text_len;
             }
         }
     }
@@ -258,7 +317,12 @@ impl SimulationHarness {
         // Generate deterministic blob data
         let mut data = vec![0u8; size as usize];
         self.rng.fill_bytes(&mut data);
-        let hash = NodeHash::from(*blake3::hash(&data).as_bytes());
+        let hash = NodeHash::from(
+            merkle_tox_core::cas::ChunkMerkleTree::from_chunks(
+                data.chunks(CHUNK_SIZE as usize),
+            )
+            .root(),
+        );
 
         self.metrics.blob_hashes.push(hash);
         self.metrics.useful_bytes += size;
@@ -268,7 +332,6 @@ impl SimulationHarness {
         let info = BlobInfo {
             hash,
             size,
-            bao_root: None,
             status: BlobStatus::Available,
             received_mask: None,
             decryption_key: None,
@@ -297,7 +360,7 @@ impl SimulationHarness {
                 name: format!("bench_{}.bin", seeder_idx),
                 mime_type: "application/octet-stream".to_string(),
                 size,
-                metadata: vec![],
+                metadata: tox_proto::BoundedBytes::new(),
             },
             vec![],
             &seeder.node.store,
@@ -359,8 +422,9 @@ impl SimulationHarness {
     fn add_node(&mut self) {
         // For late joiner, we add an identity that was already registered in the room
         // but create a new node for it. Since TestRoom only creates N identities,
-        // we create a new one with minimal setup.
-        let new_identity = merkle_tox_core::testing::TestIdentity::new();
+        // we create a new one with minimal setup. Use the harness rng so the
+        // late joiner is deterministic across runs.
+        let new_identity = merkle_tox_core::testing::TestIdentity::from_rng(&mut self.rng);
         let rx = self.hub.register(new_identity.device_pk);
         let transport = SimulatedTransport::new(new_identity.device_pk, self.hub.clone());
         let bytes_sent = Arc::new(AtomicU64::new(0));
@@ -428,4 +492,6 @@ fn apply_network_config(hub: &VirtualHub, config: &NetworkConfig) {
             hub.set_loss_model(LossModel::GilbertElliot { p: *p, r: *r });
         }
     }
+    let bps = config.bandwidth_mbps.map(|mbps| mbps as f64 * 1_000_000.0);
+    hub.set_bandwidth(bps);
 }

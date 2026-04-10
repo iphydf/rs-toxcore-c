@@ -125,6 +125,15 @@ impl VaultBot {
         let tox_shared = Arc::new(ReentrantMutex::new(tox));
         let transport = ToxTransport {
             tox: tox_shared.clone(),
+            send_ok: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err_sendq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err_not_connected: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_err_other: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            recv_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_lock_wait_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_lookup_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            send_ffi_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
         // Derive Ed25519 identity from Tox X25519 secret key.
         let self_pk = merkle_tox_core::dag::PhysicalDevicePk::from(

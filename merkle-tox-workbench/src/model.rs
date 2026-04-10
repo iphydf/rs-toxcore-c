@@ -220,6 +220,15 @@ impl Model {
 
                 let transport = ToxTransport {
                     tox: Arc::new(ReentrantMutex::new(tox)),
+                    send_ok: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    send_err: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    send_err_sendq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    send_err_not_connected: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    send_err_other: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    recv_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    send_lock_wait_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    send_lookup_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    send_ffi_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 };
                 let engine = MerkleToxEngine::new(
                     pk,
@@ -262,6 +271,15 @@ impl Model {
                     real_info.push((dht_id, port));
                     ToxTransport {
                         tox: Arc::new(ReentrantMutex::new(t)),
+                        send_ok: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                        send_err: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                        send_err_sendq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                        send_err_not_connected: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                        send_err_other: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                        recv_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                        send_lock_wait_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                        send_lookup_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                        send_ffi_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                     }
                 })
             };

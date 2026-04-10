@@ -18,7 +18,6 @@ fn get_chunk_on_empty_blob_returns_error() {
     let info = BlobInfo {
         hash,
         size: 1024 * 1024, // 1 MB
-        bao_root: None,
         status: BlobStatus::Pending,
         received_mask: None,
         decryption_key: None,
@@ -43,7 +42,6 @@ fn get_chunk_at_zero_offset_on_empty_blob_returns_error() {
     let info = BlobInfo {
         hash,
         size: 256 * 1024, // 256 KB
-        bao_root: None,
         status: BlobStatus::Pending,
         received_mask: None,
         decryption_key: None,
@@ -84,7 +82,6 @@ fn put_chunk_with_seeder_mask_does_not_mark_complete() {
     let info = BlobInfo {
         hash,
         size: blob_size,
-        bao_root: None,
         status: BlobStatus::Pending,
         received_mask: Some(full_mask),
         decryption_key: None,

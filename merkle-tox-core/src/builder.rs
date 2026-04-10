@@ -18,7 +18,7 @@ impl NodeBuilder {
         pks.sort_unstable();
 
         let mut node = MerkleNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             author_pk: LogicalIdentityPk::from([0u8; 32]), // Not used for 1-on-1 genesis
             sender_pk: PhysicalDevicePk::from([0u8; 32]),
             sequence_number: 1,
@@ -32,7 +32,7 @@ impl NodeBuilder {
                 created_at: 0,
                 pow_nonce: 0,
             }),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::EphemeralSignature(Ed25519Signature::from([0u8; 64])), // Placeholder
             pow_nonce: 0,
         };
@@ -57,7 +57,7 @@ impl NodeBuilder {
         signing_key: &ed25519_dalek::SigningKey,
     ) -> MerkleNode {
         let mut node = MerkleNode {
-            parents: vec![],
+            parents: tox_proto::BoundedVec::new(),
             author_pk: creator_pk,
             sender_pk: creator_pk.to_physical(),
             sequence_number: 1,
@@ -71,7 +71,7 @@ impl NodeBuilder {
                 created_at: timestamp,
                 pow_nonce: 0,
             }),
-            metadata: vec![],
+            metadata: tox_proto::BoundedBytes::new(),
             authentication: NodeAuth::Signature(Ed25519Signature::from([0u8; 64])), // Placeholder
             pow_nonce: 0,
         };
