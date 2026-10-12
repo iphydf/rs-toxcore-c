@@ -1,20 +1,11 @@
 use clap::Parser;
-use merkle_tox_client::MerkleToxClient;
-use merkle_tox_core::dag::{ConversationId, LogicalIdentityPk, PhysicalDeviceSk};
-use merkle_tox_core::node::MerkleToxNode;
-use merkle_tox_core::{NodeEvent, NodeEventHandler, Transport};
-use merkle_tox_fs::FsStore;
-use merkle_tox_tox::{ToxMerkleBridge, ToxTransport};
-use parking_lot::ReentrantMutex;
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
 use toxcore::tox::events::Event;
@@ -69,167 +60,25 @@ enum BotEvent {
     ConferenceMessage(ConferenceNumber, ConferencePeerNumber, MessageType, String),
     ConferenceInvite(FriendNumber, ToxConferenceType, Vec<u8>),
     GroupInvite(FriendNumber, Vec<u8>),
-    MerkleToxMessage(ConversationId, LogicalIdentityPk, String),
 }
 
-type BotClient = MerkleToxClient<ToxTransport, FsStore>;
-type ClientMap = HashMap<ConversationId, Arc<BotClient>>;
-
 struct GroupBot {
-    tox: Arc<ReentrantMutex<Tox>>,
-    bridge: Arc<Mutex<ToxMerkleBridge<FsStore>>>,
-    clients: Arc<Mutex<ClientMap>>,
+    tox: Tox,
     plugins: Vec<Box<dyn Plugin>>,
     savefile: Option<PathBuf>,
-    #[allow(dead_code)]
     password: Option<String>,
 }
 
-struct Dispatcher {
-    node: Arc<Mutex<MerkleToxNode<ToxTransport, FsStore>>>,
-    clients: Arc<Mutex<ClientMap>>,
-    bot_event_tx: tokio::sync::mpsc::UnboundedSender<BotEvent>,
-}
-
-impl NodeEventHandler for Dispatcher {
-    fn handle_event(&self, event: NodeEvent) {
-        let node = self.node.clone();
-        let clients = self.clients.clone();
-        let tx = self.bot_event_tx.clone();
-
-        tokio::spawn(async move {
-            match event {
-                NodeEvent::NodeVerified {
-                    conversation_id,
-                    node: merkle_node,
-                    hash,
-                } => {
-                    let mut clients_lock = clients.lock().await;
-                    let client = if let Some(c) = clients_lock.get(&conversation_id) {
-                        c.clone()
-                    } else {
-                        info!("Discovered conversation: {:?}", conversation_id);
-                        let c = Arc::new(MerkleToxClient::new(node, conversation_id));
-                        if let Err(e) = c.refresh_state().await {
-                            error!("Failed to refresh state for {:?}: {}", conversation_id, e);
-                        }
-                        clients_lock.insert(conversation_id, c.clone());
-                        c
-                    };
-
-                    if let merkle_tox_core::dag::Content::Text(text) = &merkle_node.content
-                        && let Err(e) = tx.send(BotEvent::MerkleToxMessage(
-                            conversation_id,
-                            merkle_node.author_pk,
-                            text.clone(),
-                        ))
-                    {
-                        error!("Failed to send MerkleToxMessage to channel: {}", e);
-                    }
-
-                    if let Err(e) = client
-                        .handle_event(NodeEvent::NodeVerified {
-                            conversation_id,
-                            hash,
-                            node: merkle_node,
-                        })
-                        .await
-                    {
-                        error!("Error handling node event: {}", e);
-                    }
-                }
-                NodeEvent::PeerHandshakeComplete { peer_pk } => {
-                    let clients_lock = clients.lock().await;
-                    for client in clients_lock.values() {
-                        if let Err(e) = client
-                            .handle_event(NodeEvent::PeerHandshakeComplete { peer_pk })
-                            .await
-                        {
-                            error!("Error handling PeerHandshakeComplete: {}", e);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        });
-    }
-}
-
-use merkle_tox_core::vfs::StdFileSystem;
-
 impl GroupBot {
-    async fn new(
-        tox: Tox,
-        args: &Args,
-        savefile: Option<PathBuf>,
-        bot_event_tx: tokio::sync::mpsc::UnboundedSender<BotEvent>,
-    ) -> Self {
+    fn new(tox: Tox, args: &Args, savefile: Option<PathBuf>) -> Self {
         let plugins: Vec<Box<dyn Plugin>> = vec![
             Box::new(Forwarder),
             Box::new(Echo),
             Box::new(GitHub::new(PathBuf::from(&args.github_path))),
         ];
 
-        let self_sk = tox.secret_key();
-        let tox_shared = Arc::new(ReentrantMutex::new(tox));
-        let transport = ToxTransport {
-            tox: tox_shared.clone(),
-            send_ok: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            send_err: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            send_err_sendq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            send_err_not_connected: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            send_err_other: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            recv_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            send_lock_wait_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            send_lookup_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            send_ffi_ns: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        };
-        let self_pk = transport.local_pk();
-        let engine = merkle_tox_core::engine::MerkleToxEngine::with_sk(
-            self_pk,
-            self_pk.to_logical(),
-            PhysicalDeviceSk::from(self_sk.0),
-            rand::SeedableRng::from_entropy(),
-            Arc::new(merkle_tox_core::clock::SystemTimeProvider),
-        );
-
-        let store_path = if let Some(ref path) = savefile {
-            path.parent()
-                .unwrap_or_else(|| Path::new(""))
-                .join("merkle_tox_groupbot")
-        } else {
-            PathBuf::from("merkle_tox_groupbot")
-        };
-        if let Err(e) = fs::create_dir_all(&store_path) {
-            error!("Failed to create directory {}: {}", store_path.display(), e);
-        }
-        let store =
-            FsStore::new(store_path, Arc::new(StdFileSystem)).expect("Failed to create FsStore");
-        let node = MerkleToxNode::new(
-            engine,
-            transport,
-            store,
-            Arc::new(merkle_tox_core::clock::SystemTimeProvider),
-        );
-        let node_arc = Arc::new(Mutex::new(node));
-        let bridge = Arc::new(Mutex::new(ToxMerkleBridge::with_node(node_arc.clone())));
-        let clients = Arc::new(Mutex::new(ClientMap::new()));
-
-        let dispatcher = Dispatcher {
-            node: node_arc.clone(),
-            clients: clients.clone(),
-            bot_event_tx,
-        };
-
-        {
-            let mut node_lock = node_arc.lock().await;
-            node_lock.set_event_handler(Arc::new(dispatcher));
-        }
-
         Self {
-            tox: tox_shared,
-            bridge,
-            clients,
+            tox,
             plugins,
             savefile,
             password: args.password.clone(),
@@ -238,7 +87,7 @@ impl GroupBot {
 
     fn save(&self) -> Result<(), Box<dyn Error>> {
         if let Some(path) = &self.savefile {
-            let mut data = self.tox.lock().savedata();
+            let mut data = self.tox.savedata();
             if let Some(password) = &self.password {
                 data = encryptsave::encrypt(&data, password.as_bytes())?;
             }
@@ -248,7 +97,7 @@ impl GroupBot {
     }
 
     fn is_admin(&self, pk: &PublicKey) -> bool {
-        match self.tox.lock().friend(FriendNumber(0)).public_key() {
+        match self.tox.friend(FriendNumber(0)).public_key() {
             Ok(admin_pk) => admin_pk == *pk,
             Err(_) => false,
         }
@@ -290,7 +139,7 @@ impl GroupBot {
                 }
                 let new_nick = args.join(" ");
                 {
-                    let tox = self.tox.lock();
+                    let tox = &self.tox;
                     if let Err(e) = tox.set_name(new_nick.as_bytes()) {
                         error!("Failed to set nick: {}", e);
                     }
@@ -305,7 +154,7 @@ impl GroupBot {
                     return Some("You must be an admin to use this command.".to_string());
                 }
                 {
-                    let tox = self.tox.lock();
+                    let tox = &self.tox;
                     if let Err(e) = tox.conference(ConferenceNumber(0)).delete() {
                         error!("Failed to delete conference: {}", e);
                     }
@@ -320,7 +169,7 @@ impl GroupBot {
 
         for plugin in &mut self.plugins {
             if plugin.name() == cmd || (cmd == "gh" && plugin.name() == "gh") {
-                match plugin.on_command(&self.tox.lock(), context, args) {
+                match plugin.on_command(&self.tox, context, args) {
                     Ok(Some(reply)) => return Some(reply),
                     Ok(None) => {}
                     Err(e) => return Some(format!("Error in plugin {}: {}", plugin.name(), e)),
@@ -336,7 +185,6 @@ impl GroupBot {
             CommandSource::Friend(friend_number) => {
                 if let Err(e) = self
                     .tox
-                    .lock()
                     .friend(*friend_number)
                     .send_message(message_type, text.as_bytes())
                 {
@@ -346,7 +194,6 @@ impl GroupBot {
             CommandSource::Group(group_number) => {
                 if let Err(e) = self
                     .tox
-                    .lock()
                     .group(*group_number)
                     .send_message(message_type, text.as_bytes())
                 {
@@ -356,31 +203,18 @@ impl GroupBot {
             CommandSource::Conference(conference_number) => {
                 if let Err(e) = self
                     .tox
-                    .lock()
                     .conference(*conference_number)
                     .send_message(message_type, text.as_bytes())
                 {
                     error!("Failed to send conference message: {}", e);
                 }
             }
-            CommandSource::MerkleTox(conversation_id) => {
-                let clients = self.clients.lock().await;
-                if let Some(client) = clients.get(conversation_id)
-                    && let Err(e) = client.send_message(text.to_string()).await
-                {
-                    error!("Failed to send MerkleTox message: {}", e);
-                }
-            }
         }
     }
 
-    async fn run(
-        &mut self,
-        shutdown: Arc<AtomicBool>,
-        mut bot_event_rx: tokio::sync::mpsc::UnboundedReceiver<BotEvent>,
-    ) -> Result<(), Box<dyn Error>> {
+    async fn run(&mut self, shutdown: Arc<AtomicBool>) -> Result<(), Box<dyn Error>> {
         {
-            let tox = self.tox.lock();
+            let tox = &self.tox;
             let conferences = tox.conference_chatlist();
             if !conferences
                 .iter()
@@ -413,27 +247,13 @@ impl GroupBot {
 
             let mut bot_events = Vec::new();
 
-            // Pull events from receiver (Merkle-Tox)
-            while let Ok(event) = bot_event_rx.try_recv() {
-                bot_events.push(event);
-            }
-
-            if let Ok(events) = self.tox.lock().events() {
+            if let Ok(events) = self.tox.events() {
                 for event in &events {
                     // Dispatch to plugins
                     for plugin in &mut self.plugins {
-                        if let Err(e) = plugin.on_event(&self.tox.lock(), &event) {
+                        if let Err(e) = plugin.on_event(&self.tox, &event) {
                             error!("Plugin {} error: {}", plugin.name(), e);
                         }
-                    }
-
-                    // Handle Merkle-Tox protocol events via bridge
-                    let handled_by_bridge = self.bridge.lock().await.handle_event(&event).await;
-
-                    if handled_by_bridge.is_some()
-                        && !matches!(event, Event::FriendConnectionStatus(_))
-                    {
-                        continue;
                     }
 
                     match event {
@@ -504,7 +324,7 @@ impl GroupBot {
                             hex::encode(pk.0),
                             message
                         );
-                        let _ = self.tox.lock().friend_add_norequest(&pk);
+                        let _ = self.tox.friend_add_norequest(&pk);
                         if let Err(e) = self.save() {
                             error!("Failed to save state after friend request: {}", e);
                         }
@@ -512,7 +332,7 @@ impl GroupBot {
                     BotEvent::FriendConnectionStatus(friend_number, status) => {
                         debug!("Friend {} status: {:?}", friend_number.0, status);
                         if status != ToxConnection::TOX_CONNECTION_NONE {
-                            let tox = self.tox.lock();
+                            let tox = &self.tox;
                             let friend = tox.friend(friend_number);
                             debug!(
                                 "Inviting friend {} to conference 0 and group 0",
@@ -534,7 +354,7 @@ impl GroupBot {
                         }
                     }
                     BotEvent::FriendMessage(friend_number, message_type, message) => {
-                        let sender_pk = self.tox.lock().friend(friend_number).public_key().ok();
+                        let sender_pk = self.tox.friend(friend_number).public_key().ok();
                         if let Some(pk) = sender_pk {
                             let context = CommandContext {
                                 source: CommandSource::Friend(friend_number),
@@ -549,7 +369,7 @@ impl GroupBot {
                     BotEvent::GroupMessage(group_number, peer_id, message_type, message) => {
                         if message.starts_with('!') {
                             let (pk, peer_name) = {
-                                let tox = self.tox.lock();
+                                let tox = &self.tox;
                                 let group = tox.group(group_number);
                                 (
                                     group.peer_public_key(peer_id).ok(),
@@ -586,7 +406,7 @@ impl GroupBot {
                     ) => {
                         if message.starts_with('!') {
                             let (ours, pk, peer_name) = {
-                                let tox = self.tox.lock();
+                                let tox = &self.tox;
                                 let conf = tox.conference(conference_number);
                                 (
                                     conf.peer_number_is_ours(peer_number).unwrap_or(false),
@@ -621,7 +441,7 @@ impl GroupBot {
                     }
                     BotEvent::ConferenceInvite(friend_number, _type, cookie) => {
                         if friend_number.0 == 0 {
-                            let tox = self.tox.lock();
+                            let tox = &self.tox;
                             if let Err(e) = tox.conference_join(&tox.friend(friend_number), &cookie)
                             {
                                 error!("Failed to join conference: {}", e);
@@ -630,7 +450,7 @@ impl GroupBot {
                     }
                     BotEvent::GroupInvite(friend_number, invite_data) => {
                         if friend_number.0 == 0 {
-                            let tox = self.tox.lock();
+                            let tox = &self.tox;
                             if let Err(e) = tox.group_invite_accept(
                                 &tox.friend(friend_number),
                                 &invite_data,
@@ -638,20 +458,6 @@ impl GroupBot {
                                 None,
                             ) {
                                 error!("Failed to accept group invite: {}", e);
-                            }
-                        }
-                    }
-                    BotEvent::MerkleToxMessage(conversation_id, sender_pk, message) => {
-                        if message.starts_with('!') {
-                            let context = CommandContext {
-                                source: CommandSource::MerkleTox(conversation_id),
-                                sender_pk: PublicKey(*sender_pk.as_bytes()),
-                                message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
-                            };
-
-                            if let Some(reply) = self.handle_command(&context, &message).await {
-                                self.send_reply(&context.source, context.message_type, &reply)
-                                    .await;
                             }
                         }
                     }
@@ -665,11 +471,8 @@ impl GroupBot {
                 last_save = now;
             }
 
-            let next_mt_wakeup = self.bridge.lock().await.poll().await;
-            let tox_interval = self.tox.lock().iteration_interval();
-            let next_tox_wakeup = now + Duration::from_millis(tox_interval as u64);
-
-            let sleep_until = next_mt_wakeup.min(next_tox_wakeup);
+            let tox_interval = self.tox.iteration_interval();
+            let sleep_until = now + Duration::from_millis(tox_interval as u64);
             let sleep_duration = sleep_until.saturating_duration_since(Instant::now());
 
             if !sleep_duration.is_zero() {
@@ -815,9 +618,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let (bot_event_tx, bot_event_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut bot = GroupBot::new(tox, &args, savefile.map(PathBuf::from), bot_event_tx).await;
-    bot.run(shutdown, bot_event_rx).await?;
+    let mut bot = GroupBot::new(tox, &args, savefile.map(PathBuf::from));
+    bot.run(shutdown).await?;
 
     Ok(())
 }

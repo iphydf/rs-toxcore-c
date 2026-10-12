@@ -3,15 +3,12 @@ use toxcore::tox::Tox;
 use toxcore::tox::events::Event;
 use toxcore::types::{ConferenceNumber, FriendNumber, GroupNumber, MessageType, PublicKey};
 
-use merkle_tox_core::dag::ConversationId;
-
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub enum CommandSource {
     Friend(FriendNumber),
     Group(GroupNumber),
     Conference(ConferenceNumber),
-    MerkleTox(ConversationId),
 }
 
 #[derive(Clone, Debug)]
