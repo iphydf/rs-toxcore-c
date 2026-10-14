@@ -1,5 +1,4 @@
 use clap::Parser;
-use serde::Deserialize;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,10 +12,11 @@ use toxcore::tox::{
     ConferenceNumber, GroupNumber, Options, Tox, ToxProxyType, ToxSavedataType, encryptsave,
 };
 use toxcore::types::{
-    ConferencePeerNumber, DhtId, FriendNumber, GroupPeerNumber, MessageType, PUBLIC_KEY_SIZE,
-    PublicKey, ToxConferenceType, ToxConnection,
+    ConferencePeerNumber, FriendNumber, GroupPeerNumber, MessageType, PublicKey, ToxConferenceType,
+    ToxConnection,
 };
 
+mod nodes;
 mod plugin;
 mod plugins;
 
@@ -484,60 +484,6 @@ impl GroupBot {
         Ok(())
     }
 }
-#[derive(Deserialize, Debug, Clone)]
-struct Node {
-    ipv4: String,
-    port: u16,
-    public_key: String,
-    last_ping: i64,
-}
-
-#[derive(Deserialize, Debug)]
-struct NodesResponse {
-    nodes: Vec<Node>,
-}
-
-async fn fetch_nodes(url: &str) -> Result<Vec<Node>, Box<dyn Error>> {
-    let resp: NodesResponse = reqwest::get(url).await?.json().await?;
-    let mut nodes = resp.nodes;
-    // Sort by last_ping descending (most recent first) like the Python bot
-    nodes.sort_by(|a, b| b.last_ping.cmp(&a.last_ping));
-    Ok(nodes)
-}
-
-/// Parse a `HOST:PORT:HEXPK` CLI node spec. HEXPK is 64 hex chars; the host may
-/// itself contain colons (IPv6), so split off the key and port from the right.
-fn parse_bootstrap_node(spec: &str) -> Result<Node, String> {
-    let mut it = spec.rsplitn(3, ':');
-    let public_key = it.next().ok_or("missing public key")?.to_string();
-    let port_str = it.next().ok_or("missing port")?;
-    let ipv4 = it.next().ok_or("missing host")?.to_string();
-    if public_key.len() != PUBLIC_KEY_SIZE * 2 || hex::decode(&public_key).is_err() {
-        return Err(format!("public key must be {} hex chars", PUBLIC_KEY_SIZE * 2));
-    }
-    let port: u16 = port_str.parse().map_err(|_| "invalid port".to_string())?;
-    Ok(Node { ipv4, port, public_key, last_ping: 0 })
-}
-
-fn bootstrap(tox: &Tox, nodes: &[Node]) {
-    // Select the top 4 most recent nodes like the Python bot
-    let selected = nodes.iter().take(4);
-    for node in selected {
-        if let Ok(pk_bytes) = hex::decode(&node.public_key)
-            && pk_bytes.len() == PUBLIC_KEY_SIZE
-        {
-            let mut pk_arr = [0u8; PUBLIC_KEY_SIZE];
-            pk_arr.copy_from_slice(&pk_bytes);
-            let dht_id = DhtId(pk_arr);
-            if let Err(e) = tox.bootstrap(&node.ipv4, node.port, &dht_id) {
-                error!("Failed to bootstrap to node {}: {}", node.ipv4, e);
-            }
-            if let Err(e) = tox.add_tcp_relay(&node.ipv4, node.port, &dht_id) {
-                error!("Failed to add tcp relay {}: {}", node.ipv4, e);
-            }
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -552,8 +498,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     if args.tor {
         opts.set_proxy_type(ToxProxyType::TOX_PROXY_TYPE_SOCKS5);
-        opts.set_proxy_host("127.0.0.1")?;
-        opts.set_proxy_port(9050);
+        opts.set_proxy_host(nodes::TOR_PROXY.0)?;
+        opts.set_proxy_port(nodes::TOR_PROXY.1);
     }
 
     let savefile = args.savefile.clone().or_else(|| {
@@ -594,20 +540,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
     info!("Bot ID: {}", hex::encode(tox.address().0));
 
     let nodes = if args.bootstrap_nodes.is_empty() {
-        fetch_nodes(&args.nodes_url).await.unwrap_or_default()
+        nodes::discover(&args.nodes_url, args.tor, args.udp).await
     } else {
-        args.bootstrap_nodes
+        let specs = args
+            .bootstrap_nodes
             .iter()
-            .filter_map(|spec| match parse_bootstrap_node(spec) {
+            .filter_map(|spec| match nodes::parse(spec) {
                 Ok(node) => Some(node),
                 Err(e) => {
                     error!("Ignoring --bootstrap-node {spec:?}: {e}");
                     None
                 }
             })
-            .collect()
+            .collect();
+        nodes::resolve(specs, args.tor).await
     };
-    bootstrap(&tox, &nodes);
+    nodes::bootstrap(&tox, &nodes);
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_ctrlc = shutdown.clone();

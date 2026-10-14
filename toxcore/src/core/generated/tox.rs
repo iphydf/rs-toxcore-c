@@ -131,6 +131,18 @@ impl<'a> EventConferenceConnected<'a> {
 }
 pub struct EventConferenceInvite<'a>(pub &'a ffi::Tox_Event_Conference_Invite);
 impl<'a> EventConferenceInvite<'a> {
+    pub fn friend_number(&self) -> FriendNumber {
+        FriendNumber(unsafe {
+            ffi::tox_event_conference_invite_get_friend_number(self.0)
+        })
+    }
+
+    pub fn conference_type(&self) -> ToxConferenceType {
+        unsafe {
+            ffi::tox_event_conference_invite_get_type(self.0)
+        }.into()
+    }
+
     pub fn cookie(&self) -> &'a [u8] {
         unsafe {
             let size = ffi::tox_event_conference_invite_get_cookie_length(self.0);
@@ -148,21 +160,27 @@ impl<'a> EventConferenceInvite<'a> {
             ffi::tox_event_conference_invite_get_cookie_length(self.0)
         }
     }
-
-    pub fn conference_type(&self) -> ToxConferenceType {
-        unsafe {
-            ffi::tox_event_conference_invite_get_type(self.0)
-        }.into()
-    }
-
-    pub fn friend_number(&self) -> FriendNumber {
-        FriendNumber(unsafe {
-            ffi::tox_event_conference_invite_get_friend_number(self.0)
-        })
-    }
 }
 pub struct EventConferenceMessage<'a>(pub &'a ffi::Tox_Event_Conference_Message);
 impl<'a> EventConferenceMessage<'a> {
+    pub fn conference_number(&self) -> ConferenceNumber {
+        ConferenceNumber(unsafe {
+            ffi::tox_event_conference_message_get_conference_number(self.0)
+        })
+    }
+
+    pub fn peer_number(&self) -> ConferencePeerNumber {
+        ConferencePeerNumber(unsafe {
+            ffi::tox_event_conference_message_get_peer_number(self.0)
+        })
+    }
+
+    pub fn message_type(&self) -> MessageType {
+        unsafe {
+            ffi::tox_event_conference_message_get_type(self.0)
+        }.into()
+    }
+
     pub fn message(&self) -> &'a [u8] {
         unsafe {
             let size = ffi::tox_event_conference_message_get_message_length(self.0);
@@ -180,24 +198,6 @@ impl<'a> EventConferenceMessage<'a> {
             ffi::tox_event_conference_message_get_message_length(self.0)
         }
     }
-
-    pub fn message_type(&self) -> MessageType {
-        unsafe {
-            ffi::tox_event_conference_message_get_type(self.0)
-        }.into()
-    }
-
-    pub fn conference_number(&self) -> ConferenceNumber {
-        ConferenceNumber(unsafe {
-            ffi::tox_event_conference_message_get_conference_number(self.0)
-        })
-    }
-
-    pub fn peer_number(&self) -> ConferencePeerNumber {
-        ConferencePeerNumber(unsafe {
-            ffi::tox_event_conference_message_get_peer_number(self.0)
-        })
-    }
 }
 pub struct EventConferencePeerListChanged<'a>(pub &'a ffi::Tox_Event_Conference_Peer_List_Changed);
 impl<'a> EventConferencePeerListChanged<'a> {
@@ -209,6 +209,18 @@ impl<'a> EventConferencePeerListChanged<'a> {
 }
 pub struct EventConferencePeerName<'a>(pub &'a ffi::Tox_Event_Conference_Peer_Name);
 impl<'a> EventConferencePeerName<'a> {
+    pub fn conference_number(&self) -> ConferenceNumber {
+        ConferenceNumber(unsafe {
+            ffi::tox_event_conference_peer_name_get_conference_number(self.0)
+        })
+    }
+
+    pub fn peer_number(&self) -> ConferencePeerNumber {
+        ConferencePeerNumber(unsafe {
+            ffi::tox_event_conference_peer_name_get_peer_number(self.0)
+        })
+    }
+
     pub fn name(&self) -> &'a [u8] {
         unsafe {
             let size = ffi::tox_event_conference_peer_name_get_name_length(self.0);
@@ -226,21 +238,21 @@ impl<'a> EventConferencePeerName<'a> {
             ffi::tox_event_conference_peer_name_get_name_length(self.0)
         }
     }
-
+}
+pub struct EventConferenceTitle<'a>(pub &'a ffi::Tox_Event_Conference_Title);
+impl<'a> EventConferenceTitle<'a> {
     pub fn conference_number(&self) -> ConferenceNumber {
         ConferenceNumber(unsafe {
-            ffi::tox_event_conference_peer_name_get_conference_number(self.0)
+            ffi::tox_event_conference_title_get_conference_number(self.0)
         })
     }
 
     pub fn peer_number(&self) -> ConferencePeerNumber {
         ConferencePeerNumber(unsafe {
-            ffi::tox_event_conference_peer_name_get_peer_number(self.0)
+            ffi::tox_event_conference_title_get_peer_number(self.0)
         })
     }
-}
-pub struct EventConferenceTitle<'a>(pub &'a ffi::Tox_Event_Conference_Title);
-impl<'a> EventConferenceTitle<'a> {
+
     pub fn title(&self) -> &'a [u8] {
         unsafe {
             let size = ffi::tox_event_conference_title_get_title_length(self.0);
@@ -257,18 +269,6 @@ impl<'a> EventConferenceTitle<'a> {
         unsafe {
             ffi::tox_event_conference_title_get_title_length(self.0)
         }
-    }
-
-    pub fn conference_number(&self) -> ConferenceNumber {
-        ConferenceNumber(unsafe {
-            ffi::tox_event_conference_title_get_conference_number(self.0)
-        })
-    }
-
-    pub fn peer_number(&self) -> ConferencePeerNumber {
-        ConferencePeerNumber(unsafe {
-            ffi::tox_event_conference_title_get_peer_number(self.0)
-        })
     }
 }
 pub struct EventDhtNodesResponse<'a>(pub &'a ffi::Tox_Event_Dht_Nodes_Response);
@@ -304,10 +304,10 @@ impl<'a> EventDhtNodesResponse<'a> {
 }
 pub struct EventFileChunkRequest<'a>(pub &'a ffi::Tox_Event_File_Chunk_Request);
 impl<'a> EventFileChunkRequest<'a> {
-    pub fn length(&self) -> usize {
-        (unsafe {
-            ffi::tox_event_file_chunk_request_get_length(self.0)
-        }) as usize
+    pub fn friend_number(&self) -> FriendNumber {
+        FriendNumber(unsafe {
+            ffi::tox_event_file_chunk_request_get_friend_number(self.0)
+        })
     }
 
     pub fn file_number(&self) -> FileNumber {
@@ -316,20 +316,44 @@ impl<'a> EventFileChunkRequest<'a> {
         })
     }
 
-    pub fn friend_number(&self) -> FriendNumber {
-        FriendNumber(unsafe {
-            ffi::tox_event_file_chunk_request_get_friend_number(self.0)
-        })
-    }
-
     pub fn position(&self) -> u64 {
         unsafe {
             ffi::tox_event_file_chunk_request_get_position(self.0)
         }
     }
+
+    pub fn length(&self) -> usize {
+        (unsafe {
+            ffi::tox_event_file_chunk_request_get_length(self.0)
+        }) as usize
+    }
 }
 pub struct EventFileRecv<'a>(pub &'a ffi::Tox_Event_File_Recv);
 impl<'a> EventFileRecv<'a> {
+    pub fn friend_number(&self) -> FriendNumber {
+        FriendNumber(unsafe {
+            ffi::tox_event_file_recv_get_friend_number(self.0)
+        })
+    }
+
+    pub fn file_number(&self) -> FileNumber {
+        FileNumber(unsafe {
+            ffi::tox_event_file_recv_get_file_number(self.0)
+        })
+    }
+
+    pub fn kind(&self) -> u32 {
+        unsafe {
+            ffi::tox_event_file_recv_get_kind(self.0)
+        }
+    }
+
+    pub fn file_size(&self) -> u64 {
+        unsafe {
+            ffi::tox_event_file_recv_get_file_size(self.0)
+        }
+    }
+
     pub fn filename(&self) -> &'a [u8] {
         unsafe {
             let size = ffi::tox_event_file_recv_get_filename_length(self.0);
@@ -347,33 +371,27 @@ impl<'a> EventFileRecv<'a> {
             ffi::tox_event_file_recv_get_filename_length(self.0)
         }
     }
-
-    pub fn file_number(&self) -> FileNumber {
-        FileNumber(unsafe {
-            ffi::tox_event_file_recv_get_file_number(self.0)
-        })
-    }
-
-    pub fn file_size(&self) -> u64 {
-        unsafe {
-            ffi::tox_event_file_recv_get_file_size(self.0)
-        }
-    }
-
-    pub fn friend_number(&self) -> FriendNumber {
-        FriendNumber(unsafe {
-            ffi::tox_event_file_recv_get_friend_number(self.0)
-        })
-    }
-
-    pub fn kind(&self) -> u32 {
-        unsafe {
-            ffi::tox_event_file_recv_get_kind(self.0)
-        }
-    }
 }
 pub struct EventFileRecvChunk<'a>(pub &'a ffi::Tox_Event_File_Recv_Chunk);
 impl<'a> EventFileRecvChunk<'a> {
+    pub fn friend_number(&self) -> FriendNumber {
+        FriendNumber(unsafe {
+            ffi::tox_event_file_recv_chunk_get_friend_number(self.0)
+        })
+    }
+
+    pub fn file_number(&self) -> FileNumber {
+        FileNumber(unsafe {
+            ffi::tox_event_file_recv_chunk_get_file_number(self.0)
+        })
+    }
+
+    pub fn position(&self) -> u64 {
+        unsafe {
+            ffi::tox_event_file_recv_chunk_get_position(self.0)
+        }
+    }
+
     pub fn data(&self) -> &'a [u8] {
         unsafe {
             let size = ffi::tox_event_file_recv_chunk_get_data_length(self.0);
@@ -391,31 +409,13 @@ impl<'a> EventFileRecvChunk<'a> {
             ffi::tox_event_file_recv_chunk_get_data_length(self.0)
         }
     }
-
-    pub fn file_number(&self) -> FileNumber {
-        FileNumber(unsafe {
-            ffi::tox_event_file_recv_chunk_get_file_number(self.0)
-        })
-    }
-
-    pub fn friend_number(&self) -> FriendNumber {
-        FriendNumber(unsafe {
-            ffi::tox_event_file_recv_chunk_get_friend_number(self.0)
-        })
-    }
-
-    pub fn position(&self) -> u64 {
-        unsafe {
-            ffi::tox_event_file_recv_chunk_get_position(self.0)
-        }
-    }
 }
 pub struct EventFileRecvControl<'a>(pub &'a ffi::Tox_Event_File_Recv_Control);
 impl<'a> EventFileRecvControl<'a> {
-    pub fn control(&self) -> ToxFileControl {
-        unsafe {
-            ffi::tox_event_file_recv_control_get_control(self.0)
-        }.into()
+    pub fn friend_number(&self) -> FriendNumber {
+        FriendNumber(unsafe {
+            ffi::tox_event_file_recv_control_get_friend_number(self.0)
+        })
     }
 
     pub fn file_number(&self) -> FileNumber {
@@ -424,28 +424,34 @@ impl<'a> EventFileRecvControl<'a> {
         })
     }
 
-    pub fn friend_number(&self) -> FriendNumber {
-        FriendNumber(unsafe {
-            ffi::tox_event_file_recv_control_get_friend_number(self.0)
-        })
+    pub fn control(&self) -> ToxFileControl {
+        unsafe {
+            ffi::tox_event_file_recv_control_get_control(self.0)
+        }.into()
     }
 }
 pub struct EventFriendConnectionStatus<'a>(pub &'a ffi::Tox_Event_Friend_Connection_Status);
 impl<'a> EventFriendConnectionStatus<'a> {
-    pub fn connection_status(&self) -> ToxConnection {
-        unsafe {
-            ffi::tox_event_friend_connection_status_get_connection_status(self.0)
-        }.into()
-    }
-
     pub fn friend_number(&self) -> FriendNumber {
         FriendNumber(unsafe {
             ffi::tox_event_friend_connection_status_get_friend_number(self.0)
         })
     }
+
+    pub fn connection_status(&self) -> ToxConnection {
+        unsafe {
+            ffi::tox_event_friend_connection_status_get_connection_status(self.0)
+        }.into()
+    }
 }
 pub struct EventFriendLosslessPacket<'a>(pub &'a ffi::Tox_Event_Friend_Lossless_Packet);
 impl<'a> EventFriendLosslessPacket<'a> {
+    pub fn friend_number(&self) -> FriendNumber {
+        FriendNumber(unsafe {
+            ffi::tox_event_friend_lossless_packet_get_friend_number(self.0)
+        })
+    }
+
     pub fn data(&self) -> &'a [u8] {
         unsafe {
             let size = ffi::tox_event_friend_lossless_packet_get_data_length(self.0);
@@ -463,15 +469,15 @@ impl<'a> EventFriendLosslessPacket<'a> {
             ffi::tox_event_friend_lossless_packet_get_data_length(self.0)
         }
     }
-
-    pub fn friend_number(&self) -> FriendNumber {
-        FriendNumber(unsafe {
-            ffi::tox_event_friend_lossless_packet_get_friend_number(self.0)
-        })
-    }
 }
 pub struct EventFriendLossyPacket<'a>(pub &'a ffi::Tox_Event_Friend_Lossy_Packet);
 impl<'a> EventFriendLossyPacket<'a> {
+    pub fn friend_number(&self) -> FriendNumber {
+        FriendNumber(unsafe {
+            ffi::tox_event_friend_lossy_packet_get_friend_number(self.0)
+        })
+    }
+
     pub fn data(&self) -> &'a [u8] {
         unsafe {
             let size = ffi::tox_event_friend_lossy_packet_get_data_length(self.0);
@@ -489,12 +495,6 @@ impl<'a> EventFriendLossyPacket<'a> {
             ffi::tox_event_friend_lossy_packet_get_data_length(self.0)
         }
     }
-
-    pub fn friend_number(&self) -> FriendNumber {
-        FriendNumber(unsafe {
-            ffi::tox_event_friend_lossy_packet_get_friend_number(self.0)
-        })
-    }
 }
 pub struct EventFriendMessage<'a>(pub &'a ffi::Tox_Event_Friend_Message);
 impl<'a> EventFriendMessage<'a> {
@@ -510,12 +510,6 @@ impl<'a> EventFriendMessage<'a> {
         }.into()
     }
 
-    pub fn message_length(&self) -> u32 {
-        unsafe {
-            ffi::tox_event_friend_message_get_message_length(self.0)
-        }
-    }
-
     pub fn message(&self) -> &'a [u8] {
         unsafe {
             let size = ffi::tox_event_friend_message_get_message_length(self.0);
@@ -527,9 +521,21 @@ impl<'a> EventFriendMessage<'a> {
             }
         }
     }
+
+    pub fn message_length(&self) -> u32 {
+        unsafe {
+            ffi::tox_event_friend_message_get_message_length(self.0)
+        }
+    }
 }
 pub struct EventFriendName<'a>(pub &'a ffi::Tox_Event_Friend_Name);
 impl<'a> EventFriendName<'a> {
+    pub fn friend_number(&self) -> FriendNumber {
+        FriendNumber(unsafe {
+            ffi::tox_event_friend_name_get_friend_number(self.0)
+        })
+    }
+
     pub fn name(&self) -> &'a [u8] {
         unsafe {
             let size = ffi::tox_event_friend_name_get_name_length(self.0);
@@ -546,12 +552,6 @@ impl<'a> EventFriendName<'a> {
         unsafe {
             ffi::tox_event_friend_name_get_name_length(self.0)
         }
-    }
-
-    pub fn friend_number(&self) -> FriendNumber {
-        FriendNumber(unsafe {
-            ffi::tox_event_friend_name_get_friend_number(self.0)
-        })
     }
 }
 pub struct EventFriendReadReceipt<'a>(pub &'a ffi::Tox_Event_Friend_Read_Receipt);
@@ -570,6 +570,15 @@ impl<'a> EventFriendReadReceipt<'a> {
 }
 pub struct EventFriendRequest<'a>(pub &'a ffi::Tox_Event_Friend_Request);
 impl<'a> EventFriendRequest<'a> {
+    pub fn public_key(&self) -> PublicKey {
+        unsafe {
+            let ptr = ffi::tox_event_friend_request_get_public_key(self.0);
+            let slice = std::slice::from_raw_parts(ptr, PUBLIC_KEY_SIZE);
+            PublicKey(slice.try_into()
+                .unwrap())
+        }
+    }
+
     pub fn message(&self) -> &'a [u8] {
         unsafe {
             let size = ffi::tox_event_friend_request_get_message_length(self.0);
@@ -582,15 +591,6 @@ impl<'a> EventFriendRequest<'a> {
         }
     }
 
-    pub fn public_key(&self) -> PublicKey {
-        unsafe {
-            let ptr = ffi::tox_event_friend_request_get_public_key(self.0);
-            let slice = std::slice::from_raw_parts(ptr, PUBLIC_KEY_SIZE);
-            PublicKey(slice.try_into()
-                .unwrap())
-        }
-    }
-
     pub fn message_length(&self) -> u32 {
         unsafe {
             ffi::tox_event_friend_request_get_message_length(self.0)
@@ -599,20 +599,26 @@ impl<'a> EventFriendRequest<'a> {
 }
 pub struct EventFriendStatus<'a>(pub &'a ffi::Tox_Event_Friend_Status);
 impl<'a> EventFriendStatus<'a> {
-    pub fn status(&self) -> ToxUserStatus {
-        unsafe {
-            ffi::tox_event_friend_status_get_status(self.0)
-        }.into()
-    }
-
     pub fn friend_number(&self) -> FriendNumber {
         FriendNumber(unsafe {
             ffi::tox_event_friend_status_get_friend_number(self.0)
         })
     }
+
+    pub fn status(&self) -> ToxUserStatus {
+        unsafe {
+            ffi::tox_event_friend_status_get_status(self.0)
+        }.into()
+    }
 }
 pub struct EventFriendStatusMessage<'a>(pub &'a ffi::Tox_Event_Friend_Status_Message);
 impl<'a> EventFriendStatusMessage<'a> {
+    pub fn friend_number(&self) -> FriendNumber {
+        FriendNumber(unsafe {
+            ffi::tox_event_friend_status_message_get_friend_number(self.0)
+        })
+    }
+
     pub fn message(&self) -> &'a [u8] {
         unsafe {
             let size = ffi::tox_event_friend_status_message_get_message_length(self.0);
@@ -630,23 +636,17 @@ impl<'a> EventFriendStatusMessage<'a> {
             ffi::tox_event_friend_status_message_get_message_length(self.0)
         }
     }
-
-    pub fn friend_number(&self) -> FriendNumber {
-        FriendNumber(unsafe {
-            ffi::tox_event_friend_status_message_get_friend_number(self.0)
-        })
-    }
 }
 pub struct EventFriendTyping<'a>(pub &'a ffi::Tox_Event_Friend_Typing);
 impl<'a> EventFriendTyping<'a> {
-    pub fn typing(&self) -> bool {
-        ffi_bool!(tox_event_friend_typing_get_typing, self.0)
-    }
-
     pub fn friend_number(&self) -> FriendNumber {
         FriendNumber(unsafe {
             ffi::tox_event_friend_typing_get_friend_number(self.0)
         })
+    }
+
+    pub fn typing(&self) -> bool {
+        ffi_bool!(tox_event_friend_typing_get_typing, self.0)
     }
 }
 pub struct EventGroupCustomPacket<'a>(pub &'a ffi::Tox_Event_Group_Custom_Packet);

@@ -622,6 +622,11 @@ impl Model {
     }
 
     pub fn ensure_friend_window(&mut self, pk: PublicKey) {
+        self.ensure_friend_conversation(pk);
+        self.open_window(WindowId::Friend(pk));
+    }
+
+    fn ensure_friend_conversation(&mut self, pk: PublicKey) {
         let window_id = WindowId::Friend(pk);
         let default_name = if let Some(info) = self.domain.friends.get(&pk) {
             info.name.clone()
@@ -629,7 +634,7 @@ impl Model {
             // Can't show Friend Number anymore without lookup, but we have PK
             format!("Friend {}", crate::utils::encode_hex(&pk.0[0..4]))
         };
-        self.ensure_conversation_window(window_id, default_name);
+        self.ensure_conversation(window_id, default_name);
     }
 
     pub fn ensure_group_window(&mut self, chat_id: GroupChatId) {
@@ -661,9 +666,18 @@ impl Model {
     }
 
     fn ensure_conversation_window(&mut self, window_id: WindowId, default_name: String) {
+        self.ensure_conversation(window_id, default_name);
+        self.open_window(window_id);
+    }
+
+    fn open_window(&mut self, window_id: WindowId) {
         if !self.ui.window_ids.contains(&window_id) {
             self.ui.window_ids.push(window_id);
+            self.invalidate_sidebar_cache();
         }
+    }
+
+    fn ensure_conversation(&mut self, window_id: WindowId, default_name: String) {
         self.domain
             .conversations
             .entry(window_id)
@@ -1198,10 +1212,10 @@ impl Model {
             }
         }
 
-        // 4. Ensure Friend Windows exist
+        // 4. Ensure Friend Conversations exist; their windows stay as the user left them
         let friend_pks: Vec<_> = self.domain.friends.keys().cloned().collect();
         for pk in friend_pks {
-            self.ensure_friend_window(pk);
+            self.ensure_friend_conversation(pk);
             // Sync name
             let info = self.domain.friends.get(&pk).unwrap(); // Safe unwrap
             if let Some(conv) = self.domain.conversations.get_mut(&WindowId::Friend(pk))
@@ -1325,6 +1339,11 @@ pub fn initialize_model(
     );
     let mut m = Model::new(domain, saved_config, runtime_config);
     m.reconcile(friends, groups, conferences);
+    // Without saved windows, open every friend's.
+    let friend_pks: Vec<_> = m.domain.friends.keys().cloned().collect();
+    for pk in friend_pks {
+        m.ensure_friend_window(pk);
+    }
     m
 }
 
