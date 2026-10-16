@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::{fs, io};
+use toxcore::types::PublicKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum SystemMessageType {
@@ -22,6 +23,7 @@ pub struct Config {
     pub enabled_system_messages: Vec<SystemMessageType>,
     pub downloads_directory: Option<String>,
     pub timezone: Option<String>,
+    pub sync_devices: Vec<PublicKey>,
 }
 
 impl Default for Config {
@@ -41,6 +43,7 @@ impl Default for Config {
             ],
             downloads_directory: None,
             timezone: None,
+            sync_devices: Vec::new(),
         }
     }
 }

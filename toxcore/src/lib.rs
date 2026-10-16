@@ -26,6 +26,7 @@ mod core {
 }
 
 mod ffi;
+mod proto;
 pub mod tox;
 pub mod toxav;
 pub mod types;

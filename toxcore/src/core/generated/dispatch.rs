@@ -26,60 +26,237 @@ pub trait ToxHandler {
     fn on_friend_name(&mut self, _friend_number: FriendNumber, _name: &[u8]) {}
     fn on_friend_status_message(&mut self, _friend_number: FriendNumber, _message: &[u8]) {}
     fn on_friend_status(&mut self, _friend_number: FriendNumber, _status: ToxUserStatus) {}
-    fn on_friend_connection_status(&mut self, _friend_number: FriendNumber, _connection_status: ToxConnection) {}
+    fn on_friend_connection_status(
+        &mut self,
+        _friend_number: FriendNumber,
+        _connection_status: ToxConnection,
+    ) {
+    }
     fn on_friend_typing(&mut self, _friend_number: FriendNumber, _typing: bool) {}
-    fn on_friend_read_receipt(&mut self, _friend_number: FriendNumber, _message_id: FriendMessageId) {}
+    fn on_friend_read_receipt(
+        &mut self,
+        _friend_number: FriendNumber,
+        _message_id: FriendMessageId,
+    ) {
+    }
     fn on_friend_request(&mut self, _public_key: PublicKey, _message: &[u8]) {}
-    fn on_friend_message(&mut self, _friend_number: FriendNumber, _type: MessageType, _message: &[u8]) {}
-    fn on_file_recv_control(&mut self, _friend_number: FriendNumber, _file_number: FileNumber, _control: ToxFileControl) {}
-    fn on_file_chunk_request(&mut self, _friend_number: FriendNumber, _file_number: FileNumber, _position: u64, _length: usize) {}
-    fn on_file_recv(&mut self, _friend_number: FriendNumber, _file_number: FileNumber, _kind: u32, _file_size: u64, _filename: &[u8]) {}
-    fn on_file_recv_chunk(&mut self, _friend_number: FriendNumber, _file_number: FileNumber, _position: u64, _data: &[u8]) {}
-    fn on_conference_invite(&mut self, _friend_number: FriendNumber, _type: ToxConferenceType, _cookie: &[u8]) {}
+    fn on_friend_message(
+        &mut self,
+        _friend_number: FriendNumber,
+        _type: MessageType,
+        _message: &[u8],
+    ) {
+    }
+    fn on_file_recv_control(
+        &mut self,
+        _friend_number: FriendNumber,
+        _file_number: FileNumber,
+        _control: ToxFileControl,
+    ) {
+    }
+    fn on_file_chunk_request(
+        &mut self,
+        _friend_number: FriendNumber,
+        _file_number: FileNumber,
+        _position: u64,
+        _length: usize,
+    ) {
+    }
+    fn on_file_recv(
+        &mut self,
+        _friend_number: FriendNumber,
+        _file_number: FileNumber,
+        _kind: u32,
+        _file_size: u64,
+        _filename: &[u8],
+    ) {
+    }
+    fn on_file_recv_chunk(
+        &mut self,
+        _friend_number: FriendNumber,
+        _file_number: FileNumber,
+        _position: u64,
+        _data: &[u8],
+    ) {
+    }
+    fn on_conference_invite(
+        &mut self,
+        _friend_number: FriendNumber,
+        _type: ToxConferenceType,
+        _cookie: &[u8],
+    ) {
+    }
     fn on_conference_connected(&mut self, _conference_number: ConferenceNumber) {}
-    fn on_conference_message(&mut self, _conference_number: ConferenceNumber, _peer_number: ConferencePeerNumber, _type: MessageType, _message: &[u8]) {}
-    fn on_conference_title(&mut self, _conference_number: ConferenceNumber, _peer_number: ConferencePeerNumber, _title: &[u8]) {}
-    fn on_conference_peer_name(&mut self, _conference_number: ConferenceNumber, _peer_number: ConferencePeerNumber, _name: &[u8]) {}
+    fn on_conference_message(
+        &mut self,
+        _conference_number: ConferenceNumber,
+        _peer_number: ConferencePeerNumber,
+        _type: MessageType,
+        _message: &[u8],
+    ) {
+    }
+    fn on_conference_title(
+        &mut self,
+        _conference_number: ConferenceNumber,
+        _peer_number: ConferencePeerNumber,
+        _title: &[u8],
+    ) {
+    }
+    fn on_conference_peer_name(
+        &mut self,
+        _conference_number: ConferenceNumber,
+        _peer_number: ConferencePeerNumber,
+        _name: &[u8],
+    ) {
+    }
     fn on_conference_peer_list_changed(&mut self, _conference_number: ConferenceNumber) {}
     fn on_friend_lossy_packet(&mut self, _friend_number: FriendNumber, _data: &[u8]) {}
     fn on_friend_lossless_packet(&mut self, _friend_number: FriendNumber, _data: &[u8]) {}
-    fn on_group_peer_name(&mut self, _group_number: GroupNumber, _peer_id: GroupPeerNumber, _name: &[u8]) {}
-    fn on_group_peer_status(&mut self, _group_number: GroupNumber, _peer_id: GroupPeerNumber, _status: ToxUserStatus) {}
-    fn on_group_topic(&mut self, _group_number: GroupNumber, _peer_id: GroupPeerNumber, _topic: &[u8]) {}
-    fn on_group_privacy_state(&mut self, _group_number: GroupNumber, _privacy_state: ToxGroupPrivacyState) {}
-    fn on_group_voice_state(&mut self, _group_number: GroupNumber, _voice_state: ToxGroupVoiceState) {}
+    fn on_group_peer_name(
+        &mut self,
+        _group_number: GroupNumber,
+        _peer_id: GroupPeerNumber,
+        _name: &[u8],
+    ) {
+    }
+    fn on_group_peer_status(
+        &mut self,
+        _group_number: GroupNumber,
+        _peer_id: GroupPeerNumber,
+        _status: ToxUserStatus,
+    ) {
+    }
+    fn on_group_topic(
+        &mut self,
+        _group_number: GroupNumber,
+        _peer_id: GroupPeerNumber,
+        _topic: &[u8],
+    ) {
+    }
+    fn on_group_privacy_state(
+        &mut self,
+        _group_number: GroupNumber,
+        _privacy_state: ToxGroupPrivacyState,
+    ) {
+    }
+    fn on_group_voice_state(
+        &mut self,
+        _group_number: GroupNumber,
+        _voice_state: ToxGroupVoiceState,
+    ) {
+    }
     fn on_group_topic_lock(&mut self, _group_number: GroupNumber, _topic_lock: ToxGroupTopicLock) {}
     fn on_group_peer_limit(&mut self, _group_number: GroupNumber, _peer_limit: u32) {}
     fn on_group_password(&mut self, _group_number: GroupNumber, _password: &[u8]) {}
-    fn on_group_message(&mut self, _group_number: GroupNumber, _peer_id: GroupPeerNumber, _message_type: MessageType, _message: &[u8], _message_id: GroupMessageId) {}
-    fn on_group_private_message(&mut self, _group_number: GroupNumber, _peer_id: GroupPeerNumber, _message_type: MessageType, _message: &[u8], _message_id: GroupMessageId) {}
-    fn on_group_custom_packet(&mut self, _group_number: GroupNumber, _peer_id: GroupPeerNumber, _data: &[u8]) {}
-    fn on_group_custom_private_packet(&mut self, _group_number: GroupNumber, _peer_id: GroupPeerNumber, _data: &[u8]) {}
-    fn on_group_invite(&mut self, _friend_number: FriendNumber, _invite_data: &[u8], _group_name: &[u8]) {}
+    fn on_group_message(
+        &mut self,
+        _group_number: GroupNumber,
+        _peer_id: GroupPeerNumber,
+        _message_type: MessageType,
+        _message: &[u8],
+        _message_id: GroupMessageId,
+    ) {
+    }
+    fn on_group_private_message(
+        &mut self,
+        _group_number: GroupNumber,
+        _peer_id: GroupPeerNumber,
+        _message_type: MessageType,
+        _message: &[u8],
+        _message_id: GroupMessageId,
+    ) {
+    }
+    fn on_group_custom_packet(
+        &mut self,
+        _group_number: GroupNumber,
+        _peer_id: GroupPeerNumber,
+        _data: &[u8],
+    ) {
+    }
+    fn on_group_custom_private_packet(
+        &mut self,
+        _group_number: GroupNumber,
+        _peer_id: GroupPeerNumber,
+        _data: &[u8],
+    ) {
+    }
+    fn on_group_invite(
+        &mut self,
+        _friend_number: FriendNumber,
+        _invite_data: &[u8],
+        _group_name: &[u8],
+    ) {
+    }
     fn on_group_peer_join(&mut self, _group_number: GroupNumber, _peer_id: GroupPeerNumber) {}
-    fn on_group_peer_exit(&mut self, _group_number: GroupNumber, _peer_id: GroupPeerNumber, _exit_type: ToxGroupExitType, _name: &[u8], _part_message: &[u8]) {}
+    fn on_group_peer_exit(
+        &mut self,
+        _group_number: GroupNumber,
+        _peer_id: GroupPeerNumber,
+        _exit_type: ToxGroupExitType,
+        _name: &[u8],
+        _part_message: &[u8],
+    ) {
+    }
     fn on_group_self_join(&mut self, _group_number: GroupNumber) {}
     fn on_group_join_fail(&mut self, _group_number: GroupNumber, _fail_type: ToxGroupJoinFail) {}
-    fn on_group_moderation(&mut self, _group_number: GroupNumber, _source_peer_id: GroupPeerNumber, _target_peer_id: GroupPeerNumber, _mod_type: ToxGroupModEvent) {}
+    fn on_group_moderation(
+        &mut self,
+        _group_number: GroupNumber,
+        _source_peer_id: GroupPeerNumber,
+        _target_peer_id: GroupPeerNumber,
+        _mod_type: ToxGroupModEvent,
+    ) {
+    }
 }
 
 pub trait ToxAVHandler {
-    fn on_call(&mut self, _friend_number: FriendNumber, _audio_enabled: bool, _video_enabled: bool) {}
+    fn on_call(
+        &mut self,
+        _friend_number: FriendNumber,
+        _audio_enabled: bool,
+        _video_enabled: bool,
+    ) {
+    }
     fn on_call_state(&mut self, _friend_number: FriendNumber, _state: u32) {}
     fn on_audio_bit_rate(&mut self, _friend_number: FriendNumber, _audio_bit_rate: u32) {}
     fn on_video_bit_rate(&mut self, _friend_number: FriendNumber, _video_bit_rate: u32) {}
-    fn on_audio_receive_frame(&mut self, _friend_number: FriendNumber, _pcm: &[i16], _channels: u8, _sampling_rate: u32) {}
-    fn on_video_receive_frame(&mut self, _friend_number: FriendNumber, _width: u16, _height: u16, _y: &[u8], _u: &[u8], _v: &[u8], _ystride: i32, _ustride: i32, _vstride: i32) {}
+    fn on_audio_receive_frame(
+        &mut self,
+        _friend_number: FriendNumber,
+        _pcm: &[i16],
+        _channels: u8,
+        _sampling_rate: u32,
+    ) {
+    }
+    fn on_video_receive_frame(
+        &mut self,
+        _friend_number: FriendNumber,
+        _width: u16,
+        _height: u16,
+        _y: &[u8],
+        _u: &[u8],
+        _v: &[u8],
+        _ystride: i32,
+        _ustride: i32,
+        _vstride: i32,
+    ) {
+    }
 }
 
 pub fn tox_iterate<H: ToxHandler>(tox: &Tox, handler: &mut H) {
     let tox_ptr = tox.ptr;
     unsafe {
-        ffi::tox_callback_self_connection_status(tox_ptr, Some(dispatch_self_connection_status::<H>));
+        ffi::tox_callback_self_connection_status(
+            tox_ptr,
+            Some(dispatch_self_connection_status::<H>),
+        );
         ffi::tox_callback_friend_name(tox_ptr, Some(dispatch_friend_name::<H>));
         ffi::tox_callback_friend_status_message(tox_ptr, Some(dispatch_friend_status_message::<H>));
         ffi::tox_callback_friend_status(tox_ptr, Some(dispatch_friend_status::<H>));
-        ffi::tox_callback_friend_connection_status(tox_ptr, Some(dispatch_friend_connection_status::<H>));
+        ffi::tox_callback_friend_connection_status(
+            tox_ptr,
+            Some(dispatch_friend_connection_status::<H>),
+        );
         ffi::tox_callback_friend_typing(tox_ptr, Some(dispatch_friend_typing::<H>));
         ffi::tox_callback_friend_read_receipt(tox_ptr, Some(dispatch_friend_read_receipt::<H>));
         ffi::tox_callback_friend_request(tox_ptr, Some(dispatch_friend_request::<H>));
@@ -93,9 +270,15 @@ pub fn tox_iterate<H: ToxHandler>(tox: &Tox, handler: &mut H) {
         ffi::tox_callback_conference_message(tox_ptr, Some(dispatch_conference_message::<H>));
         ffi::tox_callback_conference_title(tox_ptr, Some(dispatch_conference_title::<H>));
         ffi::tox_callback_conference_peer_name(tox_ptr, Some(dispatch_conference_peer_name::<H>));
-        ffi::tox_callback_conference_peer_list_changed(tox_ptr, Some(dispatch_conference_peer_list_changed::<H>));
+        ffi::tox_callback_conference_peer_list_changed(
+            tox_ptr,
+            Some(dispatch_conference_peer_list_changed::<H>),
+        );
         ffi::tox_callback_friend_lossy_packet(tox_ptr, Some(dispatch_friend_lossy_packet::<H>));
-        ffi::tox_callback_friend_lossless_packet(tox_ptr, Some(dispatch_friend_lossless_packet::<H>));
+        ffi::tox_callback_friend_lossless_packet(
+            tox_ptr,
+            Some(dispatch_friend_lossless_packet::<H>),
+        );
         ffi::tox_callback_group_peer_name(tox_ptr, Some(dispatch_group_peer_name::<H>));
         ffi::tox_callback_group_peer_status(tox_ptr, Some(dispatch_group_peer_status::<H>));
         ffi::tox_callback_group_topic(tox_ptr, Some(dispatch_group_topic::<H>));
@@ -107,7 +290,10 @@ pub fn tox_iterate<H: ToxHandler>(tox: &Tox, handler: &mut H) {
         ffi::tox_callback_group_message(tox_ptr, Some(dispatch_group_message::<H>));
         ffi::tox_callback_group_private_message(tox_ptr, Some(dispatch_group_private_message::<H>));
         ffi::tox_callback_group_custom_packet(tox_ptr, Some(dispatch_group_custom_packet::<H>));
-        ffi::tox_callback_group_custom_private_packet(tox_ptr, Some(dispatch_group_custom_private_packet::<H>));
+        ffi::tox_callback_group_custom_private_packet(
+            tox_ptr,
+            Some(dispatch_group_custom_private_packet::<H>),
+        );
         ffi::tox_callback_group_invite(tox_ptr, Some(dispatch_group_invite::<H>));
         ffi::tox_callback_group_peer_join(tox_ptr, Some(dispatch_group_peer_join::<H>));
         ffi::tox_callback_group_peer_exit(tox_ptr, Some(dispatch_group_peer_exit::<H>));
@@ -531,7 +717,6 @@ define_dispatch!(
     }
 );
 
-
 define_av_dispatch!(
     dispatch_call,
     (friend_number: u32, audio_enabled: bool, video_enabled: bool),
@@ -580,11 +765,10 @@ define_av_dispatch!(
     |handler: &mut H| {
         let y_size = (std::cmp::max(width as i64, (ystride as i64).abs()) * height as i64) as usize;
         let y_slice = unsafe { slice::from_raw_parts(y, y_size) };
-        let u_size = (std::cmp::max(width as i64 / 2_i64, (ustride as i64).abs()) * (height as i64 / 2_i64)) as usize;
+        let u_size = (std::cmp::max((width as i64 + 1_i64) / 2_i64, (ustride as i64).abs()) * ((height as i64 + 1_i64) / 2_i64)) as usize;
         let u_slice = unsafe { slice::from_raw_parts(u, u_size) };
-        let v_size = (std::cmp::max(width as i64 / 2_i64, (vstride as i64).abs()) * (height as i64 / 2_i64)) as usize;
+        let v_size = (std::cmp::max((width as i64 + 1_i64) / 2_i64, (vstride as i64).abs()) * ((height as i64 + 1_i64) / 2_i64)) as usize;
         let v_slice = unsafe { slice::from_raw_parts(v, v_size) };
         handler.on_video_receive_frame(crate::types::FriendNumber(friend_number), width, height, y_slice, u_slice, v_slice, ystride, ustride, vstride);
     }
 );
-

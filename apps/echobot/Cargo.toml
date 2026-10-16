@@ -1,0 +1,12 @@
+[package]
+name = "echobot"
+edition.workspace = true
+
+[dependencies]
+clap.workspace = true
+hex.workspace = true
+nodes.workspace = true
+tokio.workspace = true
+toxcore.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

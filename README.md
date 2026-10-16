@@ -13,6 +13,9 @@ This project is a component of the
     `rs-toxcore-c` package.
 -   `toxxi/`: A terminal Tox client (TUI) with built-in Rhai scripting support.
 -   `apps/groupbot/`: A Tox bot that bridges a conference and a group chat.
+-   `apps/echobot/`: A Tox bot that echoes messages and calls, to test clients
+    against.
+-   `apps/nodes/`: Bootstrap node discovery shared by the bots.
 
 ## Usage
 

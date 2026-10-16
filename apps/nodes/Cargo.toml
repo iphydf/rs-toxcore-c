@@ -1,0 +1,11 @@
+[package]
+name = "nodes"
+edition.workspace = true
+
+[dependencies]
+hex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+tokio.workspace = true
+toxcore.workspace = true
+tracing.workspace = true

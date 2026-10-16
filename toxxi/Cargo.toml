@@ -1,0 +1,116 @@
+[package]
+name = "toxxi"
+edition.workspace = true
+
+[dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+directories.workspace = true
+insta.workspace = true
+qoi.workspace = true
+qrcode.workspace = true
+rand.workspace = true
+ratatui.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+resvg.workspace = true
+rhai.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tiny-skia.workspace = true
+tokio.workspace = true
+tox-sync.workspace = true
+toxcore.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "message_send_bench"
+harness = false
+
+[[bench]]
+name = "resize_bench"
+harness = false
+
+[[bench]]
+name = "ui_bench"
+harness = false
+
+[[test]]
+name = "widgets_command_def_test"
+path = "tests/widgets/command_def_test.rs"
+
+[[test]]
+name = "widgets_command_menu_logic_test"
+path = "tests/widgets/command_menu_logic_test.rs"
+
+[[test]]
+name = "widgets_command_menu_test"
+path = "tests/widgets/command_menu_test.rs"
+
+[[test]]
+name = "widgets_emoji_grid_test"
+path = "tests/widgets/emoji_grid_test.rs"
+
+[[test]]
+name = "widgets_file_transfer_test"
+path = "tests/widgets/file_transfer_test.rs"
+
+[[test]]
+name = "widgets_game_card_test"
+path = "tests/widgets/game_card_test.rs"
+
+[[test]]
+name = "widgets_info_pane_test"
+path = "tests/widgets/info_pane_test.rs"
+
+[[test]]
+name = "widgets_input_box_logic_test"
+path = "tests/widgets/input_box_logic_test.rs"
+
+[[test]]
+name = "widgets_input_box_test"
+path = "tests/widgets/input_box_test.rs"
+
+[[test]]
+name = "widgets_message_list_logic_test"
+path = "tests/widgets/message_list_logic_test.rs"
+
+[[test]]
+name = "widgets_message_list_scrollbar_test"
+path = "tests/widgets/message_list_scrollbar_test.rs"
+
+[[test]]
+name = "widgets_message_list_test"
+path = "tests/widgets/message_list_test.rs"
+
+[[test]]
+name = "widgets_quick_switcher_logic_test"
+path = "tests/widgets/quick_switcher_logic_test.rs"
+
+[[test]]
+name = "widgets_quick_switcher_test"
+path = "tests/widgets/quick_switcher_test.rs"
+
+[[test]]
+name = "widgets_sidebar_logic_test"
+path = "tests/widgets/sidebar_logic_test.rs"
+
+[[test]]
+name = "widgets_sidebar_test"
+path = "tests/widgets/sidebar_test.rs"
+
+[[test]]
+name = "widgets_status_bar_logic_test"
+path = "tests/widgets/status_bar_logic_test.rs"
+
+[[test]]
+name = "widgets_status_bar_test"
+path = "tests/widgets/status_bar_test.rs"

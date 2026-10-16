@@ -1,5 +1,6 @@
 pub mod app;
 pub mod bootstrap;
+pub mod call_bridge;
 pub mod commands;
 pub mod completion;
 pub mod config;
@@ -10,9 +11,11 @@ pub mod model;
 pub mod msg;
 pub mod screenshot;
 pub mod script;
+pub mod sync;
 pub mod terminal;
 pub mod tester;
 pub mod testing;
+pub mod text;
 pub mod time;
 pub mod ui;
 pub mod update;

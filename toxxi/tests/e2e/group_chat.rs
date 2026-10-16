@@ -196,10 +196,9 @@ pub async fn run(h: &mut TestHarness) {
                 .get(&WindowId::Group(bob_group_id))
             {
                 bob_conv.topic == Some("E2E Test Topic".to_string())
-                    && bob_conv
-                        .messages
-                        .iter()
-                        .any(|m| m.content.as_text() == Some("* Topic changed to: E2E Test Topic"))
+                    && bob_conv.messages.iter().any(|m| {
+                        m.content.as_text() == Some("* Alice changed the topic to: E2E Test Topic")
+                    })
             } else {
                 false
             }
@@ -219,10 +218,9 @@ pub async fn run(h: &mut TestHarness) {
         .unwrap();
     assert_eq!(alice_conv.topic, Some("E2E Test Topic".to_string()));
     assert!(
-        alice_conv
-            .messages
-            .iter()
-            .any(|m| { m.content.as_text() == Some("* Topic changed to: E2E Test Topic") })
+        alice_conv.messages.iter().any(|m| {
+            m.content.as_text() == Some("* Alice changed the topic to: E2E Test Topic")
+        })
     );
 
     tlog!(h, "Scenario: Group Chat Nickname passed.");

@@ -68,7 +68,6 @@ async fn test_persistence_real_tox_instance() {
 
         let domain = DomainState::new(
             initial_state.tox_id,
-            initial_state.public_key,
             initial_state.name,
             initial_state.status_message,
             initial_state.status_type,
@@ -207,7 +206,6 @@ async fn test_conference_persistence() {
 
         let domain = DomainState::new(
             initial_state.tox_id,
-            initial_state.public_key,
             initial_state.name,
             initial_state.status_message,
             initial_state.status_type,

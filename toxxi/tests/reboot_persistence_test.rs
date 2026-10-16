@@ -47,7 +47,6 @@ fn test_reboot_persistence_peers_offline() {
         &ctx.config_dir,
         toxxi::model::ToxSelfInfo {
             tox_id: model.domain.tox_id,
-            public_key: model.domain.self_public_key,
             name: model.domain.self_name.clone(),
             status_msg: model.domain.self_status_message.clone(),
             status_type: model.domain.self_status_type,

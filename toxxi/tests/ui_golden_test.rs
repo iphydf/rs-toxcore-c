@@ -16,7 +16,6 @@ fn create_test_model() -> Model {
     let config = Config::default();
     let domain = DomainState::new(
         Address([0u8; 38]),
-        PublicKey([0u8; 32]),
         "Tester".to_string(),
         "I am a test".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -68,8 +67,6 @@ fn test_ui_chat_interaction_snapshot() {
             public_key: Some(pk),
             status_message: "Happy".to_string(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -117,8 +114,6 @@ fn test_ui_input_lorem_ipsum_snapshot() {
             public_key: Some(pk),
             status_message: "Reading".to_string(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -179,8 +174,6 @@ fn test_ui_multiline_mode_snapshot() {
             public_key: Some(pk),
             status_message: "Reading".to_string(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -257,8 +250,6 @@ fn test_ui_multiple_friends_snapshot() {
             public_key: Some(pk_bob),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -275,8 +266,6 @@ fn test_ui_multiple_friends_snapshot() {
             public_key: Some(pk_charlie),
             status_message: "Busy".to_string(),
             connection: ToxConnection::TOX_CONNECTION_UDP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -293,8 +282,6 @@ fn test_ui_multiple_friends_snapshot() {
             public_key: Some(pk_dave),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -311,8 +298,6 @@ fn test_ui_multiple_friends_snapshot() {
             public_key: Some(pk_eve),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -329,8 +314,6 @@ fn test_ui_multiple_friends_snapshot() {
             public_key: Some(pk_frank),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -466,8 +449,6 @@ fn test_ui_command_menu_popup_snapshot() {
             public_key: Some(pk),
             status_message: "Happy".to_string(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -522,8 +503,6 @@ fn test_ui_popup_completion_position_snapshot() {
             public_key: Some(pk),
             status_message: "Happy".to_string(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );

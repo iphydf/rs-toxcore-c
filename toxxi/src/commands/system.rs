@@ -117,6 +117,10 @@ pub const COMMANDS: &[CommandDef] = &[
                     }
                 }
                 model.invalidate_full_window_cache(active_id);
+            } else {
+                model.add_error_message(MessageContent::Text(
+                    "Usage: /clear [all | system]".to_owned(),
+                ));
             }
             vec![]
         },
@@ -186,6 +190,10 @@ pub const COMMANDS: &[CommandDef] = &[
                         idx
                     )));
                 }
+            } else {
+                model.add_error_message(MessageContent::Text(
+                    "Window index must be a number.".to_owned(),
+                ));
             }
             vec![]
         },
@@ -229,6 +237,9 @@ pub const COMMANDS: &[CommandDef] = &[
                 )));
                 return vec![Cmd::App(AppCmd::SetTimeout(ms))];
             }
+            model.add_error_message(MessageContent::Text(
+                "Timeout must be a number of milliseconds.".to_owned(),
+            ));
             vec![]
         },
         complete: None,
@@ -404,7 +415,6 @@ pub const COMMANDS: &[CommandDef] = &[
                 let keys = [
                     ("ipv6_enabled", "Toggle IPv6 support"),
                     ("udp_enabled", "Toggle UDP support"),
-                    ("blocked_strings", "Manage blocked strings list"),
                     ("system_messages", "Configure system message types"),
                 ];
                 return keys

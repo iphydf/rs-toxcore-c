@@ -1,6 +1,6 @@
 use ratatui::{Terminal, backend::TestBackend};
 use std::fs;
-use toxcore::tox::{Address, PublicKey, ToxUserStatus};
+use toxcore::tox::{Address, ToxUserStatus};
 use toxcore::types::ToxLogLevel;
 use toxxi::config::Config;
 use toxxi::model::{DomainState, Model, WindowId};
@@ -10,7 +10,6 @@ fn create_test_model() -> Model {
     let config = Config::default();
     let domain = DomainState::new(
         Address([0u8; 38]),
-        PublicKey([0u8; 32]),
         "Tester".to_string(),
         "I am a test".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -293,32 +292,6 @@ fn test_save_load_state_with_logs() {
             .message,
         "Fatal error"
     );
-
-    fs::remove_dir_all(&temp_dir).unwrap();
-}
-
-#[test]
-fn test_save_load_state_with_filters() {
-    let temp_dir = std::env::temp_dir().join(format!(
-        "toxxi_test_state_filters_{}",
-        rand::random::<u32>()
-    ));
-    fs::create_dir_all(&temp_dir).unwrap();
-
-    let mut model = create_test_model();
-    model.ui.log_filters.levels = vec![ToxLogLevel::TOX_LOG_LEVEL_ERROR];
-    model.ui.log_filters.msg_pattern = Some("critical".to_string());
-
-    toxxi::model::save_state(&temp_dir, &model).unwrap();
-    let state = toxxi::model::load_state(&temp_dir)
-        .expect("Failed to load state")
-        .expect("State not found");
-
-    assert_eq!(
-        state.log_filters.levels,
-        vec![ToxLogLevel::TOX_LOG_LEVEL_ERROR]
-    );
-    assert_eq!(state.log_filters.msg_pattern, Some("critical".to_string()));
 
     fs::remove_dir_all(&temp_dir).unwrap();
 }

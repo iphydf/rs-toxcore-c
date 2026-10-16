@@ -1,0 +1,27 @@
+load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_library", "rustfmt_test")
+
+rust_library(
+    name = "nodes",
+    srcs = ["src/lib.rs"],
+    edition = "2024",
+    visibility = ["//rs-toxcore-c/apps:__subpackages__"],
+    deps = [
+        "//rs-toxcore-c:toxcore",
+        "@crates//:hex",
+        "@crates//:reqwest",
+        "@crates//:serde",
+        "@crates//:tokio",
+        "@crates//:tracing",
+    ],
+)
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [":nodes"],
+)
+
+rustfmt_test(
+    name = "rustfmt",
+    targets = [":nodes"],
+)

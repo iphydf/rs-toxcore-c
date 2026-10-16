@@ -1,13 +1,13 @@
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library", "rust_test", "rustfmt_test")
 
 COMMON_DEPS = [
+    "//rs-toxcore-c:tox_sync",
     "//rs-toxcore-c:toxcore",
     "@crates//:ratatui",
     "@crates//:crossterm",
     "@crates//:qrcode",
     "@crates//:unicode-width",
     "@crates//:unicode-segmentation",
-    "@crates//:base64",
     "@crates//:clap",
     "@crates//:directories",
     "@crates//:chrono",
@@ -20,16 +20,14 @@ COMMON_DEPS = [
     "@crates//:tokio",
     "@crates//:rhai",
     "@crates//:tempfile",
-    "@crates//:futures",
-    "@crates//:proptest",
     "@crates//:insta",
     "@crates//:resvg",
     "@crates//:tiny-skia",
     "@crates//:qoi",
 ]
 
-PROC_MACRO_DEPS = [
-    "@crates//:proptest-derive",
+TEST_DEPS = [
+    "@crates//:proptest",
 ]
 
 rust_library(
@@ -41,22 +39,12 @@ rust_library(
     compile_data = glob(["assets/**"]),
     crate_name = "toxxi",
     edition = "2024",
-    proc_macro_deps = PROC_MACRO_DEPS,
     deps = COMMON_DEPS,
 )
 
 rust_binary(
     name = "toxxi",
     srcs = ["src/main.rs"],
-    edition = "2024",
-    proc_macro_deps = PROC_MACRO_DEPS,
-    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
-    deps = COMMON_DEPS + [":toxxi_lib"],
-)
-
-rust_binary(
-    name = "log-cleaner",
-    srcs = ["src/log_cleaner.rs"],
     edition = "2024",
     rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
     deps = COMMON_DEPS + [":toxxi_lib"],
@@ -70,13 +58,13 @@ TEST_SRCS = glob(
 [
     rust_test(
         name = src.replace("tests/", "").replace(".rs", "").replace("/", "-").replace("_", "-"),
+        size = "large" if src.endswith("e2e_test.rs") else "medium",
         srcs = [src] + (glob(["tests/e2e/**"]) if src.endswith("e2e_test.rs") else []),
         crate_root = src,
         data = glob(["tests/snapshots/**"]),
         edition = "2024",
-        proc_macro_deps = PROC_MACRO_DEPS,
         rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
-        deps = COMMON_DEPS + [":toxxi_lib"],
+        deps = COMMON_DEPS + TEST_DEPS + [":toxxi_lib"],
     )
     for src in TEST_SRCS
 ]
@@ -97,17 +85,24 @@ BENCH_SRCS = glob(["benches/*.rs"])
     for src in BENCH_SRCS
 ]
 
+RUST_TARGETS = [
+    ":toxxi",
+    ":toxxi_lib",
+] + [
+    ":" + src.replace("tests/", "").replace(".rs", "").replace("/", "-").replace("_", "-")
+    for src in TEST_SRCS
+] + [
+    ":" + src.replace("benches/", "").replace(".rs", "")
+    for src in BENCH_SRCS
+]
+
 rust_clippy(
     name = "clippy",
     testonly = True,
-    deps = [
-        ":toxxi",
-        ":toxxi_lib",
-    ] + [
-        ":" + src.replace("tests/", "").replace(".rs", "").replace("/", "-").replace("_", "-")
-        for src in TEST_SRCS
-    ] + [
-        ":" + src.replace("benches/", "").replace(".rs", "")
-        for src in BENCH_SRCS
-    ],
+    deps = RUST_TARGETS,
+)
+
+rustfmt_test(
+    name = "rustfmt",
+    targets = RUST_TARGETS,
 )

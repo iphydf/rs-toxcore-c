@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  common:
+    uses: TokTok/ci-tools/.github/workflows/common-ci.yml@master
+
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Debug info makes the target directory too big for the runner.
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install c-toxcore
+        run:
+          sudo apt-get update &&
+          sudo apt-get install -y --no-install-recommends
+            libclang-dev libopus-dev libsodium-dev libvpx-dev &&
+          git clone --depth=1 --recursive https://github.com/TokTok/c-toxcore /tmp/c-toxcore &&
+          cmake -S /tmp/c-toxcore -B /tmp/c-toxcore/_build -DBOOTSTRAP_DAEMON=OFF -DEXPERIMENTAL_API=ON &&
+          cmake --build /tmp/c-toxcore/_build -j4 &&
+          sudo cmake --install /tmp/c-toxcore/_build &&
+          sudo ldconfig
+      - run: cargo build --workspace --all-targets
+      - run: cargo test --workspace

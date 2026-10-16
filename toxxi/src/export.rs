@@ -265,10 +265,8 @@ impl SvgModel {
                 });
             }
         }
-        // Sort for deterministic test output (by y, then x)
-        // Original BgRects are sorted by y, x in process_buffer via `rects.sort()`.
-        // However, iteration order of HashMap is not deterministic.
-        bg_rects.sort_by(|a, b| a.x.cmp(&b.x)); // The test seems to expect x-order or simple list.
+        // Stable, so rects with the same x keep their layer order.
+        bg_rects.sort_by(|a, b| a.x.cmp(&b.x));
 
         for run in data.foreground_runs {
             fg_texts.push(ModelFgText {

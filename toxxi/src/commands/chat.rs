@@ -1,5 +1,5 @@
 use crate::model::{MessageContent, MessageStatus, WindowId};
-use crate::msg::{Cmd, IOAction, ToxAction};
+use crate::msg::{Cmd, ToxAction};
 use toxcore::tox::{FriendNumber, ToxConnection};
 use toxcore::types::MessageType;
 
@@ -31,6 +31,10 @@ pub const COMMANDS: &[CommandDef] = &[
                         fid
                     )));
                 }
+            } else {
+                model.add_error_message(MessageContent::Text(
+                    "Friend id must be a number.".to_owned(),
+                ));
             }
             vec![]
         },
@@ -95,6 +99,10 @@ pub const COMMANDS: &[CommandDef] = &[
                         fid
                     )));
                 }
+            } else {
+                model.add_error_message(MessageContent::Text(
+                    "Friend id must be a number.".to_owned(),
+                ));
             }
             vec![]
         },
@@ -145,11 +153,12 @@ pub const COMMANDS: &[CommandDef] = &[
                         msg_content.clone(),
                     );
                     let window_id = WindowId::Friend(pk);
-                    let mut cmds = vec![Cmd::IO(IOAction::LogMessage(window_id, msg_obj))];
+                    let mut cmds: Vec<Cmd> =
+                        model.record(window_id, &msg_obj).into_iter().collect();
                     if let Some(msg) =
                         model.mark_message_status(window_id, internal_id, MessageStatus::Sending)
                     {
-                        cmds.push(Cmd::IO(IOAction::LogMessage(window_id, msg)));
+                        cmds.extend(model.record(window_id, &msg));
                     }
                     if let Some(pos) = model.ui.window_ids.iter().position(|&w| w == window_id) {
                         model.set_active_window(pos);
@@ -157,7 +166,7 @@ pub const COMMANDS: &[CommandDef] = &[
                     cmds.push(Cmd::Tox(ToxAction::SendMessage(
                         pk,
                         MessageType::TOX_MESSAGE_TYPE_NORMAL,
-                        msg_content,
+                        msg_content.into_bytes(),
                         internal_id,
                     )));
                     cmds
@@ -224,11 +233,11 @@ pub const COMMANDS: &[CommandDef] = &[
                 action.clone(),
             );
 
-            let mut cmds = vec![Cmd::IO(IOAction::LogMessage(window_id, msg_obj))];
+            let mut cmds: Vec<Cmd> = model.record(window_id, &msg_obj).into_iter().collect();
             if let Some(msg) =
                 model.mark_message_status(window_id, internal_id, MessageStatus::Sending)
             {
-                cmds.push(Cmd::IO(IOAction::LogMessage(window_id, msg)));
+                cmds.extend(model.record(window_id, &msg));
             }
 
             match window_id {
@@ -236,7 +245,7 @@ pub const COMMANDS: &[CommandDef] = &[
                     cmds.push(Cmd::Tox(ToxAction::SendMessage(
                         pk,
                         MessageType::TOX_MESSAGE_TYPE_ACTION,
-                        action,
+                        action.into_bytes(),
                         internal_id,
                     )));
                 }
@@ -244,7 +253,7 @@ pub const COMMANDS: &[CommandDef] = &[
                     cmds.push(Cmd::Tox(ToxAction::SendGroupMessage(
                         chat_id,
                         MessageType::TOX_MESSAGE_TYPE_ACTION,
-                        action,
+                        action.into_bytes(),
                         internal_id,
                     )));
                 }
@@ -252,7 +261,7 @@ pub const COMMANDS: &[CommandDef] = &[
                     cmds.push(Cmd::Tox(ToxAction::SendConferenceMessage(
                         conf_id,
                         MessageType::TOX_MESSAGE_TYPE_ACTION,
-                        action,
+                        action.into_bytes(),
                         internal_id,
                     )));
                 }
@@ -317,27 +326,13 @@ pub const COMMANDS: &[CommandDef] = &[
                     let friend_number = FriendNumber(id);
 
                     if let Some(pk) = model.session.friend_numbers.get(&friend_number).cloned() {
-                        let window_id = WindowId::Friend(pk);
-
                         if let Some(info) = model.domain.friends.get(&pk) {
                             let pk_hex = crate::utils::encode_hex(&pk.0);
                             model.add_status_message(MessageContent::Text(format!(
                                 "Removed friend {} ({}) with public key: {}",
                                 info.name, id, pk_hex
                             )));
-
-                            // Cleanup local state
-                            model.domain.friends.remove(&pk);
-                            model.domain.conversations.remove(&window_id);
-                            model.session.friend_numbers.remove(&friend_number);
-
-                            model.ui.window_ids.retain(|&w| w != window_id);
-                            if model.ui.active_window_index >= model.ui.window_ids.len() {
-                                model.ui.active_window_index =
-                                    model.ui.window_ids.len().saturating_sub(1);
-                            }
-
-                            vec![Cmd::Tox(ToxAction::DeleteFriend(pk))]
+                            model.remove_friend(pk)
                         } else {
                             vec![]
                         }

@@ -4,11 +4,12 @@ use toxcore::tox::{
     Address, ConferenceNumber, FriendNumber, GroupNumber, ToxConnection, ToxUserStatus,
 };
 
-use toxcore::types::{GroupChatId, ConferenceId, MessageType, PublicKey};
+use toxcore::types::{ConferenceId, GroupChatId, MessageType, PublicKey};
 use toxxi::config::Config;
 use toxxi::model::{
-    ConferenceReconcileInfo, ConsoleMessageType, DomainState, GroupReconcileInfo, MessageContent,
-    MessageStatus, Model, TransferStatus, WindowId, load_state, save_state,
+    ConferenceReconcileInfo, ConsoleMessageType, DomainState, GroupReconcileInfo,
+    MAX_CONSOLE_MESSAGES, MessageContent, MessageStatus, Model, TransferStatus, WindowId,
+    load_state, save_state,
 };
 use toxxi::ui::draw;
 use toxxi::utils::decode_hex;
@@ -17,7 +18,6 @@ fn create_test_model() -> Model {
     let config = Config::default();
     let domain = DomainState::new(
         Address([0u8; 38]),
-        PublicKey([0u8; 32]),
         "Tester".to_string(),
         "I am a test".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -45,8 +45,6 @@ fn test_window_navigation() {
             public_key: Some(pk1),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -57,8 +55,6 @@ fn test_window_navigation() {
             public_key: Some(pk2),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -87,6 +83,20 @@ fn test_window_navigation() {
 }
 
 #[test]
+fn test_console_keeps_the_newest_messages() {
+    let mut model = create_test_model();
+    for i in 0..=MAX_CONSOLE_MESSAGES {
+        model.add_console_message(ConsoleMessageType::Info, i.to_string());
+    }
+    let console = &model.domain.console_messages;
+    assert_eq!(console.len(), MAX_CONSOLE_MESSAGES);
+    assert_eq!(
+        console.last().unwrap().content.as_text(),
+        Some(MAX_CONSOLE_MESSAGES.to_string().as_str())
+    );
+}
+
+#[test]
 fn test_unread_count() {
     let mut model = create_test_model();
     let pk1 = PublicKey([1u8; 32]);
@@ -98,8 +108,6 @@ fn test_unread_count() {
             public_key: Some(pk1),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -204,8 +212,6 @@ fn test_scrolling() {
             public_key: Some(pk1),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -264,8 +270,6 @@ fn test_save_load_state() {
             public_key: Some(pk1),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -302,8 +306,6 @@ fn test_friend_message_attribution() {
             public_key: Some(pk1),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -357,15 +359,12 @@ fn test_load_or_initialize_profile_switch() {
 
     let config = Config::default();
     let addr1 = Address([1u8; 38]);
-    let pk1 = PublicKey([11u8; 32]);
     let addr2 = Address([2u8; 38]);
-    let pk2 = PublicKey([22u8; 32]);
 
     // Save state for profile 1
     let model1 = toxxi::model::initialize_model(
         toxxi::model::ToxSelfInfo {
             tox_id: addr1,
-            public_key: pk1,
             name: "P1".to_string(),
             status_msg: "S1".to_string(),
             status_type: ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -383,7 +382,6 @@ fn test_load_or_initialize_profile_switch() {
         &temp_dir,
         toxxi::model::ToxSelfInfo {
             tox_id: addr2,
-            public_key: pk2,
             name: "P2".to_string(),
             status_msg: "S2".to_string(),
             status_type: ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -413,13 +411,11 @@ fn test_load_corrupt_state() {
 
     let config = Config::default();
     let addr = Address([0u8; 38]);
-    let pk = PublicKey([0u8; 32]);
 
     let model = toxxi::model::load_or_initialize(
         &temp_dir,
         toxxi::model::ToxSelfInfo {
             tox_id: addr,
-            public_key: pk,
             name: "P".to_string(),
             status_msg: "S".to_string(),
             status_type: ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -454,7 +450,6 @@ fn test_load_corrupt_state() {
 fn test_initialize_model_preserves_default_names() {
     let config = Config::default();
     let addr = Address([0u8; 38]);
-    let pk = PublicKey([0u8; 32]);
 
     // Initial state from Tox core with empty names
     let groups = vec![GroupReconcileInfo {
@@ -473,7 +468,6 @@ fn test_initialize_model_preserves_default_names() {
     let model = toxxi::model::initialize_model(
         toxxi::model::ToxSelfInfo {
             tox_id: addr,
-            public_key: pk,
             name: "Self".to_string(),
             status_msg: "Status".to_string(),
             status_type: ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -512,8 +506,6 @@ fn test_file_transfer_speed_calculation() {
         transferred: 0,
         is_receiving: true,
         status: TransferStatus::Active,
-        file_kind: 0,
-        file_path: None,
         speed: 0.0,
         last_update: Instant::now(), // will be overridden
         last_transferred: 0,

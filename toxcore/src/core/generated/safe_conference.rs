@@ -128,7 +128,10 @@ impl<'a> Conference<'a> {
             .map_err(ToxError::ConferencePeerQuery)
     }
 
-    pub fn offline_peer_name(&self, offline_peer_number: ConferenceOfflinePeerNumber) -> Result<Vec<u8>> {
+    pub fn offline_peer_name(
+        &self,
+        offline_peer_number: ConferenceOfflinePeerNumber,
+    ) -> Result<Vec<u8>> {
         self.tox
             .inner
             .core
@@ -136,7 +139,10 @@ impl<'a> Conference<'a> {
             .map_err(ToxError::ConferencePeerQuery)
     }
 
-    pub fn offline_peer_public_key(&self, offline_peer_number: ConferenceOfflinePeerNumber) -> Result<PublicKey> {
+    pub fn offline_peer_public_key(
+        &self,
+        offline_peer_number: ConferenceOfflinePeerNumber,
+    ) -> Result<PublicKey> {
         self.tox
             .inner
             .core
@@ -144,7 +150,10 @@ impl<'a> Conference<'a> {
             .map_err(ToxError::ConferencePeerQuery)
     }
 
-    pub fn offline_peer_last_active(&self, offline_peer_number: ConferenceOfflinePeerNumber) -> Result<u64> {
+    pub fn offline_peer_last_active(
+        &self,
+        offline_peer_number: ConferenceOfflinePeerNumber,
+    ) -> Result<u64> {
         self.tox
             .inner
             .core

@@ -16,19 +16,33 @@ impl<'a, H: ToxAVHandler> ToxAV<'a, H> {
         self.inner.video_iteration_interval()
     }
 
-    pub fn call(&self, friend_number: FriendNumber, audio_bit_rate: u32, video_bit_rate: u32) -> Result<()> {
+    pub fn call(
+        &self,
+        friend_number: FriendNumber,
+        audio_bit_rate: u32,
+        video_bit_rate: u32,
+    ) -> Result<()> {
         self.inner
             .call(friend_number, audio_bit_rate, video_bit_rate)
             .map_err(ToxError::AvCall)
     }
 
-    pub fn answer(&self, friend_number: FriendNumber, audio_bit_rate: u32, video_bit_rate: u32) -> Result<()> {
+    pub fn answer(
+        &self,
+        friend_number: FriendNumber,
+        audio_bit_rate: u32,
+        video_bit_rate: u32,
+    ) -> Result<()> {
         self.inner
             .answer(friend_number, audio_bit_rate, video_bit_rate)
             .map_err(ToxError::AvAnswer)
     }
 
-    pub fn call_control(&self, friend_number: FriendNumber, control: ToxavCallControl) -> Result<()> {
+    pub fn call_control(
+        &self,
+        friend_number: FriendNumber,
+        control: ToxavCallControl,
+    ) -> Result<()> {
         self.inner
             .call_control(friend_number, control)
             .map_err(ToxError::AvCallControl)
@@ -40,7 +54,15 @@ impl<'a, H: ToxAVHandler> ToxAV<'a, H> {
             .map_err(ToxError::AvBitRateSet)
     }
 
-    pub fn video_send_frame(&self, friend_number: FriendNumber, width: u16, height: u16, y: &[u8], u: &[u8], v: &[u8]) -> Result<()> {
+    pub fn video_send_frame(
+        &self,
+        friend_number: FriendNumber,
+        width: u16,
+        height: u16,
+        y: &[u8],
+        u: &[u8],
+        v: &[u8],
+    ) -> Result<()> {
         self.inner
             .video_send_frame(friend_number, width, height, y, u, v)
             .map_err(ToxError::AvSendFrame)

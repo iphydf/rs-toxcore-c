@@ -16,7 +16,8 @@ impl Options {
     }
 
     pub fn set_dht_announcements_enabled(&mut self, dht_announcements_enabled: bool) {
-        self.inner.dht_announcements_enabled(dht_announcements_enabled)
+        self.inner
+            .dht_announcements_enabled(dht_announcements_enabled)
     }
 
     pub fn set_proxy_type(&mut self, proxy_type: ToxProxyType) {
@@ -56,14 +57,17 @@ impl Options {
     }
 
     pub fn set_experimental_thread_safety(&mut self, experimental_thread_safety: bool) {
-        self.inner.experimental_thread_safety(experimental_thread_safety)
+        self.inner
+            .experimental_thread_safety(experimental_thread_safety)
     }
 
     pub fn set_experimental_groups_persistence(&mut self, experimental_groups_persistence: bool) {
-        self.inner.experimental_groups_persistence(experimental_groups_persistence)
+        self.inner
+            .experimental_groups_persistence(experimental_groups_persistence)
     }
 
     pub fn set_experimental_disable_dns(&mut self, experimental_disable_dns: bool) {
-        self.inner.experimental_disable_dns(experimental_disable_dns)
+        self.inner
+            .experimental_disable_dns(experimental_disable_dns)
     }
 }

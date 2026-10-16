@@ -14,7 +14,7 @@ use toxxi::msg::{AppCmd, Cmd, IOEvent, Msg, SystemEvent, ToxEvent};
 use toxxi::script::{ScriptController, ScriptRequest, ScriptResponse};
 use toxxi::terminal::TerminalHandle;
 use toxxi::ui::draw;
-use toxxi::update::{handle_enter, update};
+use toxxi::update::{handle_enter, shows, update};
 use toxxi::{app, bootstrap, config, io, worker};
 
 /// Toxxi - A Terminal Tox Client
@@ -59,12 +59,11 @@ impl Runtime {
         let should_stop_tick = should_stop.clone();
         let tx_tick = tx.clone();
         let tick_handle = tokio::spawn(async move {
-            let tick_rate = Duration::from_millis(200);
             loop {
                 if should_stop_tick.load(Ordering::Relaxed) {
                     break;
                 }
-                tokio::time::sleep(tick_rate).await;
+                tokio::time::sleep(app::TICK_RATE).await;
                 if tx_tick.send(Msg::System(SystemEvent::Tick)).is_err() {
                     break;
                 }
@@ -109,13 +108,15 @@ impl Runtime {
 fn log_headless(msg: &Msg) {
     match msg {
         Msg::Tox(tox_event) => match tox_event {
-            ToxEvent::Message(f, _t, m) => println!("[MSG] Friend {}: {}", f.0, m),
+            ToxEvent::Message(f, _t, m) => {
+                println!("[MSG] Friend {}: {}", f.0, toxxi::text::of(m))
+            }
             ToxEvent::ConnectionStatus(s) => println!("[CONN] Self: {:?}", s),
             ToxEvent::FriendStatus(f, s, _) => {
                 println!("[STATUS] Friend {}: {:?}", f.0, s)
             }
-            ToxEvent::GroupTopic(g, t) => println!("[TOPIC] Group {}: {}", g.0, t),
-            ToxEvent::ConferenceTitle(c, t) => {
+            ToxEvent::GroupTopic(g, t, _) => println!("[TOPIC] Group {}: {}", g.0, t),
+            ToxEvent::ConferenceTitle(c, t, _) => {
                 println!("[TOPIC] Conference {}: {}", c.0, t)
             }
             ToxEvent::FileRecv(f, file, kind, size, filename) => {
@@ -130,7 +131,7 @@ fn log_headless(msg: &Msg) {
             IOEvent::FileStarted(f, file, path, _) => {
                 println!("[FILE] Started with {}: {} (ID: {})", f, path, file)
             }
-            IOEvent::FileFinished(f, file) => {
+            IOEvent::FileFinished(f, file, _) => {
                 println!("[FILE] Finished with {}: ID {}", f, file)
             }
             _ => {}
@@ -192,7 +193,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         &config_dir,
         model::ToxSelfInfo {
             tox_id: initial_state.tox_id,
-            public_key: initial_state.public_key,
             name: initial_state.name,
             status_msg: initial_state.status_message,
             status_type: initial_state.status_type,
@@ -247,13 +247,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut ctx = app::AppContext {
         tx_tox_action,
         tox_handle,
-        nodes,
         savedata_path,
         config_dir,
-        tx_msg: tx.clone(),
         quit_at: None,
         tx_io,
-        downloads_dir,
         screenshots_dir,
     };
 
@@ -290,7 +287,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
 
         let mut should_break = false;
+        let mut redraw = false;
         for msg in batch {
+            redraw |= shows(&model, &msg);
             if tui.is_none() {
                 log_headless(&msg);
             }
@@ -360,7 +359,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             break;
         }
 
-        if let Some(h) = &mut tui {
+        if redraw && let Some(h) = &mut tui {
             h.terminal.draw(|f| draw(f, &mut model))?;
         }
     }
@@ -368,10 +367,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     runtime.shutdown().await;
 
     // Final drain of messages to ensure we save the latest state
-    while let Ok(msg) = rx.try_recv() {
-        let cmds = update(&mut model, msg);
-        let _ = ctx.execute(cmds, &mut model).await;
-    }
+    ctx.drain(&rx, &mut model).await;
 
     model::save_state(&ctx.config_dir, &model)?;
     config::save_config(&ctx.config_dir, &model.saved_config)?;

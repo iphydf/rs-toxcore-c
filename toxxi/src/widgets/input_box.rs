@@ -1,4 +1,3 @@
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -35,7 +34,6 @@ pub struct InputGrapheme {
 pub struct InputLine {
     pub graphemes: Vec<InputGrapheme>,
     pub is_soft_wrap: bool,
-    pub y_offset: u16,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -84,7 +82,6 @@ impl InputBoxState {
             self.lines = vec![InputLine {
                 graphemes: Vec::new(),
                 is_soft_wrap: false,
-                y_offset: 0,
             }];
             return;
         }
@@ -108,7 +105,6 @@ impl InputBoxState {
                 lines.push(InputLine {
                     graphemes: current_graphemes,
                     is_soft_wrap: false,
-                    y_offset: lines.len() as u16,
                 });
                 current_graphemes = Vec::new();
                 current_line_width = prompt_width;
@@ -121,7 +117,6 @@ impl InputBoxState {
                 lines.push(InputLine {
                     graphemes: current_graphemes,
                     is_soft_wrap: true,
-                    y_offset: lines.len() as u16,
                 });
                 current_graphemes = Vec::new();
                 current_line_width = prompt_width;
@@ -144,7 +139,6 @@ impl InputBoxState {
         lines.push(InputLine {
             graphemes: current_graphemes,
             is_soft_wrap: false,
-            y_offset: lines.len() as u16,
         });
 
         self.lines = lines;
@@ -276,56 +270,6 @@ impl InputBoxState {
             }
         }
         Outcome::None
-    }
-
-    /// Emits an OSC 52 escape sequence to set the system clipboard.
-    /// This works over SSH and inside Tmux.
-    pub fn copy_to_system_clipboard(&self, text: &str) -> String {
-        let b64 = BASE64.encode(text);
-        // OSC 52 sequence: \x1b]52;c;<base64>\x07
-        // If inside tmux, we might need a double-wrap, but most modern tmux
-        // versions handle the standard OSC 52 if 'set -s set-clipboard on' is set.
-        format!("\x1b]52;c;{}\x07", b64)
-    }
-
-    /// Finds the closest byte offset for a given (x, y) coordinate relative to the
-    /// inner area of the widget.
-    pub fn hit_test(&self, x: u16, y: u16, _prompt_width: u16) -> usize {
-        if self.lines.is_empty() {
-            return 0;
-        }
-
-        // Find the line at the given Y offset (accounting for scroll)
-        let line_idx = (y as usize + self.scroll).min(self.lines.len().saturating_sub(1));
-        let line = &self.lines[line_idx];
-
-        if line.graphemes.is_empty() {
-            // Find start of this line by looking at previous lines
-            let mut offset = 0;
-            for i in 0..line_idx {
-                for g in &self.lines[i].graphemes {
-                    offset += g.len;
-                }
-                if !self.lines[i].is_soft_wrap {
-                    offset += 1; // \n
-                }
-            }
-            return offset;
-        }
-
-        // Search for the grapheme at the given X
-        for g in &line.graphemes {
-            if x >= g.screen_x && x < g.screen_x + g.width as u16 {
-                return g.byte_idx;
-            }
-            if x < g.screen_x {
-                return g.byte_idx;
-            }
-        }
-
-        // If we are past the last grapheme on the line
-        let last = line.graphemes.last().unwrap();
-        last.byte_idx + last.len
     }
 
     pub fn mode(&self) -> InputMode {

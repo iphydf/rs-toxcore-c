@@ -3,8 +3,18 @@ use toxxi::model::{
     FileTransferProgress, InternalMessageId, MessageStatus, TransferStatus, WindowId,
 };
 use toxxi::msg::{Cmd, IOAction, IOEvent, Msg};
+use toxxi::sync::event::{Content, Event};
 use toxxi::testing::TestContext;
 use toxxi::update::update;
+
+fn recorded(cmds: &[Cmd], f: impl Fn(&Content) -> bool) -> bool {
+    cmds.iter().any(|cmd| match cmd {
+        Cmd::IO(IOAction::AppendEvents(records, _)) => records
+            .iter()
+            .any(|r| Event::decode(r).is_ok_and(|event| f(&event.content))),
+        _ => false,
+    })
+}
 
 #[test]
 fn test_file_transfer_status_persistence() {
@@ -33,6 +43,7 @@ fn test_file_transfer_status_persistence() {
                 progress: 0.0,
                 speed: "0 B/s".to_string(),
                 is_incoming: true,
+                blob: None,
             },
             timestamp: chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
             status: MessageStatus::Incoming,
@@ -49,8 +60,6 @@ fn test_file_transfer_status_persistence() {
                 transferred: 0,
                 is_receiving: true,
                 status: TransferStatus::Active,
-                file_kind: 0,
-                file_path: None,
                 speed: 0.0,
                 last_update: model.time_provider.now(),
                 last_transferred: 0,
@@ -60,7 +69,7 @@ fn test_file_transfer_status_persistence() {
     }
 
     // 1. Simulate FileFinished event (Download complete)
-    let msg = Msg::IO(IOEvent::FileFinished(friend_pk, file_id));
+    let msg = Msg::IO(IOEvent::FileFinished(friend_pk, file_id, None));
     let cmds = update(&mut model, msg);
 
     // 2. Verify memory status
@@ -70,13 +79,12 @@ fn test_file_transfer_status_persistence() {
     }
 
     // 3. Verify persistence command
-    let log_cmd = cmds.iter().find(|cmd| {
-        matches!(cmd, Cmd::IO(IOAction::LogMessage(wid, m))
-            if wid == &win_id && m.internal_id == internal_id && m.status == MessageStatus::Received)
-    });
     assert!(
-        log_cmd.is_some(),
-        "File completion status should be persisted to log"
+        recorded(&cmds, |content| matches!(
+            content,
+            Content::FileEnded { ok: true, .. }
+        )),
+        "File completion status should be persisted"
     );
 
     // 4. Simulate FileError (Download failed)
@@ -97,6 +105,7 @@ fn test_file_transfer_status_persistence() {
                 progress: 0.0,
                 speed: "0 B/s".to_string(),
                 is_incoming: true,
+                blob: None,
             },
             timestamp: chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
             status: MessageStatus::Incoming,
@@ -111,8 +120,6 @@ fn test_file_transfer_status_persistence() {
                 transferred: 0,
                 is_receiving: true,
                 status: TransferStatus::Active,
-                file_kind: 0,
-                file_path: None,
                 speed: 0.0,
                 last_update: model.time_provider.now(),
                 last_transferred: 0,
@@ -129,12 +136,11 @@ fn test_file_transfer_status_persistence() {
     let cmds = update(&mut model, msg);
 
     // 5. Verify persistence command for error
-    let log_cmd_err = cmds.iter().find(|cmd| {
-        matches!(cmd, Cmd::IO(IOAction::LogMessage(wid, m))
-            if wid == &win_id && m.internal_id == err_internal_id && m.status == MessageStatus::Failed)
-    });
     assert!(
-        log_cmd_err.is_some(),
-        "File error status should be persisted to log"
+        recorded(&cmds, |content| matches!(
+            content,
+            Content::FileEnded { ok: false, .. }
+        )),
+        "File error status should be persisted"
     );
 }

@@ -15,10 +15,8 @@ fn setup_test_env() -> (toxxi::model::Model, ()) {
     // Create a dummy model
     let pk = PublicKey([0; 32]);
     let tox_id = Address::from_public_key(pk, 0);
-    let self_pk = tox_id.public_key();
     let domain = DomainState::new(
         tox_id,
-        self_pk,
         "Test User".to_string(),
         "".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -38,8 +36,6 @@ fn add_test_friend(model: &mut toxxi::model::Model, fid: FriendNumber, pk: Publi
             public_key: Some(pk),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -75,8 +71,6 @@ async fn test_chat_window_file_accept() {
             transferred: 0,
             is_receiving: true,
             status: TransferStatus::Active,
-            file_kind: 0,
-            file_path: None,
             speed: 0.0,
             last_update: std::time::Instant::now(),
             last_transferred: 0,
@@ -98,6 +92,7 @@ async fn test_chat_window_file_accept() {
                 progress: 0.0,
                 speed: "0 B/s".to_string(),
                 is_incoming: true,
+                blob: None,
             },
             timestamp: model.time_provider.now_local(),
             status: MessageStatus::Incoming,

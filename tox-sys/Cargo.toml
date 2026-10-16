@@ -1,0 +1,8 @@
+[package]
+name = "tox-sys"
+edition.workspace = true
+links = "toxcore"
+
+[build-dependencies]
+bindgen.workspace = true
+pkg-config.workspace = true

@@ -177,7 +177,11 @@ impl<'a> Group<'a> {
             .map_err(ToxError::GroupStateQuery)
     }
 
-    pub fn send_message(&self, message_type: MessageType, message: &[u8]) -> Result<GroupMessageId> {
+    pub fn send_message(
+        &self,
+        message_type: MessageType,
+        message: &[u8],
+    ) -> Result<GroupMessageId> {
         self.tox
             .inner
             .core
@@ -185,7 +189,12 @@ impl<'a> Group<'a> {
             .map_err(ToxError::GroupSendMessage)
     }
 
-    pub fn send_private_message(&self, peer_id: GroupPeerNumber, message_type: MessageType, message: &[u8]) -> Result<GroupMessageId> {
+    pub fn send_private_message(
+        &self,
+        peer_id: GroupPeerNumber,
+        message_type: MessageType,
+        message: &[u8],
+    ) -> Result<GroupMessageId> {
         self.tox
             .inner
             .core
@@ -201,7 +210,12 @@ impl<'a> Group<'a> {
             .map_err(ToxError::GroupSendCustomPacket)
     }
 
-    pub fn send_custom_private_packet(&self, peer_id: GroupPeerNumber, lossless: bool, data: &[u8]) -> Result<()> {
+    pub fn send_custom_private_packet(
+        &self,
+        peer_id: GroupPeerNumber,
+        lossless: bool,
+        data: &[u8],
+    ) -> Result<()> {
         self.tox
             .inner
             .core

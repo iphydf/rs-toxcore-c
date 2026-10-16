@@ -1,5 +1,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_library", "rust_test", "rustfmt_test")
 load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
 
 cc_library(
@@ -47,7 +47,47 @@ rust_library(
     deps = [
         ":tox_sys",
         "//c-toxcore",
+        "//rs-toxcore-c/tox-proto",
         "@crates//:serde",
+    ],
+)
+
+rust_library(
+    name = "tox_sync",
+    srcs = glob(["sync/src/**/*.rs"]),
+    crate_name = "tox_sync",
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":toxcore",
+        "//rs-toxcore-c/tox-proto",
+        "@crates//:rand",
+        "@crates//:sha2",
+    ],
+)
+
+rust_test(
+    name = "tox_sync_test",
+    srcs = ["sync/tests/sync_test.rs"],
+    edition = "2024",
+    deps = [
+        ":tox_sync",
+        ":toxcore",
+        "//rs-toxcore-c/tox-proto",
+        "@crates//:tempfile",
+    ],
+)
+
+rust_test(
+    name = "tox_sync_conformance_test",
+    srcs = ["sync/tests/conformance_test.rs"],
+    compile_data = glob(["sync/conformance/*.json"]),
+    edition = "2024",
+    deps = [
+        ":tox_sync",
+        ":toxcore",
+        "//rs-toxcore-c/tox-proto",
+        "@crates//:serde_json",
     ],
 )
 
@@ -65,7 +105,22 @@ rust_clippy(
     name = "clippy",
     testonly = True,
     deps = [
+        ":tox_sync",
+        ":tox_sync_conformance_test",
+        ":tox_sync_test",
         ":tox_sys",
+        ":toxcore",
+        ":toxcore_test",
+    ],
+)
+
+# tox_sys is bindgen output, not checked in.
+rustfmt_test(
+    name = "rustfmt",
+    targets = [
+        ":tox_sync",
+        ":tox_sync_conformance_test",
+        ":tox_sync_test",
         ":toxcore",
         ":toxcore_test",
     ],

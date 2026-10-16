@@ -1,0 +1,7 @@
+[package]
+name = "tox-proto"
+edition.workspace = true
+
+[dependencies]
+rmp.workspace = true
+tox-proto-derive.workspace = true

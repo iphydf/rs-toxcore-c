@@ -85,16 +85,12 @@ prop_compose! {
         public_key in prop::option::weighted(0.9, arb_public_key()),
         status_message in r"\PC*",
         connection in arb_tox_connection(),
-        last_sent_message_id in any::<Option<u32>>(),
-        last_read_receipt in any::<Option<u32>>(),
     ) -> FriendInfo {
         FriendInfo {
             name,
             public_key,
             status_message,
             connection,
-            last_sent_message_id,
-            last_read_receipt,
             is_typing: false,
         }
     }
@@ -325,8 +321,6 @@ prop_compose! {
         transferred in any::<u64>(),
         is_receiving in any::<bool>(),
         status in arb_transfer_status(),
-        file_kind in any::<u32>(),
-        file_path in any::<Option<String>>(),
         friend_pk in arb_public_key(),
     ) -> FileTransferProgress {
         FileTransferProgress {
@@ -335,8 +329,6 @@ prop_compose! {
             transferred,
             is_receiving,
             status,
-            file_kind,
-            file_path,
             speed: 0.0,
             last_update: std::time::Instant::now(),
             last_transferred: transferred,
@@ -348,7 +340,6 @@ prop_compose! {
 prop_compose! {
     fn arb_domain_state()(
         tox_id in arb_address(),
-        self_public_key in arb_public_key(),
         self_name in r"\PC*",
         self_status_message in r"\PC*",
         self_status_type in arb_tox_user_status(),
@@ -363,7 +354,6 @@ prop_compose! {
     ) -> DomainState {
         DomainState {
             tox_id,
-            self_public_key,
             self_name,
             self_status_message,
             self_status_type,

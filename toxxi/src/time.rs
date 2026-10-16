@@ -1,7 +1,6 @@
 use chrono::{DateTime, FixedOffset, Local, Utc};
 use chrono_tz::Tz;
-use std::sync::RwLock;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Instant, SystemTime};
 
 pub trait TimeProvider: Send + Sync + std::fmt::Debug {
     fn now(&self) -> Instant;
@@ -38,48 +37,25 @@ impl TimeProvider for RealTimeProvider {
 
 #[derive(Debug)]
 pub struct FakeTimeProvider {
-    instant: RwLock<Instant>,
-    system_time: RwLock<SystemTime>,
-    timezone: Option<Tz>,
+    instant: Instant,
+    system_time: SystemTime,
 }
 
 impl FakeTimeProvider {
     pub fn new(instant: Instant, system_time: SystemTime) -> Self {
         Self {
-            instant: RwLock::new(instant),
-            system_time: RwLock::new(system_time),
-            timezone: None,
+            instant,
+            system_time,
         }
-    }
-
-    pub fn with_timezone(mut self, timezone: Tz) -> Self {
-        self.timezone = Some(timezone);
-        self
-    }
-
-    pub fn advance(&self, duration: Duration) {
-        *self.instant.write().unwrap() += duration;
-        *self.system_time.write().unwrap() += duration;
-    }
-
-    pub fn set_time(&self, instant: Instant, system_time: SystemTime) {
-        *self.instant.write().unwrap() = instant;
-        *self.system_time.write().unwrap() = system_time;
     }
 }
 
 impl TimeProvider for FakeTimeProvider {
     fn now(&self) -> Instant {
-        *self.instant.read().unwrap()
+        self.instant
     }
 
     fn now_local(&self) -> DateTime<FixedOffset> {
-        let st = *self.system_time.read().unwrap();
-        let datetime: DateTime<Utc> = st.into();
-        if let Some(tz) = self.timezone {
-            datetime.with_timezone(&tz).fixed_offset()
-        } else {
-            datetime.with_timezone(&Utc).fixed_offset()
-        }
+        DateTime::<Utc>::from(self.system_time).fixed_offset()
     }
 }

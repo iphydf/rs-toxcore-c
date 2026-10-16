@@ -7,8 +7,8 @@
 //     trampoline and the toxav group-chat API on `Tox` — these bridge a raw
 //     C callback to a Rust handler trait, which the generator cannot express.
 use super::av::ToxAV;
-use super::dispatch::register_av_callbacks;
 use super::dispatch::ToxAVHandler;
+use super::dispatch::register_av_callbacks;
 use super::tox::Tox;
 use crate::ffi;
 use crate::types::*;

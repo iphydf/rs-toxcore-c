@@ -10,7 +10,6 @@ fn create_test_model() -> Model {
     let config = Config::default();
     let domain = DomainState::new(
         Address([0u8; 38]),
-        PublicKey([0u8; 32]),
         "Tester".to_string(),
         "I am a test".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -129,6 +128,41 @@ fn test_ignore_unignore_flow() {
             .unwrap()
             .contains("Stopped ignoring AnnoyingUser")
     );
+}
+
+#[test]
+fn test_ignore_twice_stays_ignored() {
+    let mut model = create_test_model();
+    let group_num = GroupNumber(1);
+    let chat_id = GroupChatId([1u8; 32]);
+    let peer_pk = PublicKey([5u8; 32]);
+
+    add_test_group(&mut model, group_num, chat_id);
+    let win_id = WindowId::Group(chat_id);
+    if let Some(conv) = model.domain.conversations.get_mut(&win_id) {
+        conv.peers.push(toxxi::model::PeerInfo {
+            id: PeerId(peer_pk),
+            name: "AnnoyingUser".to_string(),
+            role: Some(ToxGroupRole::TOX_GROUP_ROLE_USER),
+            status: ToxUserStatus::TOX_USER_STATUS_NONE,
+            is_ignored: false,
+            seen_online: true,
+        });
+    }
+    model.set_active_window(1);
+
+    send_command(&mut model, "/ignore AnnoyingUser");
+    // /ignore is not a toggle: a second one keeps them ignored.
+    send_command(&mut model, "/ignore AnnoyingUser");
+
+    let conv = model.domain.conversations.get(&win_id).unwrap();
+    let peer = conv
+        .peers
+        .iter()
+        .find(|p| p.name == "AnnoyingUser")
+        .unwrap();
+    assert!(peer.is_ignored, "Peer should still be ignored");
+    assert!(conv.ignored_peers.contains(&peer_pk));
 }
 
 #[test]

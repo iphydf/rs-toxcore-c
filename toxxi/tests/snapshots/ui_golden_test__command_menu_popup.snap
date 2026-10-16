@@ -15,15 +15,15 @@ Contacts                │Alice - Happy
   ▼ 👥 Groups           │                                                       
                         │                                                       
 ╭──────────────────────────────────────────────────────────────────────────────╮
-│> /accept       [index]                     Accept a pending request or invite│
+│> /accept       [index] [password]  Accept a pending request or invite, with …│
 │  /block        [add|remove|list] [string]  Manage blocked strings (case-inse…│
 │  /clear        [all | system]             Clear the current window's messages│
 │  /close         Close the current window (and leave if it's a group or confe…│
 │  /conference   create | join ... | invite ...              Manage conferences│
+│  /device       pair | allow|remove <id> | list  Manage the devices that can …│
 │  /file         send <fid> <path> | accept ...           Manage file transfers│
 │  /friend       add <tox_id> [msg] | remove <id>                Manage friends│
-│  /friends                                                        List friends│
-╰─────────────────────────────────────────────────── (1/32) [Tab] to complete ─╯
+╰─────────────────────────────────────────────────── (1/33) [Tab] to complete ─╯
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │> /                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────╯

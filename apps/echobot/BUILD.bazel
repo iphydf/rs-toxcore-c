@@ -1,0 +1,28 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rustfmt_test")
+
+rust_binary(
+    name = "echobot",
+    srcs = ["src/main.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = [
+        "//rs-toxcore-c:toxcore",
+        "//rs-toxcore-c/apps/nodes",
+        "@crates//:clap",
+        "@crates//:hex",
+        "@crates//:tokio",
+        "@crates//:tracing",
+        "@crates//:tracing-subscriber",
+    ],
+)
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [":echobot"],
+)
+
+rustfmt_test(
+    name = "rustfmt",
+    targets = [":echobot"],
+)

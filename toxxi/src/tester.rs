@@ -1,7 +1,8 @@
+use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
-use tokio::sync::broadcast;
 
 #[macro_export]
 macro_rules! tlog {
@@ -10,23 +11,33 @@ macro_rules! tlog {
     };
 }
 
-use crate::app::AppContext;
+use crate::app::{AppContext, TICK_RATE};
 use crate::config::Config;
 use crate::model::{DomainState, Model, WindowId};
 use crate::msg::{AppCmd, Cmd, Msg, SystemEvent, ToxAction, ToxEvent};
-use crate::script::{ScriptController, ScriptRequest, ScriptResponse};
 use crate::update::{handle_enter, update};
 use crate::worker;
 
 use toxcore::tox::{Address, DhtId, FriendNumber, Options as ToxOptions, Tox, ToxConnection};
 use toxcore::types::ToxLogLevel;
 
+// Tests run at the same time, in one process and in several. Each process
+// gets its own range, and hands out each port in it once.
+const FIRST_PORT: u16 = 20000;
+const PORTS_PER_PROCESS: u16 = 40;
+const PROCESS_RANGES: u32 = 1000;
+static NEXT_PORT: LazyLock<AtomicU16> = LazyLock::new(|| {
+    let range = (std::process::id() % PROCESS_RANGES) as u16;
+    AtomicU16::new(FIRST_PORT + range * PORTS_PER_PROCESS)
+});
+
 pub fn find_free_ports(count: usize) -> Vec<u16> {
     eprintln!("Finding {} free ports...", count);
     let mut ports = Vec::new();
-    let mut port = 33445;
     let mut toxes = Vec::new();
-    while ports.len() < count && port < 65535 {
+    while ports.len() < count {
+        let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
+        assert!(port < u16::MAX, "no free ports left");
         let mut opts = ToxOptions::new().unwrap();
         opts.set_start_port(port);
         opts.set_end_port(port);
@@ -37,7 +48,6 @@ pub fn find_free_ports(count: usize) -> Vec<u16> {
             ports.push(port);
             toxes.push(t);
         }
-        port += 1;
     }
     eprintln!("Found ports: {:?}", ports);
     ports
@@ -50,14 +60,12 @@ pub struct TestClient {
     pub ctx: AppContext,
     pub rx_msg: mpsc::Receiver<Msg>,
     pub tx_msg: mpsc::Sender<Msg>,
-    pub event_tx: broadcast::Sender<Msg>,
     pub tox_id: Address,
     pub dht_id: DhtId,
     pub temp_dir: TempDir,
-    pub script_ctrl: Option<ScriptController>,
-    pub auto_accept_friends: bool,
     pub start_time: Instant,
     pub should_quit: bool,
+    last_tick: Instant,
 }
 
 impl TestClient {
@@ -78,7 +86,6 @@ impl TestClient {
 
         let mut domain = DomainState::new(
             initial_state.tox_id,
-            initial_state.public_key,
             initial_state.name.clone(),
             initial_state.status_message.clone(),
             initial_state.status_type,
@@ -122,17 +129,12 @@ impl TestClient {
         let ctx = AppContext {
             tx_tox_action,
             tox_handle,
-            nodes: vec![],
             savedata_path,
             config_dir: temp_dir.path().to_path_buf(),
-            tx_msg: tx_msg.clone(),
             quit_at: None,
             tx_io,
-            downloads_dir: temp_dir.path().join("downloads"),
             screenshots_dir: temp_dir.path().join("screenshots"),
         };
-
-        let (event_tx, _) = broadcast::channel(1024);
 
         Self {
             id,
@@ -141,22 +143,21 @@ impl TestClient {
             ctx,
             rx_msg,
             tx_msg,
-            event_tx,
             tox_id: initial_state.tox_id,
             dht_id: initial_state.dht_id,
             temp_dir,
-            script_ctrl: None,
-            auto_accept_friends: true,
             start_time,
             should_quit: false,
+            last_tick: start_time,
         }
     }
 
     pub async fn step(&mut self) -> bool {
+        if self.last_tick.elapsed() >= TICK_RATE {
+            self.last_tick = Instant::now();
+            let _ = self.tx_msg.send(Msg::System(SystemEvent::Tick));
+        }
         while let Ok(msg) = self.rx_msg.try_recv() {
-            // Broadcast the message to any observers (tests)
-            let _ = self.event_tx.send(msg.clone());
-
             // Debug logging for tests
             match &msg {
                 Msg::System(SystemEvent::Log {
@@ -207,7 +208,7 @@ impl TestClient {
                         name
                     )
                 }
-                Msg::Tox(ToxEvent::GroupTopic(gnum, topic)) => {
+                Msg::Tox(ToxEvent::GroupTopic(gnum, topic, _)) => {
                     tlog!(
                         self,
                         "[CLIENT {} GROUP TOPIC] num={}, topic={}",
@@ -249,17 +250,6 @@ impl TestClient {
                         kind,
                         size,
                         filename
-                    )
-                }
-                Msg::Tox(ToxEvent::FileRecvChunk(f, file_id, pos, data)) => {
-                    tlog!(
-                        self,
-                        "[CLIENT {} CHUNK RECV] friend={}, file={}, pos={}, len={}",
-                        self.id,
-                        f.0,
-                        file_id,
-                        pos,
-                        data.len()
                     )
                 }
                 Msg::Tox(ToxEvent::FileChunkRequest(f, file_id, pos, len)) => {
@@ -323,15 +313,13 @@ impl TestClient {
                         err
                     )
                 }
-                Msg::IO(crate::msg::IOEvent::FileFinished(_, file_id)) => {
+                Msg::IO(crate::msg::IOEvent::FileFinished(_, file_id, _)) => {
                     tlog!(self, "[CLIENT {} IO FINISH] file={}", self.id, file_id)
                 }
                 _ => {}
             }
 
-            if self.auto_accept_friends
-                && let Msg::Tox(ToxEvent::FriendRequest(pk, _)) = &msg
-            {
+            if let Msg::Tox(ToxEvent::FriendRequest(pk, _)) = &msg {
                 let _ = self
                     .ctx
                     .execute(
@@ -341,31 +329,8 @@ impl TestClient {
                     .await;
             }
 
-            if let Some(ctrl) = &mut self.script_ctrl {
-                if let Msg::System(SystemEvent::ScriptRequest(req)) = &msg {
-                    ctrl.pending_req = Some(req.clone());
-                    if let ScriptRequest::Command(cmd_str) = req {
-                        let cmds = handle_enter(&mut self.model, cmd_str);
-                        if self.ctx.execute(cmds, &mut self.model).await.should_quit {
-                            self.should_quit = true;
-                        }
-                        ctrl.pending_req = None;
-                        let _ = ctrl.tx_script_res.send(ScriptResponse::Ok);
-                    }
-                    continue;
-                }
-                ctrl.check_fulfillment(&self.model, &msg);
-            }
-
             let cmds = update(&mut self.model, msg);
             if self.ctx.execute(cmds, &mut self.model).await.should_quit {
-                self.should_quit = true;
-            }
-        }
-
-        if let Some(ctrl) = &mut self.script_ctrl {
-            ctrl.check_fulfillment(&self.model, &Msg::System(SystemEvent::Tick));
-            if ctrl.is_finished() {
                 self.should_quit = true;
             }
         }

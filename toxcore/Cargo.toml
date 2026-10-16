@@ -1,0 +1,12 @@
+[package]
+name = "toxcore"
+edition.workspace = true
+autotests = false
+
+[dependencies]
+serde.workspace = true
+tox-proto.workspace = true
+tox-sys.workspace = true
+
+[[test]]
+name = "integration_test"

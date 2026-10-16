@@ -102,10 +102,10 @@ quit();
 
 Toxxi uses a Registry-Based Architecture. To add a new command:
 
-1. Open `src/commands.rs`.
-2. Add a new `CommandDef` to the `COMMANDS` array.
-3. (Optional) Add a `WaitDef` to the `WAITS` array if it requires asynchronous
-   fulfillment tracking.
+1. Add a new `CommandDef` to the `COMMANDS` array of the matching module in
+   `src/commands/`.
+2. (Optional) Add a `WaitDef` to the `WAITS` array in `src/waits.rs` if it
+   requires asynchronous fulfillment tracking.
 
 The new command will automatically appear in `/help` and become available as a
 Rhai function.

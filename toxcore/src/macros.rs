@@ -73,3 +73,10 @@ macro_rules! ffi_get_array {
         }
     };
 }
+
+/// The C string of `s`, which ends at its first NUL as C's would.
+macro_rules! c_str {
+    ($s:expr) => {
+        std::ffi::CString::new($s.split('\0').next().unwrap_or_default()).unwrap_or_default()
+    };
+}

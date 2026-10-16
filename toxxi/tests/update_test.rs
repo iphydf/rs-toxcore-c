@@ -5,23 +5,26 @@ use toxcore::tox::{
     Address, ConferenceNumber, FriendNumber, GroupNumber, GroupPeerNumber, ToxConnection,
     ToxUserStatus,
 };
-use toxcore::types::{GroupChatId, ConferenceId, MessageType, PublicKey, ToxGroupRole};
+use toxcore::types::{
+    ConferenceId, GroupChatId, MessageType, PublicKey, ToxGroupRole, ToxLogLevel,
+};
 use toxxi::config::Config;
 use toxxi::model::{ConsoleMessageType, DomainState, FriendInfo, Model, PeerId, WindowId};
-use toxxi::msg::{AppCmd, Cmd, Msg, ToxAction, ToxEvent};
+use toxxi::msg::{AppCmd, Cmd, Msg, SystemEvent, ToxAction, ToxEvent};
 use toxxi::ui::draw;
-use toxxi::update::update;
+use toxxi::update::{shows, update};
 
 fn create_test_model() -> Model {
     let config = Config::default();
     let domain = DomainState::new(
         Address([0u8; 38]),
-        PublicKey([0u8; 32]),
         "Tester".to_string(),
         "I am a test".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
     );
-    Model::new(domain, config.clone(), config)
+    let mut model = Model::new(domain, config.clone(), config);
+    model.record_account();
+    model
 }
 
 fn add_test_friend(model: &mut Model, fid: FriendNumber, pk: PublicKey) {
@@ -32,13 +35,12 @@ fn add_test_friend(model: &mut Model, fid: FriendNumber, pk: PublicKey) {
             public_key: Some(pk),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
     model.session.friend_numbers.insert(fid, pk);
     model.ensure_friend_window(pk);
+    model.record_account();
 }
 
 fn add_test_group(model: &mut Model, gnum: GroupNumber, chat_id: GroupChatId) {
@@ -89,8 +91,7 @@ fn test_update_control_keys() {
     send_key(&mut model, KeyCode::Char('n'), KeyModifiers::CONTROL);
     assert_eq!(model.ui.active_window_index, 1);
 
-    // Ctrl+C -> clear input (TODO: re-implement Ctrl+C in update.rs)
-    // Send Ctrl+U instead (kill to start)
+    // Ctrl+U kills to the start of the line.
     for c in "hello".chars() {
         send_key(&mut model, KeyCode::Char(c), KeyModifiers::empty());
     }
@@ -142,7 +143,7 @@ fn test_update_tox_events() {
         Msg::Tox(ToxEvent::Message(
             f5,
             MessageType::TOX_MESSAGE_TYPE_NORMAL,
-            "hello from 5".to_string(),
+            b"hello from 5".to_vec(),
         )),
     );
     assert!(
@@ -205,7 +206,7 @@ fn test_handle_msg_command() {
         if let Cmd::Tox(ToxAction::SendMessage(f, t, msg, _)) = cmd {
             assert_eq!(f, pk);
             assert_eq!(t, MessageType::TOX_MESSAGE_TYPE_NORMAL);
-            assert_eq!(msg, "hello");
+            assert_eq!(msg, b"hello");
             found = true;
         }
     }
@@ -307,8 +308,6 @@ fn test_handle_query_command() {
             public_key: Some(pk),
             status_message: "".to_string(),
             connection: toxcore::tox::ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -468,7 +467,7 @@ fn test_handle_group_msg_sending() {
         if let Cmd::Tox(ToxAction::SendGroupMessage(g, t, msg, _)) = cmd {
             assert_eq!(g, chat_id);
             assert_eq!(t, MessageType::TOX_MESSAGE_TYPE_NORMAL);
-            assert_eq!(msg, "hello group");
+            assert_eq!(msg, b"hello group");
             found = true;
         }
     }
@@ -502,7 +501,7 @@ fn test_handle_conference_msg_sending() {
         if let Cmd::Tox(ToxAction::SendConferenceMessage(c, t, msg, _)) = cmd {
             assert_eq!(c, conf_id);
             assert_eq!(t, MessageType::TOX_MESSAGE_TYPE_NORMAL);
-            assert_eq!(msg, "hello conf");
+            assert_eq!(msg, b"hello conf");
             found = true;
         }
     }
@@ -522,8 +521,6 @@ fn test_handle_whois_command() {
             public_key: Some(pk),
             status_message: "Testing".to_string(),
             connection: toxcore::tox::ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -608,7 +605,7 @@ fn test_handle_me_command() {
         if let Cmd::Tox(ToxAction::SendMessage(f, t, msg, _)) = cmd {
             assert_eq!(f, pk);
             assert_eq!(t, MessageType::TOX_MESSAGE_TYPE_ACTION);
-            assert_eq!(msg, "is coding");
+            assert_eq!(msg, b"is coding");
             found = true;
         }
     }
@@ -675,6 +672,23 @@ fn test_handle_status_show() {
 }
 
 #[test]
+fn test_tox_logs_show_only_in_the_logs_window() {
+    let mut model = create_test_model();
+    model.ui.window_ids = vec![WindowId::Console, WindowId::Logs];
+    let log = Msg::Tox(ToxEvent::Log(
+        ToxLogLevel::TOX_LOG_LEVEL_TRACE,
+        String::new(),
+        0,
+        String::new(),
+        String::new(),
+    ));
+    assert!(!shows(&model, &log));
+    assert!(shows(&model, &Msg::System(SystemEvent::Tick)));
+    model.set_active_window(1);
+    assert!(shows(&model, &log));
+}
+
+#[test]
 fn test_handle_topic_events() {
     let mut model = create_test_model();
     let gid = GroupNumber(1);
@@ -690,12 +704,18 @@ fn test_handle_topic_events() {
     // Group topic event
     update(
         &mut model,
-        Msg::Tox(ToxEvent::GroupTopic(gid, "New Group Topic".to_string())),
+        Msg::Tox(ToxEvent::GroupTopic(
+            gid,
+            "New Group Topic".to_string(),
+            Some("Alice".to_owned()),
+        )),
     );
     let group_window = WindowId::Group(chat_id);
+    let group = model.domain.conversations.get(&group_window).unwrap();
+    assert_eq!(group.topic, Some("New Group Topic".to_string()));
     assert_eq!(
-        model.domain.conversations.get(&group_window).unwrap().topic,
-        Some("New Group Topic".to_string())
+        group.messages.last().unwrap().content.as_text(),
+        Some("* Alice changed the topic to: New Group Topic")
     );
     assert_eq!(
         model.domain.conversations.get(&group_window).unwrap().name,
@@ -708,16 +728,45 @@ fn test_handle_topic_events() {
         Msg::Tox(ToxEvent::ConferenceTitle(
             cid,
             "New Conference Title".to_owned(),
+            Some("Bob".to_owned()),
         )),
     );
     let conf_window = WindowId::Conference(conf_id);
     assert_eq!(
+        model.domain.conversations[&conf_window]
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .as_text(),
+        Some("* Bob changed the title to: New Conference Title")
+    );
+    assert_eq!(
         model.domain.conversations.get(&conf_window).unwrap().topic,
-        Some("New Conference Title".to_string())
+        None
     );
     assert_eq!(
         model.domain.conversations.get(&conf_window).unwrap().name,
         "New Conference Title".to_string()
+    );
+
+    // Conference peers can go unnamed.
+    update(
+        &mut model,
+        Msg::Tox(ToxEvent::ConferenceTitle(
+            cid,
+            "Unnamed".to_owned(),
+            Some(String::new()),
+        )),
+    );
+    assert_eq!(
+        model.domain.conversations[&conf_window]
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .as_text(),
+        Some("* Title changed to: Unnamed")
     );
 }
 
@@ -1003,8 +1052,6 @@ fn test_friend_remove_command_displays_info() {
             public_key: Some(pk_obj),
             status_message: "Online".to_string(),
             connection: toxcore::tox::ToxConnection::TOX_CONNECTION_UDP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -1044,12 +1091,27 @@ fn test_conference_title_update_non_empty() {
     // Update with non-empty title
     update(
         &mut model,
-        Msg::Tox(ToxEvent::ConferenceTitle(cid, "My Conference".to_string())),
+        Msg::Tox(ToxEvent::ConferenceTitle(
+            cid,
+            "My Conference".to_string(),
+            None,
+        )),
     );
 
     let conv = model.domain.conversations.get(&window_id).unwrap();
     assert_eq!(conv.name, "My Conference");
-    assert_eq!(conv.topic, Some("My Conference".to_string()));
+    assert_eq!(conv.topic, None);
+
+    // Reconnecting, with no title and then the same one again, says nothing.
+    let said = conv.messages.len();
+    for title in ["", "My Conference"] {
+        update(
+            &mut model,
+            Msg::Tox(ToxEvent::ConferenceTitle(cid, title.to_string(), None)),
+        );
+    }
+    let conv = model.domain.conversations.get(&window_id).unwrap();
+    assert_eq!(conv.messages.len(), said);
 }
 
 #[test]
@@ -1070,13 +1132,13 @@ fn test_conference_title_update_empty_preserves_name() {
     // Update with empty title
     update(
         &mut model,
-        Msg::Tox(ToxEvent::ConferenceTitle(cid, "".to_string())),
+        Msg::Tox(ToxEvent::ConferenceTitle(cid, "".to_string(), None)),
     );
 
     let conv = model.domain.conversations.get(&window_id).unwrap();
-    // Name should stay "Conference 1", but topic should be updated to empty
+    // Name should stay "Conference 1"; a conference has no topic
     assert_eq!(conv.name, "Conference 1");
-    assert_eq!(conv.topic, Some("".to_string()));
+    assert_eq!(conv.topic, None);
 }
 
 #[test]
@@ -1108,7 +1170,7 @@ fn test_group_topic_update() {
 
     update(
         &mut model,
-        Msg::Tox(ToxEvent::GroupTopic(gnum, "New Topic".to_string())),
+        Msg::Tox(ToxEvent::GroupTopic(gnum, "New Topic".to_string(), None)),
     );
 
     let conv = model.domain.conversations.get(&window_id).unwrap();
@@ -1144,7 +1206,7 @@ fn test_events_ensure_windows() {
     // GroupTopic event
     update(
         &mut model,
-        Msg::Tox(ToxEvent::GroupTopic(gid, "Group Topic".to_string())),
+        Msg::Tox(ToxEvent::GroupTopic(gid, "Group Topic".to_string(), None)),
     );
     assert!(
         model
@@ -1179,7 +1241,11 @@ fn test_events_ensure_windows() {
     // ConferenceTitle event
     update(
         &mut model,
-        Msg::Tox(ToxEvent::ConferenceTitle(cid, "Conf Title".to_string())),
+        Msg::Tox(ToxEvent::ConferenceTitle(
+            cid,
+            "Conf Title".to_string(),
+            None,
+        )),
     );
     assert!(
         model
@@ -1288,7 +1354,7 @@ fn test_group_peer_join_filters_self() {
     let gid = GroupNumber(1);
     let chat_id = GroupChatId([1u8; 32]);
     model.session.group_numbers.insert(gid, chat_id);
-    let self_pk = model.domain.self_public_key;
+    let self_pk = model.domain.self_public_key();
 
     model.ensure_group_window(chat_id);
     let window_id = WindowId::Group(chat_id);

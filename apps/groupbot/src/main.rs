@@ -16,7 +16,6 @@ use toxcore::types::{
     ToxConnection,
 };
 
-mod nodes;
 mod plugin;
 mod plugins;
 

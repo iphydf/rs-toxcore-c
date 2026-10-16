@@ -35,7 +35,6 @@ pub enum MessageContent {
         game_type: String,
         challenger: String,
     },
-    System(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -184,7 +183,7 @@ impl ChatLayout {
 
         for (idx, msg) in messages.iter().enumerate().skip(actual_start_index) {
             let lines_count = match &msg.content {
-                MessageContent::Text(text) | MessageContent::System(text) => {
+                MessageContent::Text(text) => {
                     if let Some(cached_lines) = entry.lines.get(&idx) {
                         cached_lines.len()
                     } else {
@@ -231,7 +230,7 @@ impl ChatLayout {
         let wrap_width = content_width.saturating_sub(1);
 
         let lines_count = match &msg.content {
-            MessageContent::Text(text) | MessageContent::System(text) => {
+            MessageContent::Text(text) => {
                 let lines = wrap_text(text, wrap_width as usize);
                 let count = lines.len();
 
@@ -438,7 +437,7 @@ impl<'a> StatefulWidget for MessageList<'a> {
                     };
 
                     let lines_count = match &msg.content {
-                        MessageContent::Text(text) | MessageContent::System(text) => {
+                        MessageContent::Text(text) => {
                             let wrap_width = content_width.saturating_sub(1);
                             if let Some(layout) = self.layout {
                                 if let Some(entry) = layout.cache.get(&wrap_width) {
@@ -517,7 +516,7 @@ impl<'a> StatefulWidget for MessageList<'a> {
             };
 
             let lines: Cow<'_, [WrappedLine]> = match &msg.content {
-                MessageContent::Text(text) | MessageContent::System(text) => {
+                MessageContent::Text(text) => {
                     let wrap_width = content_width.saturating_sub(1);
 
                     if let Some(layout) = self.layout {
@@ -596,14 +595,8 @@ impl<'a> StatefulWidget for MessageList<'a> {
                     .saturating_sub(scrollbar_adjustment);
 
                 match &msg.content {
-                    MessageContent::Text(_) | MessageContent::System(_) => {
-                        let mut style = if let MessageContent::System(_) = msg.content {
-                            Style::default()
-                                .fg(Color::Blue)
-                                .add_modifier(Modifier::ITALIC)
-                        } else {
-                            Style::default()
-                        };
+                    MessageContent::Text(_) => {
+                        let mut style = Style::default();
 
                         if self.focused && selected_index == Some(idx) {
                             style = style.bg(Color::Indexed(236)); // Subtle highlight
@@ -717,14 +710,8 @@ impl<'a> StatefulWidget for MessageList<'a> {
             } else {
                 // Narrow mode implementation (Stacked layout)
                 match &msg.content {
-                    MessageContent::Text(_) | MessageContent::System(_) => {
-                        let mut style = if let MessageContent::System(_) = msg.content {
-                            Style::default()
-                                .fg(Color::Blue)
-                                .add_modifier(Modifier::ITALIC)
-                        } else {
-                            Style::default()
-                        };
+                    MessageContent::Text(_) => {
+                        let mut style = Style::default();
 
                         if self.focused && selected_index == Some(idx) {
                             style = style.bg(Color::Indexed(236));

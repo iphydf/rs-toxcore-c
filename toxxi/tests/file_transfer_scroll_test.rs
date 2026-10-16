@@ -18,7 +18,6 @@ fn setup_clipping_model(trailing_messages: usize) -> (Model, GroupChatId) {
     let self_pk = PublicKey([0u8; 32]);
     let domain = DomainState::new(
         Address::from_public_key(self_pk, 0),
-        self_pk,
         "Tester".to_string(),
         "".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -81,6 +80,7 @@ fn setup_clipping_model(trailing_messages: usize) -> (Model, GroupChatId) {
             progress: 0.5,
             speed: "100 KB/s".to_string(),
             is_incoming: true,
+            blob: None,
         },
         timestamp: model.time_provider.now_local(),
         status: MessageStatus::Incoming,
@@ -167,7 +167,6 @@ fn test_game_card_full_visible() {
     let self_pk = PublicKey([0u8; 32]);
     let domain = DomainState::new(
         Address::from_public_key(self_pk, 0),
-        self_pk,
         "Tester".to_string(),
         "".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,

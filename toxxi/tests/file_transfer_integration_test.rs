@@ -10,7 +10,6 @@ fn create_test_model() -> Model {
     let config = Config::default();
     let domain = DomainState::new(
         Address([0u8; 38]),
-        PublicKey([0u8; 32]), // Self PK
         "Tester".to_string(),
         "I am a test".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -27,8 +26,6 @@ fn add_test_friend(model: &mut Model, fid: FriendNumber, pk: PublicKey) {
             public_key: Some(pk),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -89,7 +86,7 @@ fn test_file_recv_adds_inline_message() {
     }
 
     // Simulate finishing
-    let event = toxxi::msg::IOEvent::FileFinished(pk, file_id);
+    let event = toxxi::msg::IOEvent::FileFinished(pk, file_id, None);
     let _cmds = update(&mut model, Msg::IO(event));
 
     let conv = model.domain.conversations.get(&window_id).unwrap();

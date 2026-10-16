@@ -9,7 +9,6 @@ fn create_test_model() -> Model {
     let config = Config::default();
     let domain = DomainState::new(
         Address([0u8; 38]),
-        PublicKey([0u8; 32]),
         "Tester".to_string(),
         "I am a test".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -26,8 +25,6 @@ fn add_test_friend(model: &mut Model, fid: FriendNumber, pk: PublicKey) {
             public_key: Some(pk),
             status_message: "".to_string(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );

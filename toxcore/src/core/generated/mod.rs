@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 pub mod av;
-pub use self::av::*;
 pub use self::av as toxav;
+pub use self::av::*;
 pub mod iterate_options;
 pub use self::iterate_options::*;
 pub mod options;

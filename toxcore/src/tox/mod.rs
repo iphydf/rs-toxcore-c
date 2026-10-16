@@ -36,10 +36,10 @@ mod safe_tox;
 // and add the few non-generatable methods (the `&Friend`-typed `invite_friend`
 // / `invite`, the handler-based AV API and the `peer_list` helper) as an extra
 // `impl` block.
-#[path = "../core/generated/safe_friend.rs"]
-mod friend;
 #[path = "../core/generated/safe_file.rs"]
 mod file;
+#[path = "../core/generated/safe_friend.rs"]
+mod friend;
 mod group;
 #[path = "../core/generated/safe_tox_resources.rs"]
 mod safe_tox_resources;

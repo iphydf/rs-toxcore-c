@@ -12,7 +12,6 @@ fn create_test_model() -> Model {
     let config = Config::default();
     let domain = DomainState::new(
         Address([0u8; 38]),
-        PublicKey([0u8; 32]),
         "Tester".to_string(),
         "I am a test".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -42,8 +41,6 @@ fn test_ui_quick_switcher() {
             public_key: Some(bob_pk),
             status_message: "".to_string(),
             connection: toxcore::tox::ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );

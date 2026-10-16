@@ -255,3 +255,111 @@ pub fn subtest_file_transfer(harness: &mut TestHarness) {
         }
     }
 }
+
+/// A file cancelled while the other end accepts it leaves nothing behind to
+/// end the next files.
+pub fn subtest_file_after_cancel(harness: &mut TestHarness) {
+    println!("Running subtest_file_after_cancel...");
+
+    #[derive(Default)]
+    struct Files {
+        // Offered to the receiver, by file number.
+        offered: Vec<FileNumber>,
+        // Chunks the sender is asked for.
+        requests: Vec<(FileNumber, u64, usize)>,
+        // Files the receiver got whole.
+        completed: Vec<FileNumber>,
+    }
+    impl ToxHandler for Files {
+        fn on_file_recv(&mut self, _: FriendNumber, file: FileNumber, _: u32, _: u64, _: &[u8]) {
+            self.offered.push(file);
+        }
+        fn on_file_recv_chunk(&mut self, _: FriendNumber, file: FileNumber, _: u64, data: &[u8]) {
+            if data.is_empty() {
+                self.completed.push(file);
+            }
+        }
+        fn on_file_chunk_request(
+            &mut self,
+            _: FriendNumber,
+            file: FileNumber,
+            position: u64,
+            length: usize,
+        ) {
+            self.requests.push((file, position, length));
+        }
+    }
+
+    let mut files = Files::default();
+    let sender = harness.toxes[0]
+        .tox
+        .lookup_friend(&harness.toxes[1].tox.public_key())
+        .unwrap();
+    let receiver = harness.toxes[1]
+        .tox
+        .lookup_friend(&harness.toxes[0].tox.public_key())
+        .unwrap();
+    let data = b"after";
+    let send = |name: &[u8]| {
+        harness.toxes[0]
+            .tox
+            .file_send(
+                &sender,
+                ToxFileKind::TOX_FILE_KIND_DATA as u32,
+                data.len() as u64,
+                None,
+                name,
+            )
+            .unwrap()
+            .number()
+    };
+    // Runs until [done], or for [limit].
+    let run = |files: &mut Files, limit: Duration, done: &dyn Fn(&Files) -> bool| {
+        let start = Instant::now();
+        while start.elapsed() < limit && !done(files) {
+            harness.iterate(files);
+            for (file, position, length) in std::mem::take(&mut files.requests) {
+                let chunk = &data[(position as usize).min(data.len())..];
+                let _ = harness.toxes[0]
+                    .tox
+                    .file(&sender, file)
+                    .send_chunk(position, &chunk[..chunk.len().min(length)]);
+            }
+        }
+    };
+    let accept = |file: FileNumber| {
+        harness.toxes[1]
+            .tox
+            .file(&receiver, file)
+            .control(ToxFileControl::TOX_FILE_CONTROL_RESUME)
+            .unwrap();
+    };
+
+    let wait = Duration::from_secs(5);
+    // Long enough for what's left of a file to reach the other end.
+    let settle = Duration::from_secs(1);
+
+    let cancelled = send(b"cancelled.txt");
+    run(&mut files, wait, &|f| !f.offered.is_empty());
+    accept(files.offered.remove(0));
+    harness.toxes[0]
+        .tox
+        .file(&sender, cancelled)
+        .control(ToxFileControl::TOX_FILE_CONTROL_CANCEL)
+        .unwrap();
+    run(&mut files, settle, &|_| false);
+
+    // The next files take the numbers the cancelled one had.
+    send(b"first.txt");
+    send(b"second.txt");
+    run(&mut files, wait, &|f| f.offered.len() == 2);
+    for file in std::mem::take(&mut files.offered) {
+        accept(file);
+    }
+    run(&mut files, wait, &|f| f.completed.len() == 2);
+    assert_eq!(
+        files.completed.len(),
+        2,
+        "Files after a cancel didn't arrive"
+    );
+}

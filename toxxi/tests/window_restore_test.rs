@@ -6,7 +6,6 @@ use toxxi::model::{FriendInfo, Model, ToxSelfInfo, WindowId, load_or_initialize,
 fn start(config_dir: &std::path::Path, friends: &[PublicKey]) -> Model {
     let self_info = ToxSelfInfo {
         tox_id: Address([0u8; 38]),
-        public_key: PublicKey([0u8; 32]),
         name: "Me".to_owned(),
         status_msg: String::new(),
         status_type: ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -22,8 +21,6 @@ fn start(config_dir: &std::path::Path, friends: &[PublicKey]) -> Model {
                     public_key: Some(pk),
                     status_message: String::new(),
                     connection: ToxConnection::TOX_CONNECTION_NONE,
-                    last_sent_message_id: None,
-                    last_read_receipt: None,
                     is_typing: false,
                 },
             )

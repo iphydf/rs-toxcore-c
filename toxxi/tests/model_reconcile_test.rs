@@ -19,8 +19,6 @@ fn test_reconcile_removes_duplicates_and_migrates_conversations() {
             public_key: Some(pk1),
             status_message: "".into(),
             connection: ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -31,8 +29,6 @@ fn test_reconcile_removes_duplicates_and_migrates_conversations() {
             public_key: Some(pk2),
             status_message: "".into(),
             connection: ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -43,8 +39,6 @@ fn test_reconcile_removes_duplicates_and_migrates_conversations() {
             public_key: Some(pk3),
             status_message: "".into(),
             connection: ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -55,7 +49,6 @@ fn test_reconcile_removes_duplicates_and_migrates_conversations() {
         friends,
         ..DomainState::new(
             dummy_address,
-            PublicKey([0; 32]),
             "Me".into(),
             "".into(),
             ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -79,8 +72,6 @@ fn test_reconcile_removes_duplicates_and_migrates_conversations() {
                 public_key: Some(pk1),
                 status_message: "Online".into(),
                 connection: ToxConnection::TOX_CONNECTION_TCP,
-                last_sent_message_id: None,
-                last_read_receipt: None,
                 is_typing: false,
             },
         ),
@@ -91,8 +82,6 @@ fn test_reconcile_removes_duplicates_and_migrates_conversations() {
                 public_key: Some(pk3), // Was FID 2
                 status_message: "Online".into(),
                 connection: ToxConnection::TOX_CONNECTION_TCP,
-                last_sent_message_id: None,
-                last_read_receipt: None,
                 is_typing: false,
             },
         ),
@@ -175,8 +164,6 @@ fn test_reconcile_syncs_friend_names() {
             public_key: Some(pk1),
             status_message: "".into(),
             connection: ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -187,7 +174,6 @@ fn test_reconcile_syncs_friend_names() {
         friends,
         ..DomainState::new(
             dummy_address,
-            PublicKey([0; 32]),
             "Me".into(),
             "".into(),
             ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -213,8 +199,6 @@ fn test_reconcile_syncs_friend_names() {
             public_key: Some(pk1),
             status_message: "".into(),
             connection: ToxConnection::TOX_CONNECTION_TCP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     )];

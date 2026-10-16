@@ -1,6 +1,8 @@
-use crate::model::{MessageContent, WindowId};
+use crate::model::{MessageContent, Model, WindowId};
 use crate::msg::{Cmd, ToxAction};
-use toxcore::tox::ToxUserStatus;
+use crate::sync::pairing::VALID_FOR;
+use toxcore::tox::{FriendNumber, ToxUserStatus};
+use toxcore::types::PublicKey;
 
 use super::CommandDef;
 
@@ -118,9 +120,73 @@ pub const COMMANDS: &[CommandDef] = &[
         args: (None, ""),
         desc: (None, "Show your Tox ID as a QR code"),
         exec: |model, _args| {
-            model.ui.show_qr = true;
+            model.ui.qr = Some(model.domain.tox_id.to_string());
             vec![]
         },
         complete: None,
     },
+    CommandDef {
+        name: "device",
+        args: (
+            Some("pair | allow|remove <id> | list"),
+            "pair | allow <friend_id> | remove <friend_id> | list",
+        ),
+        desc: (None, "Manage the devices that can sync this account"),
+        exec: device,
+        complete: None,
+    },
 ];
+
+fn device(model: &mut Model, args: &[&str]) -> Vec<Cmd> {
+    let friend_name =
+        |model: &Model, pk: &PublicKey| model.domain.friends.get(pk).map(|info| info.name.clone());
+    match args {
+        ["list"] => {
+            if model.config.sync_devices.is_empty() {
+                model.add_info_message(MessageContent::Text(
+                    "No devices can sync this account.".to_owned(),
+                ));
+            }
+            for pk in model.config.sync_devices.clone() {
+                let name = friend_name(model, &pk).unwrap_or_else(|| "(not a friend)".to_owned());
+                model.add_info_message(MessageContent::Text(format!("{} {}", name, pk)));
+            }
+            vec![]
+        }
+        ["pair"] => {
+            let code = model.session.pairing.issue(model.time_provider.now());
+            let link = code.link(&model.domain.tox_id);
+            model.add_status_message(MessageContent::Text(format!(
+                "Open this on the new device within {} minutes: {}",
+                VALID_FOR.as_secs() / 60,
+                link
+            )));
+            model.ui.qr = Some(link);
+            vec![]
+        }
+        [action @ ("allow" | "remove"), id] => {
+            let Some(pk) = id
+                .parse::<u32>()
+                .ok()
+                .and_then(|n| model.session.friend_numbers.get(&FriendNumber(n)).copied())
+            else {
+                model.add_error_message(MessageContent::Text(format!("Friend {} not found.", id)));
+                return vec![];
+            };
+            let allow = *action == "allow";
+            let name = friend_name(model, &pk).unwrap_or_else(|| pk.to_string());
+            model.add_status_message(MessageContent::Text(if allow {
+                format!("{} can now sync this account.", name)
+            } else {
+                format!("{} can no longer sync this account.", name)
+            }));
+            crate::sync::set_device(model, pk, allow)
+        }
+        _ => {
+            model.add_error_message(MessageContent::Text(
+                "Usage: /device pair | allow <friend_id> | remove <friend_id> | list".to_owned(),
+            ));
+            vec![]
+        }
+    }
+}

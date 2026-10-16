@@ -103,6 +103,24 @@ impl Tox {
         Ok(self.group(number))
     }
 
+    pub fn group_by_id(&self, chat_id: &GroupChatId) -> Result<Group<'_>> {
+        let number = self
+            .inner
+            .core
+            .group_by_id(chat_id)
+            .map_err(ToxError::GroupById)?;
+        Ok(self.group(number))
+    }
+
+    pub fn group_list(&self) -> Vec<Group<'_>> {
+        self.inner
+            .core
+            .group_get_group_list()
+            .into_iter()
+            .map(|n| self.group(n))
+            .collect()
+    }
+
     pub fn file(&self, friend: &Friend, number: FileNumber) -> File<'_> {
         File {
             tox: self,

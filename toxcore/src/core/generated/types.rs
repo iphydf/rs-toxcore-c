@@ -10,8 +10,10 @@ pub const CONFERENCE_UID_SIZE: usize = ffi::TOX_CONFERENCE_UID_SIZE as usize;
 pub const DHT_ID_SIZE: usize = ffi::TOX_DHT_ID_SIZE as usize;
 pub const FILE_ID_LENGTH: usize = ffi::TOX_FILE_ID_LENGTH as usize;
 pub const GROUP_CHAT_ID_SIZE: usize = ffi::TOX_GROUP_CHAT_ID_SIZE as usize;
-pub const GROUP_MAX_CUSTOM_LOSSLESS_PACKET_LENGTH: usize = ffi::TOX_GROUP_MAX_CUSTOM_LOSSLESS_PACKET_LENGTH as usize;
-pub const GROUP_MAX_CUSTOM_LOSSY_PACKET_LENGTH: usize = ffi::TOX_GROUP_MAX_CUSTOM_LOSSY_PACKET_LENGTH as usize;
+pub const GROUP_MAX_CUSTOM_LOSSLESS_PACKET_LENGTH: usize =
+    ffi::TOX_GROUP_MAX_CUSTOM_LOSSLESS_PACKET_LENGTH as usize;
+pub const GROUP_MAX_CUSTOM_LOSSY_PACKET_LENGTH: usize =
+    ffi::TOX_GROUP_MAX_CUSTOM_LOSSY_PACKET_LENGTH as usize;
 pub const GROUP_MAX_GROUP_NAME_LENGTH: usize = ffi::TOX_GROUP_MAX_GROUP_NAME_LENGTH as usize;
 pub const GROUP_MAX_MESSAGE_LENGTH: usize = ffi::TOX_GROUP_MAX_MESSAGE_LENGTH as usize;
 pub const GROUP_MAX_PART_LENGTH: usize = ffi::TOX_GROUP_MAX_PART_LENGTH as usize;
@@ -759,4 +761,3 @@ impl fmt::Display for ToxError {
 }
 
 pub type Result<T> = std::result::Result<T, ToxError>;
-

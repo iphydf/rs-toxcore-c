@@ -11,7 +11,6 @@ fn create_test_model() -> Model {
     let config = Config::default();
     let domain = DomainState::new(
         toxcore::tox::Address([0u8; 38]),
-        toxcore::types::PublicKey([0u8; 32]),
         "Tester".to_string(),
         "Status".to_string(),
         toxcore::tox::ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -24,7 +23,6 @@ async fn test_timeout_command_sets_quit_at() {
     let mut model = create_test_model();
 
     let (tx_tox, _rx_tox) = mpsc::channel();
-    let (tx_msg, _rx_msg) = mpsc::channel();
     let (tx_io, _rx_io) = mpsc::channel();
 
     let tox_handle = tokio::task::spawn(async {});
@@ -32,13 +30,10 @@ async fn test_timeout_command_sets_quit_at() {
     let mut ctx = AppContext {
         tx_tox_action: tx_tox,
         tox_handle,
-        nodes: vec![],
         savedata_path: None,
         config_dir: PathBuf::from("."),
-        tx_msg,
         quit_at: None,
         tx_io,
-        downloads_dir: PathBuf::from("."),
         screenshots_dir: PathBuf::from("."),
     };
 

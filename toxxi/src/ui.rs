@@ -224,14 +224,13 @@ pub fn draw(f: &mut Frame, model: &mut Model) {
         f.render_stateful_widget(picker, f.area(), state);
     }
 
-    if model.ui.show_qr {
-        draw_qr_modal(f, model);
+    if let Some(data) = &model.ui.qr {
+        draw_qr_modal(f, data);
     }
 }
 
-fn draw_qr_modal(f: &mut Frame, model: &Model) {
-    let tox_id = model.domain.tox_id.to_string();
-    let modal = QrCodeModal::new(tox_id);
+fn draw_qr_modal(f: &mut Frame, data: &str) {
+    let modal = QrCodeModal::new(data.to_owned());
     let (width, height) = modal.required_size();
 
     let area = centered_rect(width, height, f.area());
@@ -412,6 +411,7 @@ fn draw_messages(f: &mut Frame, area: Rect, model: &mut Model) {
                             progress,
                             speed,
                             is_incoming,
+                            ..
                         } => {
                             let (paused, eta) = if let Some(fid) = file_id {
                                 domain
@@ -451,7 +451,7 @@ fn draw_messages(f: &mut Frame, area: Rect, model: &mut Model) {
                         },
                     };
 
-                    let status = if msg.sender == "System" {
+                    let status = if msg.sender == crate::model::SYSTEM_SENDER {
                         WidgetStatus::System
                     } else {
                         match msg.status {

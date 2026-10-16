@@ -33,11 +33,13 @@ fn integration_suite() {
     suite::custom_packet::subtest_friend_custom_packets(&mut harness);
     suite::custom_packet::subtest_group_custom_packets(&mut harness);
     suite::file::subtest_file_transfer(&mut harness);
+    suite::file::subtest_file_after_cancel(&mut harness);
     suite::conference::subtest_conference(&mut harness);
     suite::group::subtest_groups(&mut harness);
     suite::group::subtest_group_management(&mut harness);
     suite::group_av::subtest_group_av(&mut harness);
     suite::av::subtest_toxav_call(&mut harness);
+    suite::av::subtest_toxav_crossed_calls(&mut harness);
     suite::dht::subtest_dht_nodes(&mut harness);
     suite::persistence::subtest_persistence();
     suite::encryptsave::subtest_encryptsave();

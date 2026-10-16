@@ -9,7 +9,6 @@ use toxxi::widgets::MessageStatus as WidgetStatus;
 fn setup_model() -> (Model, FriendNumber, PublicKey) {
     let mut domain = DomainState::new(
         Address([0; 38]),
-        PublicKey([0; 32]),
         "Self".into(),
         "Status".into(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -24,8 +23,6 @@ fn setup_model() -> (Model, FriendNumber, PublicKey) {
             public_key: Some(pk),
             status_message: "Status".into(),
             connection: toxcore::tox::ToxConnection::TOX_CONNECTION_NONE,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );

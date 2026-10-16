@@ -14,7 +14,6 @@ use tempfile::TempDir;
 use toxcore::tox::Address;
 use toxcore::tox::ToxConnection;
 use toxcore::tox::ToxUserStatus;
-use toxcore::types::PublicKey;
 
 pub struct TestContext {
     pub temp_dir: TempDir,
@@ -40,8 +39,7 @@ impl TestContext {
     pub fn create_model(&self) -> Model {
         let config = Config::default();
         let domain = DomainState {
-            tox_id: Address([1u8; 38]),            // Dummy address
-            self_public_key: PublicKey([1u8; 32]), // Dummy PK
+            tox_id: Address([1u8; 38]), // Dummy address
             self_name: "Tester".to_string(),
             self_status_message: "".to_string(),
             self_status_type: ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -63,12 +61,10 @@ impl TestContext {
             config,
             tick_count: 0,
             time_provider: Arc::new(RealTimeProvider::new(None)),
+            events: Default::default(),
+            message_events: HashMap::new(),
+            account: Default::default(),
+            blobs: Default::default(),
         }
     }
 }
-
-pub trait TestModelUtils {
-    // Add methods here if needed, or remove the trait if unused
-}
-
-impl TestModelUtils for Model {}

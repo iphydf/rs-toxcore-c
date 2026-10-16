@@ -1,13 +1,15 @@
-use crate::model::{InternalMessageId, WindowId};
+use crate::model::{GroupSettings, InternalMessageId, WindowId};
 use crate::script::ScriptRequest;
+use crate::sync::event::{BlobId, ChatId, EventId};
 use crossterm::event::Event as CrosstermEvent;
 use toxcore::tox::{
     Address, ConferenceNumber, ConferencePeerNumber, FriendMessageId, FriendNumber, GroupNumber,
     GroupPeerNumber, ToxConferenceType, ToxConnection, ToxUserStatus,
 };
 use toxcore::types::{
-    GroupChatId, ConferenceId, DhtId, FileId, MessageType, PublicKey, ToxFileControl, ToxGroupModEvent,
-    ToxGroupRole, ToxLogLevel,
+    ConferenceId, DhtId, FileId, GroupChatId, MessageType, PublicKey, ToxFileControl,
+    ToxGroupJoinFail, ToxGroupModEvent, ToxGroupPrivacyState, ToxGroupRole, ToxGroupVoiceState,
+    ToxLogLevel,
 };
 
 #[derive(Debug, Clone)]
@@ -24,23 +26,32 @@ pub enum Msg {
 
 #[derive(Debug, Clone)]
 pub enum ToxEvent {
-    Message(FriendNumber, MessageType, String),
-    GroupMessage(GroupNumber, MessageType, String, String, Option<PublicKey>),
+    Message(FriendNumber, MessageType, Vec<u8>),
+    GroupMessage(GroupNumber, MessageType, String, Vec<u8>, Option<PublicKey>),
     ConferenceMessage(
         ConferenceNumber,
         MessageType,
         String,
-        String,
+        Vec<u8>,
         Option<PublicKey>,
     ),
     ConnectionStatus(ToxConnection),
+    /// A new Tox runs, as at the start and after a reload.
+    Started,
     Address(Address),
     DhtId(DhtId),
     FriendStatus(FriendNumber, ToxConnection, Option<PublicKey>),
     FriendName(FriendNumber, String),
     FriendStatusMessage(FriendNumber, String),
     FriendTyping(FriendNumber, bool),
+    FriendUserStatus(FriendNumber, ToxUserStatus),
     ReadReceipt(FriendNumber, FriendMessageId),
+    SyncMessage(FriendNumber, Vec<u8>),
+    /// A friend calls the account, with video or not.
+    CallRinging(PublicKey, bool),
+    /// A friend's call is connected to a device.
+    CallConnected(PublicKey),
+    CallEnded(PublicKey),
     MessageSent(FriendNumber, FriendMessageId, InternalMessageId),
     GroupMessageSent(GroupNumber, InternalMessageId),
     ConferenceMessageSent(ConferenceNumber, InternalMessageId),
@@ -50,11 +61,19 @@ pub enum ToxEvent {
     ConferenceInvite(FriendNumber, ToxConferenceType, String),
     GroupCreated(GroupNumber, GroupChatId, Option<String>),
     ConferenceCreated(ConferenceNumber, ConferenceId),
-    GroupTopic(GroupNumber, String),
+    /// How joining an invite's chat went: the chat, or none where Tox
+    /// refused.
+    InviteJoined(EventId, Option<ChatId>),
+    /// The topic, and the name of who changed it to that, where known.
+    GroupTopic(GroupNumber, String, Option<String>),
     GroupName(GroupNumber, String),
-    ConferenceTitle(ConferenceNumber, String),
+    /// The title, and the name of who changed it to that, where known.
+    ConferenceTitle(ConferenceNumber, String, Option<String>),
     GroupSelfJoin(GroupNumber),
+    /// Tox couldn't join the group after all.
+    GroupJoinFail(GroupNumber, ToxGroupJoinFail),
     GroupSelfRole(GroupNumber, ToxGroupRole),
+    GroupSettings(GroupNumber, GroupSettings),
     GroupPeerJoin(
         GroupNumber,
         GroupPeerNumber,
@@ -82,7 +101,6 @@ pub enum ToxEvent {
     ConferencePeerName(ConferenceNumber, ConferencePeerNumber, String, PublicKey),
     FileRecv(FriendNumber, FileId, u32, u64, String),
     FileChunkRequest(FriendNumber, FileId, u64, usize),
-    FileRecvChunk(FriendNumber, FileId, u64, Vec<u8>),
     FileRecvControl(FriendNumber, FileId, ToxFileControl),
     FileChunkSent(FriendNumber, FileId, u64, usize),
     Log(ToxLogLevel, String, u32, String, String),
@@ -93,10 +111,12 @@ pub enum IOEvent {
     FileStarted(PublicKey, FileId, String, u64),
     FileChunkRead(PublicKey, FileId, u64, usize),
     FileChunkWritten(PublicKey, FileId, u64, usize),
-    FileFinished(PublicKey, FileId),
+    /// With the file's blob, now held, unless it couldn't be read.
+    FileFinished(PublicKey, FileId, Option<BlobId>),
     FileError(PublicKey, FileId, String),
-    ProfileSaved,
-    ConfigSaved,
+    BlobMissing(PublicKey, BlobId),
+    /// Whether a blob from a device was kept, having the ID it was asked for.
+    BlobStored(PublicKey, BlobId, bool),
     Error(String),
 }
 
@@ -146,7 +166,6 @@ pub enum AppCmd {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum IOAction {
-    SaveProfile,
     SaveConfig(Option<crate::config::Config>),
     SaveState(Option<String>),                            // JSON data
     OpenFileForSending(PublicKey, FileId, String),        // FullPath
@@ -154,14 +173,33 @@ pub enum IOAction {
     WriteChunk(PublicKey, FileId, u64, Vec<u8>),
     ReadChunk(PublicKey, FileId, u64, usize),
     CloseFile(PublicKey, FileId),
-    LogMessage(WindowId, crate::model::Message),
+    /// Closes a file that has all come or gone, and keeps it as a blob.
+    FinishFile(PublicKey, FileId),
+    /// Sends a blob as a file, or tells it's missing.
+    SendBlob(PublicKey, BlobId),
+    /// Receives a blob of the given size, after the part already here.
+    ReceiveBlob(PublicKey, BlobId, u64),
+    StoreBlob(PublicKey, BlobId),
+    /// Keeps events, then sends devices the messages that carry them, so a
+    /// device never has one of ours that a crash lost here.
+    AppendEvents(Vec<Vec<u8>>, Vec<(PublicKey, Vec<u8>)>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GroupSetting {
+    Privacy(ToxGroupPrivacyState),
+    PeerLimit(u16),
+    /// Empty for none.
+    Password(String),
+    TopicLock(bool),
+    VoiceState(ToxGroupVoiceState),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToxAction {
-    SendMessage(PublicKey, MessageType, String, InternalMessageId),
-    SendGroupMessage(GroupChatId, MessageType, String, InternalMessageId),
-    SendConferenceMessage(ConferenceId, MessageType, String, InternalMessageId),
+    SendMessage(PublicKey, MessageType, Vec<u8>, InternalMessageId),
+    SendGroupMessage(GroupChatId, MessageType, Vec<u8>, InternalMessageId),
+    SendConferenceMessage(ConferenceId, MessageType, Vec<u8>, InternalMessageId),
     AddFriend(String, String), // Address (hex), Message
     AcceptFriend(PublicKey),   // Public Key
     DeleteFriend(PublicKey),
@@ -170,8 +208,9 @@ pub enum ToxAction {
     LeaveGroup(GroupChatId),
     DeleteConference(ConferenceId),
     JoinGroup(String, String, String), // PK (hex), Group Name, Password
-    AcceptGroupInvite(PublicKey, String, String, String), // Friend, Invite Data (hex), Group Name, Password
-    JoinConference(PublicKey, String),                    // Friend, Cookie (hex)
+    // Friend, Invite Data (hex), Group Name, Password, the recorded invite
+    AcceptGroupInvite(PublicKey, String, String, String, Option<EventId>),
+    JoinConference(PublicKey, String, Option<EventId>), // Friend, Cookie (hex), the recorded invite
     InviteFriendToGroup(GroupChatId, PublicKey),
     InviteFriendToConference(ConferenceId, PublicKey),
     SetGroupPeerIgnore(GroupChatId, PublicKey, bool),
@@ -181,12 +220,24 @@ pub enum ToxAction {
     SetName(String),
     SetGroupNickname(GroupChatId, String),
     SetGroupTopic(GroupChatId, String),
+    SetGroupSetting(GroupChatId, GroupSetting),
+    /// A new role for the peer, or none to kick them.
+    ModerateGroupPeer(GroupChatId, PublicKey, Option<ToxGroupRole>),
     SetConferenceTopic(ConferenceId, String),
     Bootstrap(String, u16, DhtId),
     FileSend(PublicKey, u32, u64, String, String, Option<FileId>), // Friend, Kind, Size, Filename, FullPath, ResumeID
     FileControl(PublicKey, FileId, ToxFileControl),
     FileSendChunk(PublicKey, FileId, u64, Vec<u8>),
     FileSeek(PublicKey, FileId, u64),
+    SyncSend(PublicKey, Vec<u8>),
+    /// Answers or places the friend's call, and calls the device once it's
+    /// connected, to pass their audio and video between them.
+    CallConnect {
+        friend: PublicKey,
+        device: PublicKey,
+        video: bool,
+    },
+    CallHangUp(PublicKey),
     Reload(Box<crate::config::Config>),
     Shutdown,
 }

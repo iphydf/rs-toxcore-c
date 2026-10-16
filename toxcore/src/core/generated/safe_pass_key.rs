@@ -7,11 +7,15 @@ pub struct PassKey(core::PassKey);
 
 impl PassKey {
     pub fn derive(passphrase: &[u8]) -> Result<PassKey> {
-        core::PassKey::derive(passphrase).map(PassKey).map_err(ToxError::KeyDerivation)
+        core::PassKey::derive(passphrase)
+            .map(PassKey)
+            .map_err(ToxError::KeyDerivation)
     }
 
     pub fn derive_with_salt(passphrase: &[u8], salt: &PassSalt) -> Result<PassKey> {
-        core::PassKey::derive_with_salt(passphrase, salt).map(PassKey).map_err(ToxError::KeyDerivation)
+        core::PassKey::derive_with_salt(passphrase, salt)
+            .map(PassKey)
+            .map_err(ToxError::KeyDerivation)
     }
 
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>> {

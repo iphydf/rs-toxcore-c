@@ -21,7 +21,6 @@ fn test_svg_full_ui_baseline() {
     let self_addr = Address::from_public_key(self_pk, 0x12345678);
     let domain = DomainState::new(
         self_addr,
-        self_pk,
         "Alice".to_string(),
         "Checking lattices...".to_string(),
         ToxUserStatus::TOX_USER_STATUS_NONE,
@@ -70,8 +69,6 @@ fn test_svg_full_ui_baseline() {
             public_key: Some(friend_pk),
             status_message: "Toxic as always".to_string(),
             connection: ToxConnection::TOX_CONNECTION_UDP,
-            last_sent_message_id: None,
-            last_read_receipt: None,
             is_typing: false,
         },
     );
@@ -259,6 +256,7 @@ fn test_svg_full_ui_baseline() {
                     progress: 0.72,
                     speed: "3.1 MB/s".to_string(),
                     is_incoming: true,
+                    blob: None,
                 },
                 timestamp: model.time_provider.now_local(),
                 status: MessageStatus::Incoming,

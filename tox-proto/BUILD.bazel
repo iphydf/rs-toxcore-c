@@ -1,0 +1,42 @@
+load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_library", "rust_test", "rustfmt_test")
+
+rust_library(
+    name = "tox-proto",
+    srcs = glob(["src/*.rs"]),
+    edition = "2024",
+    proc_macro_deps = ["//rs-toxcore-c/tox-proto-derive"],
+    visibility = ["//visibility:public"],
+    deps = ["@crates//:rmp"],
+)
+
+TEST_SRCS = glob(["tests/*.rs"])
+
+[
+    rust_test(
+        name = src.replace("tests/", "").replace(".rs", "").replace("_", "-"),
+        srcs = [src],
+        edition = "2024",
+        rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+        deps = [
+            ":tox-proto",
+            "@crates//:rmp",
+        ],
+    )
+    for src in TEST_SRCS
+]
+
+RUST_TARGETS = [":tox-proto"] + [
+    ":" + src.replace("tests/", "").replace(".rs", "").replace("_", "-")
+    for src in TEST_SRCS
+]
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = RUST_TARGETS,
+)
+
+rustfmt_test(
+    name = "rustfmt",
+    targets = RUST_TARGETS,
+)

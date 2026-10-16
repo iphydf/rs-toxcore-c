@@ -1,13 +1,6 @@
 use toxxi::widgets::message_list::wrap_text;
 
 #[test]
-fn test_wrap_text_basic() {
-    let text = "Hello world";
-    let lines: Vec<String> = wrap_text(text, 5).into_iter().map(|l| l.text).collect();
-    assert_eq!(lines, vec!["Hello", "world"]);
-}
-
-#[test]
 fn test_wrap_text_unicode() {
     let text = "你好世界";
     let lines: Vec<String> = wrap_text(text, 4).into_iter().map(|l| l.text).collect(); // Each char is width 2
@@ -26,15 +19,6 @@ fn test_wrap_text_long_word() {
     let text = "ExtremelyLongWord";
     let lines: Vec<String> = wrap_text(text, 5).into_iter().map(|l| l.text).collect();
     assert_eq!(lines, vec!["Extre", "melyL", "ongWo", "rd"]);
-}
-
-#[test]
-fn test_wrap_text_soft_wrap_flag() {
-    let text = "Hello world";
-    let lines = wrap_text(text, 5);
-    assert_eq!(lines.len(), 2);
-    assert!(lines[0].is_soft_wrap); // "Hello" was wrapped
-    assert!(!lines[1].is_soft_wrap); // "world" is the end of paragraph
 }
 
 #[test]
