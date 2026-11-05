@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use tox_proto::{Kept, ToxProto};
 use toxcore::types::{ConferenceId, FileId, GroupChatId, MessageType, PublicKey};
 
-use crate::fact::{Subject, Value};
+use crate::fact::{Privacy, Role, Subject, Value};
 use crate::setting::{Scope, Setting};
 
 pub type DecodeError = tox_proto::Error;
@@ -169,6 +169,57 @@ pub enum Content {
         #[tox(default)]
         declined: bool,
     } = 9,
+    /// A message to the account alone in a group, from `from`.
+    ReceivedPrivately {
+        from: PublicKey,
+        sender: String,
+        message: Vec<u8>,
+        kind: MessageType,
+    } = 10,
+    /// "Please send this to `to` alone": `Sent` and `Delivered` answer it as
+    /// they answer `Send`.
+    SendPrivately {
+        to: PublicKey,
+        sender: String,
+        message: Vec<u8>,
+        kind: MessageType,
+    } = 11,
+    // Tags 12 to 17 say what happened in a chat, for clients to word. `by` is
+    // who did it, where Tox said, named `name`.
+    PeerJoined {
+        peer: PublicKey,
+        name: String,
+    } = 12,
+    /// `name` is what they were last called.
+    PeerLeft {
+        peer: PublicKey,
+        name: String,
+    } = 13,
+    PeerRenamed {
+        peer: PublicKey,
+        old: String,
+        name: String,
+    } = 14,
+    /// A group's topic.
+    TopicSet {
+        by: Option<PublicKey>,
+        name: String,
+        topic: String,
+    } = 15,
+    /// The chat's name: a conference's title or a group's name.
+    TitleSet {
+        by: Option<PublicKey>,
+        name: String,
+        title: String,
+    } = 16,
+    /// `peer` got `role`, or was kicked if it's absent.
+    Moderated {
+        by: Option<PublicKey>,
+        name: String,
+        peer: Option<PublicKey>,
+        peer_name: String,
+        role: Option<Role>,
+    } = 17,
 
     WantFriend {
         pk: PublicKey,
@@ -191,7 +242,7 @@ pub enum Content {
         message: String,
     } = 67,
     /// `chat` shows with `into`, as `bot` in `chat` and `into_bot` in `into`
-    /// relay messages between them; unmerged where `merged` is false.
+    /// relay messages between them. Unmerged if `merged` is false.
     MergeChat {
         chat: ChatId,
         bot: PublicKey,
@@ -199,8 +250,8 @@ pub enum Content {
         into_bot: PublicKey,
         merged: bool,
     } = 68,
-    /// `bot` in `chat` relays messages from another chat as `<name> text`;
-    /// no more where `relays` is false.
+    /// `bot` in `chat` relays messages from another chat as `<name> text`, and
+    /// stops if `relays` is false.
     RelayBot {
         chat: ChatId,
         bot: PublicKey,
@@ -232,9 +283,9 @@ pub enum Content {
         #[tox(default)]
         password: Option<String>,
     } = 73,
-    /// The home carried out a join of the invite `invite`: the chat it
-    /// joined, or none where Tox refused, `needs_password` where for a
-    /// missing or wrong password.
+    /// The home carried out a join of the invite `invite`: the chat it joined,
+    /// or None if Tox refused, with `needs_password` if because of a missing or
+    /// wrong password.
     InviteJoined {
         invite: EventId,
         chat: Option<ChatId>,
@@ -251,6 +302,38 @@ pub enum Content {
         scope: Scope,
         kind: u32,
     } = 76,
+    /// `pk` is one of the account's devices, named `name`.
+    Device {
+        pk: PublicKey,
+        name: String,
+    } = 77,
+    /// `pk` is no longer one of the account's devices.
+    DeviceGone {
+        pk: PublicKey,
+    } = 78,
+    /// Asks the home to found a group (`kind` group, with `privacy`) or a
+    /// conference named `name`.
+    NewChat {
+        kind: ChatKind,
+        name: String,
+        privacy: Privacy,
+    } = 79,
+    /// Asks the home to join a public group by its chat ID.
+    JoinChat {
+        chat_id: GroupChatId,
+        password: Option<String>,
+    } = 80,
+    /// Asks the home to invite `friend` to `chat`.
+    InviteToChat {
+        chat: ChatId,
+        friend: PublicKey,
+    } = 81,
+    /// What the home made of the `NewChat` or `JoinChat` event `intent`: the
+    /// chat, or None if Tox refused.
+    ChatJoined {
+        intent: EventId,
+        chat: Option<ChatId>,
+    } = 82,
     /// From a newer version: stored and passed on, but not understood.
     #[tox(catch_all)]
     Unknown {
@@ -276,6 +359,7 @@ pub struct Event {
 
 impl Event {
     /// `[version, event]`. Its hash is the event's ID.
+    #[expect(clippy::expect_used, reason = "writing to memory can't fail")]
     pub fn encode(&self) -> Vec<u8> {
         tox_proto::serialize(&(VERSION, self)).expect("events always encode")
     }

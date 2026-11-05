@@ -7,7 +7,7 @@ use toxcore::tox::*;
 pub fn subtest_conference(harness: &mut TestHarness) {
     println!("Running subtest_conference...");
 
-    type ConfInvite = (FriendNumber, ToxConferenceType, Vec<u8>);
+    type ConfInvite = (FriendNumber, ConferenceType, Vec<u8>);
 
     struct ConfHandler {
         invites: Arc<Mutex<Vec<ConfInvite>>>,
@@ -19,7 +19,7 @@ pub fn subtest_conference(harness: &mut TestHarness) {
         fn on_conference_invite(
             &mut self,
             friend: FriendNumber,
-            c_type: ToxConferenceType,
+            c_type: ConferenceType,
             cookie: &[u8],
         ) {
             self.invites
@@ -102,7 +102,7 @@ pub fn subtest_conference(harness: &mut TestHarness) {
         harness.iterate(&mut handler);
 
         // Alice sends message periodically
-        let _ = c0.send_message(MessageType::TOX_MESSAGE_TYPE_NORMAL, b"ConfHello");
+        let _ = c0.send_message(MessageType::Normal, b"ConfHello");
 
         let msgs = messages.lock().unwrap();
         if msgs.iter().any(|m| m == b"ConfHello") {

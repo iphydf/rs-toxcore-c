@@ -1,14 +1,17 @@
 [workspace]
 members = [
+    "apps/chatlog",
     "apps/echobot",
     "apps/groupbot",
     "apps/nodes",
+    "apps/toxxi",
+    "apps/toxxi/android",
+    "apps/toxxi/testing",
     "sync",
     "tox-proto",
     "tox-proto-derive",
     "tox-sys",
     "toxcore",
-    "toxxi",
 ]
 resolver = "3"
 

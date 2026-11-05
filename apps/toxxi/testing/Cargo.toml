@@ -1,0 +1,16 @@
+[package]
+name = "toxxi-testing"
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+crossterm.workspace = true
+insta.workspace = true
+ratatui.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+toxcore.workspace = true
+toxxi = { path = ".." }
+unicode-width.workspace = true

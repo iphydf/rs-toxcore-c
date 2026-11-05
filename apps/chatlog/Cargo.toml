@@ -1,0 +1,15 @@
+[package]
+name = "chatlog"
+edition.workspace = true
+
+[dependencies]
+chrono.workspace = true
+clap.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tox-sync.workspace = true
+toxcore.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

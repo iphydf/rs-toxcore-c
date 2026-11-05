@@ -1,4 +1,5 @@
 load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_library", "rust_test", "rustfmt_test")
+load("//rs-tokstyle:defs.bzl", "rs_tokstyle")
 
 rust_library(
     name = "tox-proto",
@@ -32,6 +33,12 @@ RUST_TARGETS = [":tox-proto"] + [
 
 rust_clippy(
     name = "clippy",
+    testonly = True,
+    deps = RUST_TARGETS,
+)
+
+rs_tokstyle(
+    name = "tokstyle",
     testonly = True,
     deps = RUST_TARGETS,
 )

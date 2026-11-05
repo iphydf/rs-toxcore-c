@@ -45,8 +45,8 @@ pub fn fits(setting: &Kept<Setting>) -> bool {
     tox_proto::serialize(setting).is_ok_and(|bytes| bytes.len() <= MAX_SETTING)
 }
 
-/// The conversation doesn't notify until `until`, in ms since the Unix
-/// epoch, or ever where it's none, but for messages naming the account where
+/// The conversation doesn't notify until `until` (ms since the Unix epoch), or
+/// ever if it's None, except for messages that mention the account if
 /// `mentions`.
 #[derive(Debug, Clone, PartialEq, Eq, ToxProto)]
 pub struct Mute {

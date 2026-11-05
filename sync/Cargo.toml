@@ -11,3 +11,7 @@ toxcore.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 tempfile.workspace = true
+
+[lints.rust]
+# rs-tokstyle sets it.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokstyle)"] }

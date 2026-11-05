@@ -11,7 +11,7 @@ use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 
 use toxcore::tox::Tox;
-use toxcore::types::{DhtId, PUBLIC_KEY_SIZE};
+use toxcore::types::{DhtId, PUBLIC_KEY_SIZE, Port};
 
 pub const TOR_PROXY: (&str, u16) = ("127.0.0.1", 9050);
 
@@ -236,10 +236,10 @@ pub fn bootstrap(tox: &Tox, nodes: &[Node]) {
             let mut pk_arr = [0u8; PUBLIC_KEY_SIZE];
             pk_arr.copy_from_slice(&pk_bytes);
             let dht_id = DhtId(pk_arr);
-            if let Err(e) = tox.bootstrap(&node.host, node.port, &dht_id) {
+            if let Err(e) = tox.bootstrap(&node.host, Port(node.port), &dht_id) {
                 error!("Failed to bootstrap to node {}: {}", node.host, e);
             }
-            if let Err(e) = tox.add_tcp_relay(&node.host, node.port, &dht_id) {
+            if let Err(e) = tox.add_tcp_relay(&node.host, Port(node.port), &dht_id) {
                 error!("Failed to add tcp relay {}: {}", node.host, e);
             }
         }

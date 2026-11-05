@@ -1,0 +1,30 @@
+---
+source: rs-toxcore-c/apps/toxxi/tests/ui_golden_test.rs
+expression: rendered
+---
+────────────────────────────────────────────────────────────────────────────────
+Contacts                │Alice - Happy                                          
+  ▼ System              │                                                       
+    ○ Status            │                                                       
+    ○ Logs              │                                                       
+    ○ Files             │                                                       
+                        │                                                       
+  ▼ 👤 Friends          │                                                       
+┃   ● Alice             │                                                       
+                        │                                                       
+  ▼ 👥 Groups           │                                                       
+                        │                                                       
+╭──────────────────────────────────────────────────────────────────────────────╮
+│> /accept       [index] [password]  Accept a pending request or invite, with …│
+│  /block        [add|remove|list] [string]  Manage blocked strings (case-inse…│
+│  /clear        [all | system]             Clear the current window's messages│
+│  /close         Close the current window (and leave if it's a group or confe…│
+│  /conference   create | join ... | invite ...              Manage conferences│
+│  /device       pair | allow|remove <friend> | list  Manage the devices that …│
+│  /emoji        [hide|show <group>]  Hide or show a group of emojis this term…│
+│  /file         send [friend] <path> | accept ...        Manage file transfers│
+╰─────────────────────────────────────────────────── (1/36) [Tab] to complete ─╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│> /                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────

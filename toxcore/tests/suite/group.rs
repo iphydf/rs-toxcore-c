@@ -59,7 +59,7 @@ pub fn subtest_groups(harness: &mut TestHarness) {
         harness.iterate(&mut handler);
 
         // Alice sends message periodically
-        let _ = g0.send_message(MessageType::TOX_MESSAGE_TYPE_NORMAL, b"GroupHello");
+        let _ = g0.send_message(MessageType::Normal, b"GroupHello");
 
         let msgs = messages.lock().unwrap();
         if msgs.iter().any(|m| m == b"GroupHello") {
@@ -78,13 +78,13 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
     #[derive(Clone, PartialEq, Debug)]
     enum Event {
         Join(GroupPeerNumber),
-        Exit(GroupPeerNumber, ToxGroupExitType),
+        Exit(GroupPeerNumber, GroupExitType),
         Topic(GroupPeerNumber, Vec<u8>),
-        VoiceState(ToxGroupVoiceState),
-        TopicLock(ToxGroupTopicLock),
+        VoiceState(GroupVoiceState),
+        TopicLock(GroupTopicLock),
         PrivateMessage(GroupPeerNumber, Vec<u8>),
         PeerLimit(u32),
-        Moderation(GroupPeerNumber, GroupPeerNumber, ToxGroupModEvent),
+        Moderation(GroupPeerNumber, GroupPeerNumber, GroupModEvent),
     }
 
     type GroupInvite = (FriendNumber, Vec<u8>);
@@ -112,7 +112,7 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
             &mut self,
             _group: GroupNumber,
             peer: GroupPeerNumber,
-            exit_type: ToxGroupExitType,
+            exit_type: GroupExitType,
             _name: &[u8],
             _part_message: &[u8],
         ) {
@@ -127,13 +127,13 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
                 .unwrap()
                 .push(Event::Topic(peer, topic.to_vec()));
         }
-        fn on_group_voice_state(&mut self, _group: GroupNumber, voice_state: ToxGroupVoiceState) {
+        fn on_group_voice_state(&mut self, _group: GroupNumber, voice_state: GroupVoiceState) {
             self.events
                 .lock()
                 .unwrap()
                 .push(Event::VoiceState(voice_state));
         }
-        fn on_group_topic_lock(&mut self, _group: GroupNumber, topic_lock: ToxGroupTopicLock) {
+        fn on_group_topic_lock(&mut self, _group: GroupNumber, topic_lock: GroupTopicLock) {
             println!("Got topic lock event: {:?}", topic_lock);
             self.events
                 .lock()
@@ -151,7 +151,7 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
             _group: GroupNumber,
             source_peer: GroupPeerNumber,
             target_peer: GroupPeerNumber,
-            mod_type: ToxGroupModEvent,
+            mod_type: GroupModEvent,
         ) {
             self.events
                 .lock()
@@ -220,13 +220,9 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
 
     // Test Topic Lock
     println!("Testing topic lock...");
-    g0.set_topic_lock(ToxGroupTopicLock::TOX_GROUP_TOPIC_LOCK_ENABLED)
-        .unwrap();
+    g0.set_topic_lock(GroupTopicLock::Enabled).unwrap();
     // Verify local
-    assert_eq!(
-        g0.topic_lock().unwrap(),
-        ToxGroupTopicLock::TOX_GROUP_TOPIC_LOCK_ENABLED
-    );
+    assert_eq!(g0.topic_lock().unwrap(), GroupTopicLock::Enabled);
     // Verify propagation
     let start = Instant::now();
     let mut lock_received = false;
@@ -237,7 +233,7 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
         let evs = events_bob.lock().unwrap();
         for e in evs.iter() {
             if let Event::TopicLock(l) = e
-                && *l == ToxGroupTopicLock::TOX_GROUP_TOPIC_LOCK_ENABLED
+                && *l == GroupTopicLock::Enabled
             {
                 lock_received = true;
             }
@@ -246,7 +242,7 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
         // Fallback: Check state directly
         if !lock_received
             && let Ok(l) = _g1.topic_lock()
-            && l == ToxGroupTopicLock::TOX_GROUP_TOPIC_LOCK_ENABLED
+            && l == GroupTopicLock::Enabled
         {
             lock_received = true;
         }
@@ -259,13 +255,9 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
 
     // Test Voice State
     println!("Testing voice state...");
-    g0.set_voice_state(ToxGroupVoiceState::TOX_GROUP_VOICE_STATE_MODERATOR)
-        .unwrap();
+    g0.set_voice_state(GroupVoiceState::Moderator).unwrap();
     // Verify local
-    assert_eq!(
-        g0.voice_state().unwrap(),
-        ToxGroupVoiceState::TOX_GROUP_VOICE_STATE_MODERATOR
-    );
+    assert_eq!(g0.voice_state().unwrap(), GroupVoiceState::Moderator);
     // Verify propagation
     let start = Instant::now();
     let mut voice_received = false;
@@ -275,7 +267,7 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
         let evs = events_bob.lock().unwrap();
         for e in evs.iter() {
             if let Event::VoiceState(v) = e
-                && *v == ToxGroupVoiceState::TOX_GROUP_VOICE_STATE_MODERATOR
+                && *v == GroupVoiceState::Moderator
             {
                 voice_received = true;
             }
@@ -284,7 +276,7 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
         // Fallback
         if !voice_received
             && let Ok(v) = _g1.voice_state()
-            && v == ToxGroupVoiceState::TOX_GROUP_VOICE_STATE_MODERATOR
+            && v == GroupVoiceState::Moderator
         {
             voice_received = true;
         }
@@ -318,7 +310,7 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
     let bob_peer_id = bob_peer_id.expect("Bob not found in group");
     g0.send_private_message(
         GroupPeerNumber(bob_peer_id),
-        MessageType::TOX_MESSAGE_TYPE_NORMAL,
+        MessageType::Normal,
         b"Psst, Bob!",
     )
     .unwrap();
@@ -343,12 +335,8 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
 
     // Test Privacy State (if supported by group type).
     println!("Testing privacy state...");
-    g0.set_privacy_state(ToxGroupPrivacyState::TOX_GROUP_PRIVACY_STATE_PUBLIC)
-        .unwrap();
-    assert_eq!(
-        g0.privacy_state().unwrap(),
-        ToxGroupPrivacyState::TOX_GROUP_PRIVACY_STATE_PUBLIC
-    );
+    g0.set_privacy_state(GroupPrivacyState::Public).unwrap();
+    assert_eq!(g0.privacy_state().unwrap(), GroupPrivacyState::Public);
 
     // Test Peer Limit
     println!("Testing peer limit...");
@@ -378,7 +366,7 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
     // 3. Test Password
     println!("Testing password...");
     let password = b"CorrectHorseBatteryStaple";
-    g0.set_password(Some(password)).unwrap();
+    g0.set_password(password).unwrap();
 
     // Verify local password retrieval.
     let retrieved_pass = g0.password().unwrap();
@@ -419,7 +407,7 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
         for e in evs.iter() {
             if let Event::Exit(pid, exit_type) = e
                 && pid.0 == charlie_peer_id
-                && *exit_type == ToxGroupExitType::TOX_GROUP_EXIT_TYPE_KICK
+                && *exit_type == GroupExitType::Kick
             {
                 kicked = true;
             }
@@ -452,11 +440,8 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
     }
     let bob_peer_id = bob_peer_id.expect("Bob not found for role change");
 
-    g0.set_role(
-        GroupPeerNumber(bob_peer_id),
-        ToxGroupRole::TOX_GROUP_ROLE_OBSERVER,
-    )
-    .unwrap();
+    g0.set_role(GroupPeerNumber(bob_peer_id), GroupRole::Observer)
+        .unwrap();
 
     let start = Instant::now();
     let mut role_changed = false;
@@ -465,7 +450,7 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
         let evs = events_bob.lock().unwrap();
         for e in evs.iter() {
             if let Event::Moderation(_, _, mod_type) = e
-                && *mod_type == ToxGroupModEvent::TOX_GROUP_MOD_EVENT_OBSERVER
+                && *mod_type == GroupModEvent::Observer
             {
                 role_changed = true;
             }
@@ -479,10 +464,7 @@ pub fn subtest_group_management(harness: &mut TestHarness) {
 
     // Verify role locally
     // Note: _g1 is available from earlier scope
-    assert_eq!(
-        _g1.self_role().unwrap(),
-        ToxGroupRole::TOX_GROUP_ROLE_OBSERVER
-    );
+    assert_eq!(_g1.self_role().unwrap(), GroupRole::Observer);
 
     println!("Subtest group management finished");
 }

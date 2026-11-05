@@ -1,10 +1,9 @@
 use std::error::Error;
 use toxcore::tox::Tox;
 use toxcore::tox::events::Event;
-use toxcore::types::{ConferenceNumber, FriendNumber, GroupNumber, MessageType, PublicKey};
+use toxcore::types::{ConferenceNumber, FriendNumber, GroupNumber, PublicKey};
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub enum CommandSource {
     Friend(FriendNumber),
     Group(GroupNumber),
@@ -12,11 +11,9 @@ pub enum CommandSource {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct CommandContext {
     pub source: CommandSource,
     pub sender_pk: PublicKey,
-    pub message_type: MessageType,
 }
 
 pub trait Plugin: Send + Sync {

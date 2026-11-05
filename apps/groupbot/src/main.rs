@@ -1,3 +1,11 @@
+#![deny(
+    clippy::allow_attributes,
+    clippy::allow_attributes_without_reason,
+    clippy::let_underscore_must_use,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
 use clap::Parser;
 use std::error::Error;
 use std::fs;
@@ -9,11 +17,11 @@ use tracing::{debug, error, info};
 
 use toxcore::tox::events::Event;
 use toxcore::tox::{
-    ConferenceNumber, GroupNumber, Options, Tox, ToxProxyType, ToxSavedataType, encryptsave,
+    ConferenceNumber, GroupNumber, Options, ProxyType, SavedataType, Tox, encryptsave,
 };
 use toxcore::types::{
-    ConferencePeerNumber, FriendNumber, GroupPeerNumber, MessageType, PublicKey, ToxConferenceType,
-    ToxConnection,
+    ConferencePeerNumber, ConferenceType, Connection, FriendNumber, GroupPeerNumber, MessageType,
+    Port, PublicKey,
 };
 
 mod plugin;
@@ -51,13 +59,13 @@ struct Args {
 }
 
 enum BotEvent {
-    SelfConnectionStatus(ToxConnection),
+    SelfConnectionStatus(Connection),
     FriendRequest(PublicKey, String),
-    FriendConnectionStatus(FriendNumber, ToxConnection),
+    FriendConnectionStatus(FriendNumber, Connection),
     FriendMessage(FriendNumber, MessageType, String),
     GroupMessage(GroupNumber, GroupPeerNumber, MessageType, String),
     ConferenceMessage(ConferenceNumber, ConferencePeerNumber, MessageType, String),
-    ConferenceInvite(FriendNumber, ToxConferenceType, Vec<u8>),
+    ConferenceInvite(FriendNumber, ConferenceType, Vec<u8>),
     GroupInvite(FriendNumber, Vec<u8>),
 }
 
@@ -66,6 +74,53 @@ struct GroupBot {
     plugins: Vec<Box<dyn Plugin>>,
     savefile: Option<PathBuf>,
     password: Option<String>,
+}
+
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "the bot ignores other events"
+)]
+fn bot_event(event: &Event) -> Option<BotEvent> {
+    match event {
+        Event::SelfConnectionStatus(e) => {
+            Some(BotEvent::SelfConnectionStatus(e.connection_status()))
+        }
+        Event::FriendRequest(e) => Some(BotEvent::FriendRequest(
+            e.public_key(),
+            String::from_utf8_lossy(e.message()).into_owned(),
+        )),
+        Event::FriendConnectionStatus(e) => Some(BotEvent::FriendConnectionStatus(
+            e.friend_number(),
+            e.connection_status(),
+        )),
+        Event::FriendMessage(e) => Some(BotEvent::FriendMessage(
+            e.friend_number(),
+            e.message_type(),
+            String::from_utf8_lossy(e.message()).into_owned(),
+        )),
+        Event::GroupMessage(e) => Some(BotEvent::GroupMessage(
+            e.group_number(),
+            e.peer_id(),
+            e.message_type(),
+            String::from_utf8_lossy(e.message()).into_owned(),
+        )),
+        Event::ConferenceMessage(e) => Some(BotEvent::ConferenceMessage(
+            e.conference_number(),
+            e.peer_number(),
+            e.message_type(),
+            String::from_utf8_lossy(e.message()).into_owned(),
+        )),
+        Event::ConferenceInvite(e) => Some(BotEvent::ConferenceInvite(
+            e.friend_number(),
+            e.conference_type(),
+            e.cookie().to_vec(),
+        )),
+        Event::GroupInvite(e) => Some(BotEvent::GroupInvite(
+            e.friend_number(),
+            e.invite_data().to_vec(),
+        )),
+        _ => None,
+    }
 }
 
 impl GroupBot {
@@ -118,7 +173,6 @@ impl GroupBot {
         let cmd = &parts[0];
         let args = &parts[1..];
 
-        // Built-in commands
         match cmd.as_str() {
             "save" => {
                 if !self.is_admin(&context.sender_pk) {
@@ -157,7 +211,7 @@ impl GroupBot {
                     if let Err(e) = tox.conference(ConferenceNumber(0)).delete() {
                         error!("Failed to delete conference: {}", e);
                     }
-                    if let Err(e) = tox.group(GroupNumber(0)).leave(Some(b"Goodbye!")) {
+                    if let Err(e) = tox.group(GroupNumber(0)).leave(b"Goodbye!") {
                         error!("Failed to leave group: {}", e);
                     }
                 }
@@ -248,67 +302,13 @@ impl GroupBot {
 
             if let Ok(events) = self.tox.events() {
                 for event in &events {
-                    // Dispatch to plugins
                     for plugin in &mut self.plugins {
                         if let Err(e) = plugin.on_event(&self.tox, &event) {
                             error!("Plugin {} error: {}", plugin.name(), e);
                         }
                     }
 
-                    match event {
-                        Event::SelfConnectionStatus(e) => {
-                            bot_events.push(BotEvent::SelfConnectionStatus(e.connection_status()));
-                        }
-                        Event::FriendRequest(e) => {
-                            bot_events.push(BotEvent::FriendRequest(
-                                e.public_key(),
-                                String::from_utf8_lossy(e.message()).into_owned(),
-                            ));
-                        }
-                        Event::FriendConnectionStatus(e) => {
-                            bot_events.push(BotEvent::FriendConnectionStatus(
-                                e.friend_number(),
-                                e.connection_status(),
-                            ));
-                        }
-                        Event::FriendMessage(e) => {
-                            bot_events.push(BotEvent::FriendMessage(
-                                e.friend_number(),
-                                e.message_type(),
-                                String::from_utf8_lossy(e.message()).into_owned(),
-                            ));
-                        }
-                        Event::GroupMessage(e) => {
-                            bot_events.push(BotEvent::GroupMessage(
-                                e.group_number(),
-                                e.peer_id(),
-                                e.message_type(),
-                                String::from_utf8_lossy(e.message()).into_owned(),
-                            ));
-                        }
-                        Event::ConferenceMessage(e) => {
-                            bot_events.push(BotEvent::ConferenceMessage(
-                                e.conference_number(),
-                                e.peer_number(),
-                                e.message_type(),
-                                String::from_utf8_lossy(e.message()).into_owned(),
-                            ));
-                        }
-                        Event::ConferenceInvite(e) => {
-                            bot_events.push(BotEvent::ConferenceInvite(
-                                e.friend_number(),
-                                e.conference_type(),
-                                e.cookie().to_vec(),
-                            ));
-                        }
-                        Event::GroupInvite(e) => {
-                            bot_events.push(BotEvent::GroupInvite(
-                                e.friend_number(),
-                                e.invite_data().to_vec(),
-                            ));
-                        }
-                        _ => {}
-                    }
+                    bot_events.extend(bot_event(&event));
                 }
             }
 
@@ -323,14 +323,16 @@ impl GroupBot {
                             hex::encode(pk.0),
                             message
                         );
-                        let _ = self.tox.friend_add_norequest(&pk);
+                        if let Err(e) = self.tox.friend_add_norequest(&pk) {
+                            error!("Failed to accept friend request: {}", e);
+                        }
                         if let Err(e) = self.save() {
                             error!("Failed to save state after friend request: {}", e);
                         }
                     }
                     BotEvent::FriendConnectionStatus(friend_number, status) => {
                         debug!("Friend {} status: {:?}", friend_number.0, status);
-                        if status != ToxConnection::TOX_CONNECTION_NONE {
+                        if status != Connection::None {
                             let tox = &self.tox;
                             let friend = tox.friend(friend_number);
                             debug!(
@@ -358,7 +360,6 @@ impl GroupBot {
                             let context = CommandContext {
                                 source: CommandSource::Friend(friend_number),
                                 sender_pk: pk,
-                                message_type,
                             };
                             if let Some(reply) = self.handle_command(&context, &message).await {
                                 self.send_reply(&context.source, message_type, &reply).await;
@@ -379,7 +380,6 @@ impl GroupBot {
                                 let context = CommandContext {
                                     source: CommandSource::Group(group_number),
                                     sender_pk: pk,
-                                    message_type,
                                 };
                                 if let Some(reply) = self.handle_command(&context, &message).await {
                                     let formatted_reply = format!(
@@ -420,7 +420,6 @@ impl GroupBot {
                                 let context = CommandContext {
                                     source: CommandSource::Conference(conference_number),
                                     sender_pk: pk,
-                                    message_type,
                                 };
                                 if let Some(reply) = self.handle_command(&context, &message).await {
                                     let formatted_reply = format!(
@@ -496,9 +495,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     opts.set_udp_enabled(args.udp);
 
     if args.tor {
-        opts.set_proxy_type(ToxProxyType::TOX_PROXY_TYPE_SOCKS5);
+        opts.set_proxy_type(ProxyType::Socks5);
         opts.set_proxy_host(nodes::TOR_PROXY.0)?;
-        opts.set_proxy_port(nodes::TOR_PROXY.1);
+        opts.set_proxy_port(Port(nodes::TOR_PROXY.1));
     }
 
     let savefile = args.savefile.clone().or_else(|| {
@@ -518,7 +517,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 return Err("Password required to decrypt save data".into());
             }
         }
-        opts.set_savedata_type(ToxSavedataType::TOX_SAVEDATA_TYPE_TOX_SAVE);
+        opts.set_savedata_type(SavedataType::ToxSave);
         opts.set_savedata_data(&data)?;
     }
 

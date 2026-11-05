@@ -1,15 +1,14 @@
 // Hand-written safe wrappers for the events iteration API. `Tox_Iterate_Options`
 // lives in tox_private.h which apigen cannot parse, so its constructor and
 // setters are written by hand against the bindgen-generated FFI symbols.
-use super::iterate_options::IterateOptions;
-use super::tox::Tox;
-use super::tox::ToxEvents;
+use super::events::Events;
+use super::tox::{IterateOptions, Tox};
 use crate::ffi;
 use crate::types::*;
 
 impl IterateOptions {
     /// Allocate a new `Tox_Iterate_Options` initialised with default values.
-    pub fn new() -> std::result::Result<Self, Tox_Err_Iterate_Options_New> {
+    pub fn new() -> std::result::Result<Self, IterateOptionsNewError> {
         let mut err = ffi::Tox_Err_Iterate_Options_New::TOX_ERR_ITERATE_OPTIONS_NEW_OK;
         let ptr = unsafe { ffi::tox_iterate_options_new(&mut err) };
         if err == ffi::Tox_Err_Iterate_Options_New::TOX_ERR_ITERATE_OPTIONS_NEW_OK {
@@ -37,16 +36,16 @@ impl Tox {
     pub fn events_iterate(
         &self,
         options: Option<&IterateOptions>,
-    ) -> std::result::Result<ToxEvents<'_>, Tox_Err_Events_Iterate> {
+    ) -> std::result::Result<Events<'_>, EventsIterateError> {
         match options {
-            Some(opts) => ToxEvents::iterate(self, opts),
+            Some(opts) => Events::iterate(self, opts),
             None => {
                 let opts = IterateOptions::new().map_err(|_| {
-                    Tox_Err_Events_Iterate::from(
+                    EventsIterateError::from(
                         ffi::Tox_Err_Events_Iterate::TOX_ERR_EVENTS_ITERATE_MALLOC,
                     )
                 })?;
-                ToxEvents::iterate(self, &opts)
+                Events::iterate(self, &opts)
             }
         }
     }

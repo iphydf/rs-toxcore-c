@@ -1,3 +1,11 @@
+#![deny(
+    clippy::allow_attributes,
+    clippy::allow_attributes_without_reason,
+    clippy::let_underscore_must_use,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
 use std::io::{Read, Write};
 use std::sync::Arc;
 
@@ -36,7 +44,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Io(e) => Some(e),
-            _ => None,
+            Error::Deserialize(_) | Error::Serialize(_) => None,
         }
     }
 }
@@ -50,6 +58,10 @@ impl From<std::io::Error> for Error {
 pub trait ToxSize {
     const SIZE: Option<usize> = None;
     const IS_BYTE_LIKE: bool = false;
+    #[expect(
+        clippy::expect_used,
+        reason = "types without a size implement flat_len"
+    )]
     fn flat_len(&self) -> usize {
         Self::SIZE.expect("flat_len called on dynamic type")
     }
@@ -310,6 +322,7 @@ pub fn capture_value<R: Read>(reader: &mut R) -> Result<Vec<u8>> {
 }
 
 /// Helper to read an enum header, supporting both naked discriminators and array-wrapped variants.
+#[expect(clippy::wildcard_enum_match_arm, reason = "other markers aren't enums")]
 pub fn read_enum_header<R: Read>(reader: &mut R) -> Result<(u8, u32)> {
     use rmp::Marker;
     let marker =
@@ -844,7 +857,7 @@ macro_rules! impl_tox_tuple {
         }
         impl<$($ty: ToxSerialize),*> ToxSerialize for ($($ty,)*) {
             fn serialize<W: Write>(&self, writer: &mut W) -> Result<()> {
-                #[allow(non_snake_case)]
+                #[expect(non_snake_case, reason = "the elements are named after their types")]
                 let ($($ty,)*) = self;
                 let count = count_tuple_elements!($($ty),*);
                 rmp::encode::write_array_len(writer, count as u32).map(|_| ()).map_err(|e| Error::Serialize(e.to_string()))?;
@@ -853,7 +866,7 @@ macro_rules! impl_tox_tuple {
             }
             #[inline]
             fn serialize_flat<W: Write>(&self, writer: &mut W) -> Result<()> {
-                #[allow(non_snake_case)]
+                #[expect(non_snake_case, reason = "the elements are named after their types")]
                 let ($($ty,)*) = self;
                 $($ty.serialize_flat(writer)?;)*
                 Ok(())

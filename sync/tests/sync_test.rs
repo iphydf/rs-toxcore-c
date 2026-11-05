@@ -102,8 +102,9 @@ fn test_live_facts_follow_changes() {
 
 #[test]
 fn test_replica_keeps_live_facts() {
-    let mut replica = Replica::new(DEVICE, &ALICE, EventStore::default());
-    replica.received(SessionMessage::hello(Features::ACCOUNT_SYNC));
+    let mut store = EventStore::default();
+    let mut replica = Replica::new(DEVICE, &ALICE);
+    replica.received(&mut store, SessionMessage::hello(Features::ACCOUNT_SYNC));
     for (facts, all) in [
         (vec![(Subject::Friend(ALICE), Value::Typing(true))], true),
         (vec![(Subject::Friend(BOB), Value::Typing(true))], true),
@@ -112,7 +113,7 @@ fn test_replica_keeps_live_facts() {
             false,
         ),
     ] {
-        replica.received(SessionMessage::Facts { facts, all });
+        replica.received(&mut store, SessionMessage::Facts { facts, all });
     }
     assert!(replica.live().of(&Subject::Friend(ALICE)).is_empty());
     assert_eq!(

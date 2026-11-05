@@ -52,7 +52,6 @@ impl GitHub {
                 continue;
             }
 
-            // Check issues
             let issues_path = entry
                 .path()
                 .join("issues")
@@ -62,7 +61,6 @@ impl GitHub {
                 candidates.push((data, false, name.clone()));
             }
 
-            // Check pulls
             let pulls_path = entry
                 .path()
                 .join("pulls")

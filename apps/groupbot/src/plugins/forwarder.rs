@@ -10,8 +10,11 @@ impl Plugin for Forwarder {
     fn name(&self) -> &str {
         "forwarder"
     }
-
     fn on_event(&mut self, bot: &Tox, event: &Event) -> Result<(), Box<dyn Error>> {
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "the bot ignores other events"
+        )]
         match event {
             Event::GroupMessage(e) => {
                 let group_number = e.group_number();
@@ -29,10 +32,11 @@ impl Plugin for Forwarder {
 
                 let formatted = format!("<{}> {}", peer_name_str, String::from_utf8_lossy(message));
 
-                // Forward to Conference 0 if it exists
-                // TODO: Map groups to conferences instead of hardcoding 0.
+                // TODO(iphydf): Map groups to conferences instead of using 0.
                 let conf = bot.conference(ConferenceNumber(0));
-                let _ = conf.send_message(message_type, formatted.as_bytes());
+                if let Err(e) = conf.send_message(message_type, formatted.as_bytes()) {
+                    tracing::error!("Failed to forward to the conference: {}", e);
+                }
             }
             Event::ConferenceMessage(e) => {
                 let conference_number = e.conference_number();
@@ -54,9 +58,10 @@ impl Plugin for Forwarder {
 
                 let formatted = format!("<{}> {}", peer_name_str, String::from_utf8_lossy(message));
 
-                // Forward to Group 0 if it exists
                 let group = bot.group(GroupNumber(0));
-                let _ = group.send_message(message_type, formatted.as_bytes());
+                if let Err(e) = group.send_message(message_type, formatted.as_bytes()) {
+                    tracing::error!("Failed to forward to the group: {}", e);
+                }
             }
             _ => {}
         }

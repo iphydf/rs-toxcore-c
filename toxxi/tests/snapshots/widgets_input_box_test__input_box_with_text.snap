@@ -1,9 +1,0 @@
----
-source: rs-toxcore-c/toxxi/tests/widgets/input_box_test.rs
-expression: rendered
----
-────────────────────
-╭──────────────────╮
-│> Hello           │
-╰──────────────────╯
-────────────────────

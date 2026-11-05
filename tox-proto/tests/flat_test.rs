@@ -261,5 +261,3 @@ fn test_skip_in_flat_struct() {
     assert_eq!(decoded.b, [0; 32]);
     assert_eq!(decoded.c, 3);
 }
-
-// end of file

@@ -4,14 +4,14 @@ use crate::event::{BlobId, EventId, GraphId};
 use crate::fact::{Subject, Value};
 use sha2::{Digest, Sha256};
 use tox_proto::ToxProto;
-use toxcore::types::PublicKey;
+use toxcore::types::{FileKind, PublicKey};
 
 pub use crate::event::DecodeError;
 
 pub const VERSION: u64 = 1;
 
 /// The Tox file kind a blob is sent as, after the sync packet ID.
-pub const BLOB_FILE_KIND: u32 = crate::frame::PACKET_ID as u32;
+pub const BLOB_FILE_KIND: FileKind = FileKind(crate::frame::PACKET_ID as u32);
 
 /// What a device offers, sent in `Hello`. Unknown bits are kept, so a
 /// newer device's features pass through unharmed.
@@ -109,6 +109,7 @@ impl SessionMessage {
         }
     }
 
+    #[expect(clippy::expect_used, reason = "writing to memory can't fail")]
     pub fn encode(&self) -> Vec<u8> {
         tox_proto::serialize(self).expect("session messages always encode")
     }
@@ -117,7 +118,16 @@ impl SessionMessage {
     pub fn decode(bytes: &[u8]) -> Result<Option<Self>, DecodeError> {
         Ok(match tox_proto::deserialize_exact(bytes)? {
             Self::Unknown { .. } => None,
-            message => Some(message),
+            message @ (Self::Hello { .. }
+            | Self::Summary(_)
+            | Self::Heads { .. }
+            | Self::Want(_)
+            | Self::Events(_)
+            | Self::History { .. }
+            | Self::WantBlob(_)
+            | Self::NoBlob(_)
+            | Self::Facts { .. }
+            | Self::Call { .. }) => Some(message),
         })
     }
 }

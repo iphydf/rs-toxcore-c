@@ -10,7 +10,7 @@ pub fn subtest_group_av(harness: &mut TestHarness) {
     struct ConfAvHandler {
         received_audio: Arc<Mutex<bool>>,
     }
-    impl ToxAVConferenceHandler for ConfAvHandler {
+    impl ToxAvConferenceHandler for ConfAvHandler {
         fn on_conference_audio_receive_frame(
             &self,
             _conference: ConferenceNumber,
@@ -32,7 +32,7 @@ pub fn subtest_group_av(harness: &mut TestHarness) {
         fn on_conference_invite(
             &mut self,
             friend: FriendNumber,
-            _type: ToxConferenceType,
+            _type: ConferenceType,
             cookie: &[u8],
         ) {
             self.invites.lock().unwrap().push((friend, cookie.to_vec()));
@@ -48,11 +48,11 @@ pub fn subtest_group_av(harness: &mut TestHarness) {
     let f0 = harness.toxes[0].tox.lookup_friend(&pk1).unwrap();
 
     // 2. Enable AV (Create AV Conference using legacy API)
-    // Initialize ToxAV for both (required for audio backend)
+    // Initialize ToxAv for both (required for audio backend)
     struct DummyHandler;
-    impl ToxAVHandler for DummyHandler {}
-    let _av0 = ToxAV::new(&harness.toxes[0].tox, DummyHandler).unwrap();
-    let _av1 = ToxAV::new(&harness.toxes[1].tox, DummyHandler).unwrap();
+    impl ToxAvHandler for DummyHandler {}
+    let _av0 = ToxAv::new(&harness.toxes[0].tox, DummyHandler).unwrap();
+    let _av1 = ToxAv::new(&harness.toxes[1].tox, DummyHandler).unwrap();
 
     let received_audio_bob = Arc::new(Mutex::new(false));
     let av_handler_bob = ConfAvHandler {

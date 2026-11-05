@@ -1,0 +1,68 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_library", "rust_test", "rustfmt_test")
+load("//rs-tokstyle:defs.bzl", "rs_tokstyle")
+
+DEPS = [
+    "//rs-toxcore-c:tox_sync",
+    "//rs-toxcore-c:toxcore",
+    "@crates//:chrono",
+    "@crates//:clap",
+    "@crates//:regex",
+    "@crates//:serde",
+    "@crates//:serde_json",
+]
+
+rust_library(
+    name = "chatlog_lib",
+    srcs = ["src/lib.rs"],
+    crate_name = "chatlog",
+    edition = "2024",
+    deps = DEPS,
+)
+
+rust_binary(
+    name = "chatlog",
+    srcs = ["src/main.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = DEPS + [":chatlog_lib"],
+)
+
+rust_test(
+    name = "chatlog_test",
+    srcs = ["tests/chatlog_test.rs"],
+    edition = "2024",
+    rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
+    deps = DEPS + [
+        ":chatlog_lib",
+        "@crates//:tempfile",
+    ],
+)
+
+rust_clippy(
+    name = "clippy",
+    testonly = True,
+    deps = [
+        ":chatlog",
+        ":chatlog_lib",
+        ":chatlog_test",
+    ],
+)
+
+rs_tokstyle(
+    name = "tokstyle",
+    testonly = True,
+    deps = [
+        ":chatlog",
+        ":chatlog_lib",
+        ":chatlog_test",
+    ],
+)
+
+rustfmt_test(
+    name = "rustfmt",
+    targets = [
+        ":chatlog",
+        ":chatlog_lib",
+        ":chatlog_test",
+    ],
+)

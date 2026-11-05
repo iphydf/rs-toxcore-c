@@ -238,8 +238,11 @@ pub fn read_log(path: &Path) -> io::Result<Vec<Vec<u8>>> {
     };
     let mut records = Vec::new();
     let mut pos = 0;
-    while let Some(length) = data.get(pos..pos + LENGTH) {
-        let length = u32::from_be_bytes(length.try_into().unwrap()) as usize;
+    while let Some(length) = data
+        .get(pos..pos + LENGTH)
+        .and_then(|bytes| <[u8; LENGTH]>::try_from(bytes).ok())
+    {
+        let length = u32::from_be_bytes(length) as usize;
         if length > MAX_EVENT {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -261,7 +264,9 @@ pub fn read_log(path: &Path) -> io::Result<Vec<Vec<u8>>> {
     Ok(records)
 }
 
-/// Appends `records`, which are on disk once it returns.
+/// Appends `records`, which are on disk once it returns. A failed append (e.g.
+/// on a full disk) leaves the log as it was, because half a record would
+/// misplace every record after it.
 pub fn append_log(path: &Path, records: &[Vec<u8>]) -> io::Result<()> {
     let mut data = Vec::new();
     for record in records {
@@ -269,6 +274,14 @@ pub fn append_log(path: &Path, records: &[Vec<u8>]) -> io::Result<()> {
         data.extend(record);
     }
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    file.write_all(&data)?;
-    file.sync_data()
+    let end = file.metadata()?.len();
+    let written = file.write_all(&data).and_then(|()| file.sync_data());
+    if written.is_err() {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "the write's error is the one to return"
+        )]
+        let _ = file.set_len(end);
+    }
+    written
 }

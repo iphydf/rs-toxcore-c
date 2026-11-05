@@ -1,21 +1,12 @@
+use crate::has_tox_flag;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, Index};
 
 pub fn derive_tox_serialize_impl(input: DeriveInput) -> TokenStream {
     let name = &input.ident;
-    let mut is_flat = false;
+    let is_flat = has_tox_flag(&input.attrs, "flat");
 
-    for attr in &input.attrs {
-        if attr.path().is_ident("tox") {
-            let _ = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("flat") {
-                    is_flat = true;
-                }
-                Ok(())
-            });
-        }
-    }
     let mut generics = input.generics.clone();
     for param in &mut generics.params {
         if let syn::GenericParam::Type(t) = param {
@@ -29,17 +20,7 @@ pub fn derive_tox_serialize_impl(input: DeriveInput) -> TokenStream {
         Data::Struct(s) => {
             let mut active_fields = Vec::new();
             for (i, f) in s.fields.iter().enumerate() {
-                let mut skip = false;
-                for attr in &f.attrs {
-                    if attr.path().is_ident("tox") {
-                        let _ = attr.parse_nested_meta(|meta| {
-                            if meta.path.is_ident("skip") {
-                                skip = true;
-                            }
-                            Ok(())
-                        });
-                    }
-                }
+                let skip = has_tox_flag(&f.attrs, "skip");
                 if !skip {
                     let accessor = if let Some(ident) = &f.ident {
                         quote!(self.#ident)
@@ -74,18 +55,12 @@ pub fn derive_tox_serialize_impl(input: DeriveInput) -> TokenStream {
                     quote! {
                         #accessor.serialize(writer)
                     }
-                } else {
+                } else if let (Some((last_field_type, other_types)), Some(last_field_accessor)) =
+                    (field_types.split_last(), field_accessors.last())
+                {
                     // Multiple fields
-                    let last_field_type = field_types.last().unwrap();
-                    let last_field_accessor = field_accessors.last().unwrap();
-
-                    let all_but_last_byte_like = if field_count > 1 {
-                        let other_types = &field_types[..field_count - 1];
-                        quote! {
-                            true #(&& <#other_types as ::tox_proto::ToxSize>::IS_BYTE_LIKE)*
-                        }
-                    } else {
-                        quote! { true }
+                    let all_but_last_byte_like = quote! {
+                        true #(&& <#other_types as ::tox_proto::ToxSize>::IS_BYTE_LIKE)*
                     };
 
                     let is_binary_concatenation = quote! {
@@ -98,12 +73,6 @@ pub fn derive_tox_serialize_impl(input: DeriveInput) -> TokenStream {
                             quote! { #accessor.serialize(writer)?; }
                         })
                         .collect();
-
-                    let other_types = if field_count > 1 {
-                        &field_types[..field_count - 1]
-                    } else {
-                        &[]
-                    };
 
                     quote! {
                         if #is_binary_concatenation {
@@ -121,6 +90,9 @@ pub fn derive_tox_serialize_impl(input: DeriveInput) -> TokenStream {
                             Ok(())
                         }
                     }
+                } else {
+                    syn::Error::new_spanned(name, "a #[tox(flat)] struct needs a field")
+                        .to_compile_error()
                 }
             } else {
                 let field_serialization: Vec<_> = field_accessors
@@ -140,7 +112,10 @@ pub fn derive_tox_serialize_impl(input: DeriveInput) -> TokenStream {
             (serialize, serialize_flat)
         }
         Data::Enum(e) => {
-            let idxs = crate::discriminants(&e.variants);
+            let idxs = match crate::discriminants(&e.variants) {
+                Ok(idxs) => idxs,
+                Err(e) => return e.to_compile_error(),
+            };
             let arms: Vec<_> = e
                 .variants
                 .iter()
@@ -149,17 +124,7 @@ pub fn derive_tox_serialize_impl(input: DeriveInput) -> TokenStream {
                     let v_ident = &v.ident;
 
                     // Detect #[tox(catch_all)]
-                    let mut is_catch_all = false;
-                    for attr in &v.attrs {
-                        if attr.path().is_ident("tox") {
-                            let _ = attr.parse_nested_meta(|meta| {
-                                if meta.path.is_ident("catch_all") {
-                                    is_catch_all = true;
-                                }
-                                Ok(())
-                            });
-                        }
-                    }
+                    let is_catch_all = has_tox_flag(&v.attrs, "catch_all");
 
                     if is_catch_all {
                         // Serialize with stored discriminant, not compile-time idx
@@ -210,7 +175,7 @@ pub fn derive_tox_serialize_impl(input: DeriveInput) -> TokenStream {
                             }
                         }
                         Fields::Named(f) if f.named.len() == 1 => {
-                            let ident = f.named[0].ident.as_ref().unwrap();
+                            let ident = &f.named[0].ident;
                             quote! {
                                 #name::#v_ident { #ident } => {
                                     ::tox_proto::rmp::encode::write_array_len(writer, 2)

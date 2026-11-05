@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Toxxi</string>
+    <string name="running">Online while Toxxi runs</string>
+    <string name="running_channel">Running</string>
+    <string name="messages_channel">Messages</string>
+</resources>

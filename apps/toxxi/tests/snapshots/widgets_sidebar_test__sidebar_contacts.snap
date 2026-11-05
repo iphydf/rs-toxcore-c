@@ -1,0 +1,16 @@
+---
+source: rs-toxcore-c/apps/toxxi/tests/widgets/sidebar_test.rs
+expression: rendered
+---
+──────────────────────────────
+Contacts                     │
+  ▼ 👤 Friends               │
+┃   ● Alice                  │
+                             │
+  ▼ 👥 Groups                │
+    # Rust Group (1)         │
+                             │
+                             │
+                             │
+                             │
+──────────────────────────────

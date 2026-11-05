@@ -1,6 +1,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_library", "rust_test", "rustfmt_test")
 load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
+load("//rs-tokstyle:defs.bzl", "rs_tokstyle")
 
 cc_library(
     name = "tox_wrapper",
@@ -103,6 +104,19 @@ rust_test(
 
 rust_clippy(
     name = "clippy",
+    testonly = True,
+    deps = [
+        ":tox_sync",
+        ":tox_sync_conformance_test",
+        ":tox_sync_test",
+        ":tox_sys",
+        ":toxcore",
+        ":toxcore_test",
+    ],
+)
+
+rs_tokstyle(
+    name = "tokstyle",
     testonly = True,
     deps = [
         ":tox_sync",

@@ -8,7 +8,7 @@ pub fn subtest_friend_info(harness: &mut TestHarness) {
     println!("Running subtest_friend_info...");
     struct InfoHandler {
         typing: Arc<AtomicBool>,
-        status: Arc<Mutex<Option<ToxUserStatus>>>,
+        status: Arc<Mutex<Option<UserStatus>>>,
         status_msg: Arc<Mutex<Option<Vec<u8>>>>,
     }
     impl ToxHandler for InfoHandler {
@@ -17,7 +17,7 @@ pub fn subtest_friend_info(harness: &mut TestHarness) {
                 self.typing.store(true, Ordering::SeqCst);
             }
         }
-        fn on_friend_status(&mut self, _: FriendNumber, status: ToxUserStatus) {
+        fn on_friend_status(&mut self, _: FriendNumber, status: UserStatus) {
             *self.status.lock().unwrap() = Some(status);
         }
         fn on_friend_status_message(&mut self, _: FriendNumber, message: &[u8]) {
@@ -49,19 +49,17 @@ pub fn subtest_friend_info(harness: &mut TestHarness) {
     assert!(typing.load(Ordering::SeqCst), "Typing status not received");
 
     // Test Status
-    harness.toxes[0]
-        .tox
-        .set_status(ToxUserStatus::TOX_USER_STATUS_BUSY);
+    harness.toxes[0].tox.set_status(UserStatus::Busy);
     let start = Instant::now();
     while Instant::now().duration_since(start) < Duration::from_secs(5) {
         harness.iterate(&mut handler);
-        if *status.lock().unwrap() == Some(ToxUserStatus::TOX_USER_STATUS_BUSY) {
+        if *status.lock().unwrap() == Some(UserStatus::Busy) {
             break;
         }
     }
     assert_eq!(
         *status.lock().unwrap(),
-        Some(ToxUserStatus::TOX_USER_STATUS_BUSY),
+        Some(UserStatus::Busy),
         "Status change not received"
     );
 

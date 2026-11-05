@@ -29,7 +29,7 @@ impl<'a> From<&Friend<'a>> for FriendNumber {
 }
 
 impl<'a> Friend<'a> {
-    pub fn get_number(&self) -> FriendNumber {
+    pub fn number(&self) -> FriendNumber {
         self.number
     }
 
@@ -77,7 +77,7 @@ impl<'a> Friend<'a> {
             .map_err(ToxError::FriendQuery)
     }
 
-    pub fn status(&self) -> Result<ToxUserStatus> {
+    pub fn status(&self) -> Result<UserStatus> {
         self.tox
             .inner
             .core
@@ -85,7 +85,7 @@ impl<'a> Friend<'a> {
             .map_err(ToxError::FriendQuery)
     }
 
-    pub fn connection_status(&self) -> Result<ToxConnection> {
+    pub fn connection_status(&self) -> Result<Connection> {
         self.tox
             .inner
             .core

@@ -1,4 +1,5 @@
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rustfmt_test")
+load("//rs-tokstyle:defs.bzl", "rs_tokstyle")
 
 rust_binary(
     name = "groupbot",
@@ -21,6 +22,14 @@ rust_binary(
 
 rust_clippy(
     name = "clippy",
+    testonly = True,
+    deps = [
+        ":groupbot",
+    ],
+)
+
+rs_tokstyle(
+    name = "tokstyle",
     testonly = True,
     deps = [
         ":groupbot",

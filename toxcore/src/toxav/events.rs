@@ -1,24 +1,29 @@
 //! What toxav's callbacks give, kept to act on once it's done iterating, as
 //! the callbacks can't call toxav themselves.
 
-use crate::toxav::ToxAVHandler;
-use crate::types::FriendNumber;
+use crate::toxav::ToxAvHandler;
+use crate::types::{
+    AvBitRate, AvChannels, AvFriendCallState, AvHeight, AvSamplingRate, AvWidth, FriendNumber,
+};
 
 /// A frame without the padding at the end of its planes' rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
-    pub width: u16,
-    pub height: u16,
+    pub width: AvWidth,
+    pub height: AvHeight,
     pub y: Vec<u8>,
     pub u: Vec<u8>,
     pub v: Vec<u8>,
 }
 
 impl Frame {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "toxav gives a frame as planes and strides"
+    )]
     pub fn packed(
-        width: u16,
-        height: u16,
+        width: AvWidth,
+        height: AvHeight,
         y: &[u8],
         u: &[u8],
         v: &[u8],
@@ -26,7 +31,7 @@ impl Frame {
         ustride: i32,
         vstride: i32,
     ) -> Self {
-        let (width_px, height_px) = (usize::from(width), usize::from(height));
+        let (width_px, height_px) = (usize::from(width.0), usize::from(height.0));
         let (chroma_width, chroma_height) = (width_px.div_ceil(2), height_px.div_ceil(2));
         let pack = |plane: &[u8], stride: i32, width: usize, height: usize| {
             let stride = stride.unsigned_abs() as usize;
@@ -53,17 +58,17 @@ pub enum AvEvent {
     },
     CallState {
         friend: FriendNumber,
-        state: u32,
+        state: AvFriendCallState,
     },
     VideoBitRate {
         friend: FriendNumber,
-        bit_rate: u32,
+        bit_rate: AvBitRate,
     },
     Audio {
         friend: FriendNumber,
         pcm: Vec<i16>,
-        channels: u8,
-        sampling_rate: u32,
+        channels: AvChannels,
+        sampling_rate: AvSamplingRate,
     },
     Video {
         friend: FriendNumber,
@@ -71,20 +76,20 @@ pub enum AvEvent {
     },
 }
 
-/// A handler that keeps each callback's event, for `ToxAV::handler_mut`.
+/// A handler that keeps each callback's event, for `ToxAv::handler_mut`.
 #[derive(Debug, Default)]
 pub struct AvEvents(pub Vec<AvEvent>);
 
-impl ToxAVHandler for AvEvents {
+impl ToxAvHandler for AvEvents {
     fn on_call(&mut self, friend: FriendNumber, _audio: bool, video: bool) {
         self.0.push(AvEvent::Call { friend, video });
     }
 
-    fn on_call_state(&mut self, friend: FriendNumber, state: u32) {
+    fn on_call_state(&mut self, friend: FriendNumber, state: AvFriendCallState) {
         self.0.push(AvEvent::CallState { friend, state });
     }
 
-    fn on_video_bit_rate(&mut self, friend: FriendNumber, bit_rate: u32) {
+    fn on_video_bit_rate(&mut self, friend: FriendNumber, bit_rate: AvBitRate) {
         self.0.push(AvEvent::VideoBitRate { friend, bit_rate });
     }
 
@@ -92,8 +97,8 @@ impl ToxAVHandler for AvEvents {
         &mut self,
         friend: FriendNumber,
         pcm: &[i16],
-        channels: u8,
-        sampling_rate: u32,
+        channels: AvChannels,
+        sampling_rate: AvSamplingRate,
     ) {
         self.0.push(AvEvent::Audio {
             friend,
@@ -106,8 +111,8 @@ impl ToxAVHandler for AvEvents {
     fn on_video_receive_frame(
         &mut self,
         friend: FriendNumber,
-        width: u16,
-        height: u16,
+        width: AvWidth,
+        height: AvHeight,
         y: &[u8],
         u: &[u8],
         v: &[u8],

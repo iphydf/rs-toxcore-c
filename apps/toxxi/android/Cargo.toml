@@ -1,0 +1,14 @@
+[package]
+name = "toxxi-android"
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+crossterm.workspace = true
+jni = "0.21.1"
+ratatui.workspace = true
+tokio.workspace = true
+toxxi = { path = ".." }
+unicode-width.workspace = true

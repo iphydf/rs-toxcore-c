@@ -6,18 +6,7 @@ use crate::has_tox_flag;
 
 pub fn derive_tox_deserialize_impl(input: DeriveInput) -> TokenStream {
     let name = &input.ident;
-    let mut is_flat = false;
-
-    for attr in &input.attrs {
-        if attr.path().is_ident("tox") {
-            let _ = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("flat") {
-                    is_flat = true;
-                }
-                Ok(())
-            });
-        }
-    }
+    let is_flat = has_tox_flag(&input.attrs, "flat");
 
     let mut generics = input.generics.clone();
     for param in &mut generics.params {
@@ -35,17 +24,7 @@ pub fn derive_tox_deserialize_impl(input: DeriveInput) -> TokenStream {
             let mut all_fields = Vec::new();
 
             for (i, f) in s.fields.iter().enumerate() {
-                let mut skip = false;
-                for attr in &f.attrs {
-                    if attr.path().is_ident("tox") {
-                        let _ = attr.parse_nested_meta(|meta| {
-                            if meta.path.is_ident("skip") {
-                                skip = true;
-                            }
-                            Ok(())
-                        });
-                    }
-                }
+                let skip = has_tox_flag(&f.attrs, "skip");
 
                 let name = if let Some(ident) = &f.ident {
                     quote!(#ident)
@@ -162,7 +141,10 @@ pub fn derive_tox_deserialize_impl(input: DeriveInput) -> TokenStream {
             (deserialize, deserialize_flat)
         }
         Data::Enum(e) => {
-            let idxs = crate::discriminants(&e.variants);
+            let idxs = match crate::discriminants(&e.variants) {
+                Ok(idxs) => idxs,
+                Err(e) => return e.to_compile_error(),
+            };
             let mut catch_all_ident: Option<syn::Ident> = None;
             let lenient = e
                 .variants
@@ -173,17 +155,7 @@ pub fn derive_tox_deserialize_impl(input: DeriveInput) -> TokenStream {
             let arms: Vec<_> = e.variants.iter().zip(idxs).filter_map(|(v, idx)| {
 
                 // Detect #[tox(catch_all)] to skip generating a match arm.
-                let mut is_catch_all = false;
-                for attr in &v.attrs {
-                    if attr.path().is_ident("tox") {
-                        let _ = attr.parse_nested_meta(|meta| {
-                            if meta.path.is_ident("catch_all") {
-                                is_catch_all = true;
-                            }
-                            Ok(())
-                        });
-                    }
-                }
+                let is_catch_all = has_tox_flag(&v.attrs, "catch_all");
                 if is_catch_all {
                     catch_all_ident = Some(v.ident.clone());
                     return None;
@@ -253,7 +225,7 @@ pub fn derive_tox_deserialize_impl(input: DeriveInput) -> TokenStream {
                         }
                     }
                     Fields::Named(f) if f.named.len() == 1 => {
-                        let ident = f.named[0].ident.as_ref().unwrap();
+                        let ident = &f.named[0].ident;
                         let ty = &f.named[0].ty;
                         quote! {
                             #idx => {
@@ -269,7 +241,7 @@ pub fn derive_tox_deserialize_impl(input: DeriveInput) -> TokenStream {
                         let idents: Vec<_> = f.named.iter().map(|f| &f.ident).collect();
                         let idents_copy = idents.clone();
                         let fields: Vec<_> = f.named.iter().map(|f| {
-                            let ident = f.ident.as_ref().unwrap();
+                            let ident = &f.ident;
                             (quote!(#ident), &f.ty, has_tox_flag(&f.attrs, "default"))
                         }).collect();
                         let reads = read_fields(&fields, &quote!(inner_len), &quote!(stringify!(#v_ident)));

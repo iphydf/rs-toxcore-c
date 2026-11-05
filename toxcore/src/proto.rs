@@ -35,8 +35,8 @@ impl ToxSize for MessageType {}
 impl ToxSerialize for MessageType {
     fn serialize<W: Write>(&self, writer: &mut W) -> Result<()> {
         match self {
-            MessageType::TOX_MESSAGE_TYPE_NORMAL => NORMAL,
-            MessageType::TOX_MESSAGE_TYPE_ACTION => ACTION,
+            MessageType::Normal => NORMAL,
+            MessageType::Action => ACTION,
         }
         .serialize(writer)
     }
@@ -46,8 +46,8 @@ impl ToxDeserialize for MessageType {
     /// Kinds this version doesn't know read as normal messages.
     fn deserialize<R: Read>(reader: &mut R) -> Result<Self> {
         Ok(match u8::deserialize(reader)? {
-            ACTION => MessageType::TOX_MESSAGE_TYPE_ACTION,
-            _ => MessageType::TOX_MESSAGE_TYPE_NORMAL,
+            ACTION => MessageType::Action,
+            _ => MessageType::Normal,
         })
     }
 }

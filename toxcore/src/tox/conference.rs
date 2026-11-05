@@ -1,6 +1,5 @@
 use crate::tox::ConferenceAvScope;
-use crate::tox::friend::Friend;
-use crate::toxav::ToxAVConferenceHandler;
+use crate::toxav::ToxAvConferenceHandler;
 use crate::types::*;
 
 // The `Conference` struct, its `Debug`/`From` impls and the delegating
@@ -14,15 +13,7 @@ pub use generated::Conference;
 // the handler-based AV group-chat API bridges a raw C callback to a Rust
 // handler trait, and `peer_list` is a convenience helper over `peer_count`.
 impl<'a> Conference<'a> {
-    pub fn invite(&self, friend: &Friend) -> Result<()> {
-        self.tox
-            .inner
-            .core
-            .conference_invite(friend.get_number(), self.number)
-            .map_err(ToxError::ConferenceInvite)
-    }
-
-    pub fn enable_av<H: ToxAVConferenceHandler>(
+    pub fn enable_av<H: ToxAvConferenceHandler>(
         &self,
         handler: &H,
     ) -> Result<ConferenceAvScope<'a, H>> {
@@ -38,7 +29,7 @@ impl<'a> Conference<'a> {
                 _marker: std::marker::PhantomData,
             })
         } else {
-            Err(ToxError::AvGroupError)
+            Err(ToxError::Failed)
         }
     }
 
@@ -61,7 +52,7 @@ impl<'a> Conference<'a> {
         {
             Ok(())
         } else {
-            Err(ToxError::AvGroupError)
+            Err(ToxError::Failed)
         }
     }
 

@@ -1,8 +1,10 @@
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rustfmt_test")
+load("//rs-tokstyle:defs.bzl", "rs_tokstyle")
 
 rust_binary(
     name = "echobot",
     srcs = ["src/main.rs"],
+    compile_data = ["echobot.png"],
     edition = "2024",
     rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
     deps = [
@@ -18,6 +20,12 @@ rust_binary(
 
 rust_clippy(
     name = "clippy",
+    testonly = True,
+    deps = [":echobot"],
+)
+
+rs_tokstyle(
+    name = "tokstyle",
     testonly = True,
     deps = [":echobot"],
 )

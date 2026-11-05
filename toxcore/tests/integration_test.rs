@@ -72,8 +72,8 @@ fn test_toxav_lifecycle() {
     opts.set_local_discovery_enabled(false);
     let tox = Tox::new(opts).expect("Failed to create Tox instance");
     struct DummyHandler;
-    impl ToxAVHandler for DummyHandler {}
-    let _av = ToxAV::new(&tox, DummyHandler).expect("Failed to create ToxAV instance");
+    impl ToxAvHandler for DummyHandler {}
+    let _av = ToxAv::new(&tox, DummyHandler).expect("Failed to create ToxAv instance");
 }
 
 #[test]
@@ -82,18 +82,12 @@ fn test_group_lifecycle() {
     opts.set_local_discovery_enabled(false);
     let tox = Tox::new(opts).expect("Failed to create Tox instance");
     let group = tox
-        .group_new(
-            ToxGroupPrivacyState::TOX_GROUP_PRIVACY_STATE_PRIVATE,
-            b"TestGroup",
-            b"PeerName",
-        )
+        .group_new(GroupPrivacyState::Private, b"TestGroup", b"PeerName")
         .expect("Failed to create group");
     group
-        .send_message(MessageType::TOX_MESSAGE_TYPE_NORMAL, b"Hello World")
+        .send_message(MessageType::Normal, b"Hello World")
         .expect("Failed to send group message");
-    group
-        .leave(Some(b"Goodbye"))
-        .expect("Failed to leave group");
+    group.leave(b"Goodbye").expect("Failed to leave group");
 }
 
 #[test]
@@ -176,7 +170,7 @@ fn run_native_tox_file_transfer(size_bytes: u64, timeout: Duration) {
         .tox
         .file_send(
             &alice_friend,
-            ToxFileKind::TOX_FILE_KIND_DATA as u32,
+            FileKind::DATA,
             size_bytes,
             None,
             format!("native_{}mb.bin", size_bytes / (1024 * 1024)).as_bytes(),
@@ -189,9 +183,9 @@ fn run_native_tox_file_transfer(size_bytes: u64, timeout: Duration) {
     // setup. The events path is the same one merkle-tox-tox uses for its
     // blob transfer e2e tests, so the comparison stays apples-to-apples.
     //
-    // Important: each `tox.events()` call returns a `ToxEvents<'_>` whose
+    // Important: each `tox.events()` call returns a `Events<'_>` whose
     // event references borrow from the underlying ffi buffer. The buffer
-    // is freed when `ToxEvents` is dropped, so events MUST be processed
+    // is freed when `Events` is dropped, so events MUST be processed
     // in the same scope where `events()` is called — never collected into
     // a longer-lived container or returned from a helper function.
 
@@ -230,7 +224,7 @@ fn run_native_tox_file_transfer(size_bytes: u64, timeout: Duration) {
     harness.toxes[1]
         .tox
         .file(&bob_friend_obj, bob_file)
-        .control(ToxFileControl::TOX_FILE_CONTROL_RESUME)
+        .control(FileControl::Resume)
         .unwrap();
 
     let transfer_start = Instant::now();
@@ -243,7 +237,7 @@ fn run_native_tox_file_transfer(size_bytes: u64, timeout: Duration) {
     while transfer_start.elapsed() < timeout {
         // Drain alice's events: handle any pending chunk requests.
         // Each iteration of this inner block processes one tox.events()
-        // call and lets the ToxEvents drop at the closing brace, freeing
+        // call and lets the Events drop at the closing brace, freeing
         // the buffer before we move on.
         {
             let alice_events = harness.toxes[0].tox.events().expect("alice events failed");

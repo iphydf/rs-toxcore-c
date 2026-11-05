@@ -8,7 +8,7 @@ pub fn subtest_send_message(harness: &mut TestHarness) {
     println!("Running subtest_send_message...");
     struct MsgHandler {
         received: Arc<AtomicBool>,
-        receipt: Arc<Mutex<Option<MessageId>>>,
+        receipt: Arc<Mutex<Option<FriendMessageId>>>,
     }
     impl ToxHandler for MsgHandler {
         fn on_friend_message(&mut self, _: FriendNumber, _: MessageType, message: &[u8]) {
@@ -17,7 +17,7 @@ pub fn subtest_send_message(harness: &mut TestHarness) {
             }
         }
         fn on_friend_read_receipt(&mut self, _: FriendNumber, message_id: FriendMessageId) {
-            *self.receipt.lock().unwrap() = Some(MessageId(message_id.0));
+            *self.receipt.lock().unwrap() = Some(message_id);
         }
     }
 
@@ -32,7 +32,7 @@ pub fn subtest_send_message(harness: &mut TestHarness) {
     let f0 = harness.toxes[0].tox.lookup_friend(&pk1).unwrap();
 
     let sent_id = f0
-        .send_message(MessageType::TOX_MESSAGE_TYPE_NORMAL, b"Hello World")
+        .send_message(MessageType::Normal, b"Hello World")
         .unwrap();
 
     let start = Instant::now();

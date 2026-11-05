@@ -26,7 +26,7 @@ pub struct Merge {
     pub into_bot: PublicKey,
 }
 
-/// Where an invite to a chat is, by its last answer and what the home did
+/// The state of an invite to a chat: its last answer, and what the home did
 /// with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InviteStatus {
@@ -34,7 +34,7 @@ pub enum InviteStatus {
     /// Answered to join, which the home hasn't carried out yet.
     Joining,
     Joined(ChatId),
-    /// The home couldn't join it, for a missing or wrong password where
+    /// The home couldn't join it, because of a missing or wrong password if
     /// `needs_password`.
     Failed {
         needs_password: bool,
@@ -51,13 +51,13 @@ pub struct Invite {
     pub status: InviteStatus,
     /// The password the last answer to join gave.
     pub password: Option<String>,
-    /// The chat the home joined, even where Tox failed it later.
+    /// The chat the home joined, even if Tox failed it later.
     pub chat: Option<ChatId>,
 }
 
 impl Invite {
-    /// Whether answering it can still join its chat: a chat that turned the
-    /// home away has spent it.
+    /// Whether answering it can still join its chat: Tox takes an invite only
+    /// once, so a chat that refused the home has used it up.
     pub fn is_open(&self) -> bool {
         match self.status {
             InviteStatus::Pending | InviteStatus::Joining => true,
@@ -81,17 +81,31 @@ pub struct AccountState {
     pub settings: HashMap<Scope, HashMap<u32, Kept<Setting>>>,
     /// By their `ChatInvite` events.
     pub invites: HashMap<EventId, Invite>,
+    /// The account's devices, by key, with their names.
+    pub devices: HashMap<PublicKey, String>,
+    /// The chats the home founded or joined for `NewChat` and `JoinChat`
+    /// events, or None if Tox refused, by those events.
+    pub chats_joined: HashMap<EventId, Option<ChatId>>,
+    /// Per subject and value kind, the last `Fact` or `Want` about it.
+    pub last_said: HashMap<(Subject, u32), EventId>,
 }
 
 impl AccountState {
     /// What the account graph `graph` of `store` adds up to: its events in
     /// rank order, so the last writer wins.
+    #[cfg_attr(tokstyle, tokstyle::pure)]
     pub fn of(store: &EventStore, graph: &GraphId) -> Self {
         let mut state = Self::default();
         for (id, event) in store.by_rank(graph) {
             state.apply(id, &event.content);
         }
         state
+    }
+
+    /// Whether the wish `id` for `subject` to have `value` is the last thing
+    /// said about that kind of value, so nothing newer overrides it.
+    pub fn is_last_said(&self, subject: &Subject, value: &Value, id: &EventId) -> bool {
+        self.last_said.get(&(*subject, value.kind())) == Some(id)
     }
 
     /// The setting of `scope` of `T`'s kind.
@@ -112,22 +126,26 @@ impl AccountState {
         kept.with(value).ok()
     }
 
-    /// The chats the account is in.
     pub fn chats(&self) -> impl Iterator<Item = ChatId> + '_ {
         self.facts.subjects().filter_map(|subject| match subject {
             Subject::Chat(chat) if self.facts.of(subject).contains(&Value::Joined(true)) => {
                 Some(*chat)
             }
-            _ => None,
+            Subject::Account | Subject::Friend(_) | Subject::Chat(_) | Subject::Peer { .. } => None,
         })
     }
 
     /// Applies the event `id`, whose content is `content`, after all events
     /// of lower rank.
+    #[cfg_attr(tokstyle, tokstyle::pure)]
     pub fn apply(&mut self, id: EventId, content: &Content) {
         match content {
             Content::Fact { subject, value } => {
                 self.facts.set(*subject, value.clone());
+                self.last_said.insert((*subject, value.kind()), id);
+            }
+            Content::Want { subject, value } => {
+                self.last_said.insert((*subject, value.kind()), id);
             }
             Content::WantFriend { pk, .. } => {
                 let friend = self.friends.entry(*pk).or_default();
@@ -235,7 +253,37 @@ impl AccountState {
                     invite.chat = chat.or(invite.chat);
                 }
             }
-            _ => {}
+            Content::Device { pk, name } => {
+                self.devices.insert(*pk, name.clone());
+            }
+            Content::DeviceGone { pk } => {
+                self.devices.remove(pk);
+            }
+            Content::ChatJoined { intent, chat } => {
+                self.chats_joined.insert(*intent, *chat);
+            }
+            Content::Received { .. }
+            | Content::Send { .. }
+            | Content::Sent { .. }
+            | Content::Delivered { .. }
+            | Content::Notice { .. }
+            | Content::File { .. }
+            | Content::FileEnded { .. }
+            | Content::FileAnswered { .. }
+            | Content::Call { .. }
+            | Content::CallEnded { .. }
+            | Content::ReceivedPrivately { .. }
+            | Content::SendPrivately { .. }
+            | Content::PeerJoined { .. }
+            | Content::PeerLeft { .. }
+            | Content::PeerRenamed { .. }
+            | Content::TopicSet { .. }
+            | Content::TitleSet { .. }
+            | Content::Moderated { .. }
+            | Content::NewChat { .. }
+            | Content::JoinChat { .. }
+            | Content::InviteToChat { .. }
+            | Content::Unknown { .. } => {}
         }
     }
 }

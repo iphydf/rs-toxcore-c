@@ -1,21 +1,11 @@
+use crate::has_tox_flag;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput};
 
 pub fn derive_tox_size_impl(input: DeriveInput) -> TokenStream {
     let name = &input.ident;
-    let mut is_flat = false;
-
-    for attr in &input.attrs {
-        if attr.path().is_ident("tox") {
-            let _ = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("flat") {
-                    is_flat = true;
-                }
-                Ok(())
-            });
-        }
-    }
+    let is_flat = has_tox_flag(&input.attrs, "flat");
 
     let mut generics = input.generics.clone();
     for param in &mut generics.params {
@@ -33,17 +23,7 @@ pub fn derive_tox_size_impl(input: DeriveInput) -> TokenStream {
                 let mut size_expr = quote! { Some(0) };
                 let mut byte_like_expr = quote! { true };
                 for f in s.fields.iter().rev() {
-                    let mut skip = false;
-                    for attr in &f.attrs {
-                        if attr.path().is_ident("tox") {
-                            let _ = attr.parse_nested_meta(|meta| {
-                                if meta.path.is_ident("skip") {
-                                    skip = true;
-                                }
-                                Ok(())
-                            });
-                        }
-                    }
+                    let skip = has_tox_flag(&f.attrs, "skip");
 
                     if skip {
                         continue;

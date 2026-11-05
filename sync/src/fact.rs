@@ -120,14 +120,14 @@ pub enum Value {
     TopicLock(bool) = 10,
     VoiceState(VoiceState) = 11,
     Joined(bool) = 12,
-    /// Our name in a chat, where it has its own.
+    /// Our name in a chat, if it has its own.
     SelfName(String) = 13,
     Present(bool) = 14,
     Address(Vec<u8>) = 15,
     Call(CallState) = 16,
     /// The home device connects devices to the account's calls.
     CallRelay(bool) = 17,
-    /// Our key in a group, which is its own.
+    /// Our key in a group, which differs from our Tox key.
     SelfKey(PublicKey) = 18,
     /// None for no avatar.
     Avatar(Option<BlobId>) = 19,
@@ -139,7 +139,7 @@ pub enum Value {
     },
 }
 
-/// Facts are kept as events where they change seldom enough to be history;
+/// Facts are kept as events when they change seldom enough to be history;
 /// the rest are live, sent only within a session.
 pub fn is_kept(subject: &Subject, value: &Value) -> bool {
     !matches!(
@@ -183,7 +183,7 @@ pub fn is_wishable(subject: &Subject, value: &Value) -> bool {
             chat: ChatId::Group(_),
             ..
         } => matches!(value, Value::Role(_) | Value::Present(false)),
-        _ => false,
+        Subject::Friend(_) | Subject::Peer { .. } => false,
     }
 }
 
@@ -208,7 +208,26 @@ impl Facts {
     pub fn name(&self, subject: &Subject) -> Option<&str> {
         self.find(subject, |value| match value {
             Value::Name(name) => Some(name.as_str()),
-            _ => None,
+            Value::StatusMessage(_)
+            | Value::Status(_)
+            | Value::Connection(_)
+            | Value::Typing(_)
+            | Value::Topic(_)
+            | Value::Role(_)
+            | Value::Privacy(_)
+            | Value::PeerLimit(_)
+            | Value::Password(_)
+            | Value::TopicLock(_)
+            | Value::VoiceState(_)
+            | Value::Joined(_)
+            | Value::SelfName(_)
+            | Value::Present(_)
+            | Value::Address(_)
+            | Value::Call(_)
+            | Value::CallRelay(_)
+            | Value::SelfKey(_)
+            | Value::Avatar(_)
+            | Value::Unknown { .. } => None,
         })
     }
 
@@ -249,7 +268,7 @@ impl Facts {
         }
     }
 
-    /// What tells a device that knows `self` what's in `now`.
+    /// Returns what tells a device that knows `self` what's in `now`.
     pub fn changes(&self, now: &Facts) -> Vec<(Subject, Value)> {
         let mut changes: Vec<(Subject, Value)> = now
             .iter()

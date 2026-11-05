@@ -361,11 +361,7 @@ fn value(j: &J) -> Value {
         )),
         "typing" => Value::Typing(flag(v)),
         "topic" => Value::Topic(text(v)),
-        "role" => Value::Role(named(
-            &ROLES,
-            vec![Role::Founder, Role::Moderator, Role::User, Role::Observer],
-            v,
-        )),
+        "role" => Value::Role(role(v)),
         "privacy" => Value::Privacy(named(
             &PRIVACIES,
             vec![Privacy::Public, Privacy::Private],
@@ -402,6 +398,24 @@ fn value(j: &J) -> Value {
     }
 }
 
+fn role(j: &J) -> Role {
+    named(
+        &ROLES,
+        vec![Role::Founder, Role::Moderator, Role::User, Role::Observer],
+        j,
+    )
+}
+
+fn role_json(role: &Role) -> Option<J> {
+    match role {
+        Role::Founder => Some(json!("founder")),
+        Role::Moderator => Some(json!("moderator")),
+        Role::User => Some(json!("user")),
+        Role::Observer => Some(json!("observer")),
+        Role::Unknown { .. } => None,
+    }
+}
+
 /// A value of a known kind but an unknown one of Tox's is unknown as a
 /// whole, as it shows nothing.
 fn value_json(value: &Value) -> J {
@@ -423,13 +437,7 @@ fn value_json(value: &Value) -> J {
         },
         Value::Typing(v) => json!({"typing": v}),
         Value::Topic(v) => json!({"topic": v}),
-        Value::Role(v) => match v {
-            Role::Founder => json!({"role": "founder"}),
-            Role::Moderator => json!({"role": "moderator"}),
-            Role::User => json!({"role": "user"}),
-            Role::Observer => json!({"role": "observer"}),
-            Role::Unknown { .. } => unknown,
-        },
+        Value::Role(v) => role_json(v).map_or(unknown, |r| json!({"role": r})),
         Value::Privacy(v) => match v {
             Privacy::Public => json!({"privacy": "public"}),
             Privacy::Private => json!({"privacy": "private"}),
@@ -514,16 +522,16 @@ fn setting_json(setting: &Setting) -> J {
 
 fn message_kind(j: &J) -> MessageType {
     match j.as_str() {
-        Some("normal") => MessageType::TOX_MESSAGE_TYPE_NORMAL,
-        Some("action") => MessageType::TOX_MESSAGE_TYPE_ACTION,
+        Some("normal") => MessageType::Normal,
+        Some("action") => MessageType::Action,
         _ => panic!("not a message kind: {j}"),
     }
 }
 
 fn message_kind_json(kind: &MessageType) -> J {
     json!(match kind {
-        MessageType::TOX_MESSAGE_TYPE_NORMAL => "normal",
-        MessageType::TOX_MESSAGE_TYPE_ACTION => "action",
+        MessageType::Normal => "normal",
+        MessageType::Action => "action",
     })
 }
 
@@ -636,6 +644,74 @@ fn content(j: &J) -> Content {
         "clear_setting" => Content::ClearSetting {
             scope: scope(&c["scope"]),
             kind: uint(&c["kind"]).try_into().unwrap(),
+        },
+        "received_privately" => Content::ReceivedPrivately {
+            from: pk(&c["from"]),
+            sender: text(&c["sender"]),
+            message: bytes(&c["message"]),
+            kind: message_kind(&c["kind"]),
+        },
+        "send_privately" => Content::SendPrivately {
+            to: pk(&c["to"]),
+            sender: text(&c["sender"]),
+            message: bytes(&c["message"]),
+            kind: message_kind(&c["kind"]),
+        },
+        "peer_joined" => Content::PeerJoined {
+            peer: pk(&c["peer"]),
+            name: text(&c["name"]),
+        },
+        "peer_left" => Content::PeerLeft {
+            peer: pk(&c["peer"]),
+            name: text(&c["name"]),
+        },
+        "peer_renamed" => Content::PeerRenamed {
+            peer: pk(&c["peer"]),
+            old: text(&c["old"]),
+            name: text(&c["name"]),
+        },
+        "topic_set" => Content::TopicSet {
+            by: opt(&c["by"], pk),
+            name: text(&c["name"]),
+            topic: text(&c["topic"]),
+        },
+        "title_set" => Content::TitleSet {
+            by: opt(&c["by"], pk),
+            name: text(&c["name"]),
+            title: text(&c["title"]),
+        },
+        "moderated" => Content::Moderated {
+            by: opt(&c["by"], pk),
+            name: text(&c["name"]),
+            peer: opt(&c["peer"], pk),
+            peer_name: text(&c["peer_name"]),
+            role: opt(&c["role"], role),
+        },
+        "device" => Content::Device {
+            pk: pk(&c["pk"]),
+            name: text(&c["name"]),
+        },
+        "device_gone" => Content::DeviceGone { pk: pk(&c["pk"]) },
+        "new_chat" => Content::NewChat {
+            kind: chat_kind(&c["kind"]),
+            name: text(&c["name"]),
+            privacy: named(
+                &PRIVACIES,
+                vec![Privacy::Public, Privacy::Private],
+                &c["privacy"],
+            ),
+        },
+        "join_chat" => Content::JoinChat {
+            chat_id: GroupChatId(b32(&c["chat_id"])),
+            password: opt(&c["password"], text),
+        },
+        "invite_to_chat" => Content::InviteToChat {
+            chat: chat(&c["chat"]),
+            friend: pk(&c["friend"]),
+        },
+        "chat_joined" => Content::ChatJoined {
+            intent: id(&c["intent"]),
+            chat: opt(&c["chat"], chat),
         },
         other => panic!("not content: {other}"),
     }
@@ -791,6 +867,92 @@ fn content_json(content: &Content) -> J {
         Content::ClearSetting { scope, kind } => json!({"clear_setting": {
             "scope": scope_json(scope),
             "kind": kind,
+        }}),
+        Content::PeerJoined { peer, name } => {
+            json!({"peer_joined": {"peer": hex(&peer.0), "name": name}})
+        }
+        Content::PeerLeft { peer, name } => {
+            json!({"peer_left": {"peer": hex(&peer.0), "name": name}})
+        }
+        Content::PeerRenamed { peer, old, name } => {
+            json!({"peer_renamed": {"peer": hex(&peer.0), "old": old, "name": name}})
+        }
+        Content::TopicSet { by, name, topic } => json!({"topic_set": {
+            "by": by.map(|k| hex(&k.0)),
+            "name": name,
+            "topic": topic,
+        }}),
+        Content::TitleSet { by, name, title } => json!({"title_set": {
+            "by": by.map(|k| hex(&k.0)),
+            "name": name,
+            "title": title,
+        }}),
+        // A role this version doesn't know shows nothing.
+        Content::Moderated {
+            role: Some(Role::Unknown { .. }),
+            ..
+        } => json!({"unknown": 17}),
+        Content::Moderated {
+            by,
+            name,
+            peer,
+            peer_name,
+            role,
+        } => json!({"moderated": {
+            "by": by.map(|k| hex(&k.0)),
+            "name": name,
+            "peer": peer.map(|k| hex(&k.0)),
+            "peer_name": peer_name,
+            "role": role.as_ref().and_then(role_json),
+        }}),
+        Content::ReceivedPrivately {
+            from,
+            sender,
+            message,
+            kind,
+        } => json!({"received_privately": {
+            "from": hex(&from.0),
+            "sender": sender,
+            "message": hex(message),
+            "kind": message_kind_json(kind),
+        }}),
+        Content::SendPrivately {
+            to,
+            sender,
+            message,
+            kind,
+        } => json!({"send_privately": {
+            "to": hex(&to.0),
+            "sender": sender,
+            "message": hex(message),
+            "kind": message_kind_json(kind),
+        }}),
+        Content::Device { pk, name } => json!({"device": {"pk": hex(&pk.0), "name": name}}),
+        Content::DeviceGone { pk } => json!({"device_gone": {"pk": hex(&pk.0)}}),
+        // Of a kind or privacy this version doesn't know, it founds nothing.
+        Content::NewChat {
+            kind,
+            name,
+            privacy,
+        } => match (chat_kind_json(kind), privacy) {
+            (Some(kind), Privacy::Public | Privacy::Private) => json!({"new_chat": {
+                "kind": kind,
+                "name": name,
+                "privacy": if *privacy == Privacy::Public { "public" } else { "private" },
+            }}),
+            _ => json!({"unknown": 79}),
+        },
+        Content::JoinChat { chat_id, password } => json!({"join_chat": {
+            "chat_id": hex(&chat_id.0),
+            "password": password,
+        }}),
+        Content::InviteToChat { chat, friend } => json!({"invite_to_chat": {
+            "chat": chat_json(chat),
+            "friend": hex(&friend.0),
+        }}),
+        Content::ChatJoined { intent, chat } => json!({"chat_joined": {
+            "intent": hex(&intent.0),
+            "chat": chat.as_ref().map(chat_json),
         }}),
         Content::Unknown { discriminant, .. } => json!({"unknown": discriminant}),
     }
@@ -1022,6 +1184,20 @@ fn state_json(state: &AccountState) -> J {
         "read": sorted(read),
         "settings": sorted(settings),
         "invites": sorted(invites),
+        "devices": sorted(
+            state
+                .devices
+                .iter()
+                .map(|(pk, name)| json!({"pk": hex(&pk.0), "name": name}))
+                .collect()
+        ),
+        "chats_joined": sorted(
+            state
+                .chats_joined
+                .iter()
+                .map(|(intent, chat)| json!({"intent": hex(&intent.0), "chat": chat.as_ref().map(chat_json)}))
+                .collect()
+        ),
     })
 }
 
@@ -1433,12 +1609,13 @@ fn session_cases(run: &mut Run, file: &mut J) {
         let device = pk(&labels.resolve(&case["device"]));
         let home_key = pk(&labels.resolve(&case["home"]));
         let mut home = pool.store(&case["home_store"]);
-        let mut replica = Replica::new(device, &home_key, EventStore::default());
+        let mut store = EventStore::default();
+        let mut replica = Replica::new(device, &home_key);
         for step in case["steps"].as_array_mut().unwrap() {
             let (action, spec) = variant_of_step(step);
             match action.as_str() {
                 "receive" => {
-                    let replies = replica.received(message(&labels.resolve(&spec)));
+                    let replies = replica.received(&mut store, message(&labels.resolve(&spec)));
                     run.expect(&labels, &name, step, "replies", replies_json(&replies));
                 }
                 "offline" => replica.offline(),
@@ -1452,11 +1629,12 @@ fn session_cases(run: &mut Run, file: &mut J) {
                 "author" => {
                     let spec = labels.resolve(&spec);
                     let (new, push) = replica.author(
+                        &mut store,
                         GraphId(b32(&spec["graph"])),
                         spec["time"].as_i64().unwrap(),
                         content(&spec["content"]),
                     );
-                    let bytes = replica.store().bytes(&new).unwrap().to_vec();
+                    let bytes = store.bytes(&new).unwrap().to_vec();
                     labels.add_event(&text(&spec["label"]), &bytes);
                     for message in &push {
                         if let SessionMessage::Events(events) = message {
@@ -1465,7 +1643,7 @@ fn session_cases(run: &mut Run, file: &mut J) {
                             }
                         }
                     }
-                    let authored = event_json(replica.store().get(&new).unwrap());
+                    let authored = event_json(store.get(&new).unwrap());
                     run.expect(&labels, &name, step, "event", authored);
                     run.expect(&labels, &name, step, "push", replies_json(&push));
                 }
@@ -1474,16 +1652,10 @@ fn session_cases(run: &mut Run, file: &mut J) {
                         Some("session") => vec![Replica::hello(), session::summary(&home)],
                         _ => list(&labels.resolve(&spec), message),
                     };
-                    if !converse(&mut home, &mut replica, start) {
+                    if !converse(&mut home, &mut store, &mut replica, start) {
                         run.failures.push(format!("{name}: the session never ends"));
                     }
-                    run.expect(
-                        &labels,
-                        &name,
-                        step,
-                        "replica",
-                        counts_json(replica.store()),
-                    );
+                    run.expect(&labels, &name, step, "replica", counts_json(&store));
                     run.expect(&labels, &name, step, "home", counts_json(&home));
                 }
                 other => panic!("not a step: {other}"),
@@ -1506,7 +1678,12 @@ fn variant_of_step(step: &J) -> (String, J) {
 /// Runs a session between a home's store and a replica until neither has
 /// anything left to say. The home answers from its store, History too, and
 /// takes the events it's sent. False if it doesn't end.
-fn converse(home: &mut EventStore, replica: &mut Replica, start: Vec<SessionMessage>) -> bool {
+fn converse(
+    home: &mut EventStore,
+    store: &mut EventStore,
+    replica: &mut Replica,
+    start: Vec<SessionMessage>,
+) -> bool {
     let mut to_replica = start;
     for _ in 0..MAX_ROUNDS {
         if to_replica.is_empty() {
@@ -1514,7 +1691,7 @@ fn converse(home: &mut EventStore, replica: &mut Replica, start: Vec<SessionMess
         }
         let to_home: Vec<SessionMessage> = to_replica
             .into_iter()
-            .flat_map(|message| replica.received(message))
+            .flat_map(|message| replica.received(store, message))
             .collect();
         to_replica = to_home
             .into_iter()

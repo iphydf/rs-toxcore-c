@@ -18,7 +18,7 @@ pub fn subtest_persistence() {
 
     // Restore
     let mut opts = Options::new().unwrap();
-    opts.set_savedata_type(ToxSavedataType::TOX_SAVEDATA_TYPE_TOX_SAVE);
+    opts.set_savedata_type(SavedataType::ToxSave);
     opts.set_savedata_data(&savedata).unwrap();
     opts.set_local_discovery_enabled(false);
     let tox = Tox::new(opts).unwrap();

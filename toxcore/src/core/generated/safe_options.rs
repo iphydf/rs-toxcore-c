@@ -20,23 +20,23 @@ impl Options {
             .dht_announcements_enabled(dht_announcements_enabled)
     }
 
-    pub fn set_proxy_type(&mut self, proxy_type: ToxProxyType) {
+    pub fn set_proxy_type(&mut self, proxy_type: ProxyType) {
         self.inner.proxy_type(proxy_type)
     }
 
-    pub fn set_proxy_port(&mut self, proxy_port: u16) {
+    pub fn set_proxy_port(&mut self, proxy_port: Port) {
         self.inner.proxy_port(proxy_port)
     }
 
-    pub fn set_start_port(&mut self, start_port: u16) {
+    pub fn set_start_port(&mut self, start_port: Port) {
         self.inner.start_port(start_port)
     }
 
-    pub fn set_end_port(&mut self, end_port: u16) {
+    pub fn set_end_port(&mut self, end_port: Port) {
         self.inner.end_port(end_port)
     }
 
-    pub fn set_tcp_port(&mut self, tcp_port: u16) {
+    pub fn set_tcp_port(&mut self, tcp_port: Port) {
         self.inner.tcp_port(tcp_port)
     }
 
@@ -44,7 +44,7 @@ impl Options {
         self.inner.hole_punching_enabled(hole_punching_enabled)
     }
 
-    pub fn set_savedata_type(&mut self, savedata_type: ToxSavedataType) {
+    pub fn set_savedata_type(&mut self, savedata_type: SavedataType) {
         self.inner.savedata_type(savedata_type)
     }
 
@@ -54,11 +54,6 @@ impl Options {
 
     pub fn set_experimental_owned_data(&mut self, experimental_owned_data: bool) {
         self.inner.experimental_owned_data(experimental_owned_data)
-    }
-
-    pub fn set_experimental_thread_safety(&mut self, experimental_thread_safety: bool) {
-        self.inner
-            .experimental_thread_safety(experimental_thread_safety)
     }
 
     pub fn set_experimental_groups_persistence(&mut self, experimental_groups_persistence: bool) {

@@ -2,7 +2,6 @@ macro_rules! ffi_call {
     ($func:ident, $ok_variant:path $(, $args:expr)*) => {
         {
             let mut err = $ok_variant;
-            // The compiler will infer the type of err from the assignment
             let res = unsafe { ffi::$func($($args,)* &mut err) };
             if err == $ok_variant {
                 Ok(res)

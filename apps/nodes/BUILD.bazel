@@ -1,4 +1,5 @@
 load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_library", "rustfmt_test")
+load("//rs-tokstyle:defs.bzl", "rs_tokstyle")
 
 rust_library(
     name = "nodes",
@@ -17,6 +18,12 @@ rust_library(
 
 rust_clippy(
     name = "clippy",
+    testonly = True,
+    deps = [":nodes"],
+)
+
+rs_tokstyle(
+    name = "tokstyle",
     testonly = True,
     deps = [":nodes"],
 )

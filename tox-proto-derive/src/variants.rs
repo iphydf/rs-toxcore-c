@@ -19,7 +19,7 @@ pub fn derive_variants_impl(input: &DeriveInput) -> TokenStream {
             };
         }
         Data::Enum(e) => e,
-        _ => return quote! {},
+        Data::Struct(_) | Data::Union(_) => return quote! {},
     };
     let Some(catch_all) = e
         .variants
@@ -40,7 +40,10 @@ pub fn derive_variants_impl(input: &DeriveInput) -> TokenStream {
     let known: Vec<_> = e
         .variants
         .iter()
-        .zip(crate::discriminants(&e.variants))
+        .zip(match crate::discriminants(&e.variants) {
+            Ok(idxs) => idxs,
+            Err(e) => return e.to_compile_error(),
+        })
         .filter(|(v, _)| v.ident != *catch_all)
         .map(|(v, idx)| (v, u32::from(idx)))
         .collect();
@@ -76,7 +79,9 @@ pub fn derive_variants_impl(input: &DeriveInput) -> TokenStream {
         let v_ident = &v.ident;
         let ty = match &v.fields {
             Fields::Unnamed(f) if f.unnamed.len() == 1 => &f.unnamed[0].ty,
-            _ => return error(v, "a #[tox(lenient)] enum's variants each wrap one struct"),
+            Fields::Named(_) | Fields::Unnamed(_) | Fields::Unit => {
+                return error(v, "a #[tox(lenient)] enum's variants each wrap one struct");
+            }
         };
         access.push(quote! {
             const _: fn() = || {

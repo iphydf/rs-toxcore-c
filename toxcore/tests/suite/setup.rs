@@ -7,8 +7,8 @@ pub struct TestLogger {
 }
 
 impl ToxLogger for TestLogger {
-    fn log(&mut self, level: ToxLogLevel, file: &str, line: u32, func: &str, message: &str) {
-        if level == ToxLogLevel::TOX_LOG_LEVEL_TRACE {
+    fn log(&mut self, level: LogLevel, file: &str, line: u32, func: &str, message: &str) {
+        if level == LogLevel::Trace {
             return;
         }
         eprintln!(
@@ -43,9 +43,9 @@ impl TestHarness {
             let mut opts = Options::new().unwrap();
             opts.set_ipv6_enabled(true);
             opts.set_local_discovery_enabled(false);
-            opts.set_start_port(port);
-            opts.set_end_port(port);
-            opts.set_tcp_port(port);
+            opts.set_start_port(Port(port));
+            opts.set_end_port(Port(port));
+            opts.set_tcp_port(Port(port));
             opts.set_logger(logger);
 
             match Tox::new(opts) {
@@ -87,13 +87,9 @@ impl TestHarness {
         // 1. Create group on toxes[0]
         let gn0 = self.toxes[0]
             .tox
-            .group_new(
-                ToxGroupPrivacyState::TOX_GROUP_PRIVACY_STATE_PRIVATE,
-                b"MainGroup",
-                b"Alice",
-            )
+            .group_new(GroupPrivacyState::Private, b"MainGroup", b"Alice")
             .unwrap()
-            .get_number();
+            .number();
         self.toxes[0].group = Some(gn0);
 
         // 2. Invite others
@@ -143,7 +139,7 @@ impl TestHarness {
                 .tox
                 .group_invite_accept(&friend, &data, name.as_bytes(), None)
                 .unwrap()
-                .get_number();
+                .number();
             self.toxes[i].group = Some(gn);
         }
 
@@ -256,7 +252,7 @@ impl TestHarness {
             let f_res = self.toxes[i].tox.lookup_friend(&handler.pk);
             if let Ok(friend) = f_res
                 && let Ok(conn) = friend.connection_status()
-                && conn != ToxConnection::TOX_CONNECTION_NONE
+                && conn != Connection::None
             {
                 handler.connected = true;
                 break;

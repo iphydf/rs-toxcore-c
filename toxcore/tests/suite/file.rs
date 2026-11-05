@@ -33,7 +33,7 @@ pub fn subtest_file_transfer(harness: &mut TestHarness) {
             &mut self,
             friend: FriendNumber,
             file: FileNumber,
-            _kind: u32,
+            _kind: FileKind,
             file_size: u64,
             _filename: &[u8],
         ) {
@@ -76,9 +76,9 @@ pub fn subtest_file_transfer(harness: &mut TestHarness) {
             &mut self,
             _friend: FriendNumber,
             _file: FileNumber,
-            control: ToxFileControl,
+            control: FileControl,
         ) {
-            if control == ToxFileControl::TOX_FILE_CONTROL_CANCEL {
+            if control == FileControl::Cancel {
                 self.state.lock().unwrap().canceled = true;
             }
         }
@@ -106,7 +106,7 @@ pub fn subtest_file_transfer(harness: &mut TestHarness) {
         .tox
         .file_send(
             &f0,
-            ToxFileKind::TOX_FILE_KIND_DATA as u32,
+            FileKind::DATA,
             file_data.len() as u64,
             None,
             b"test.txt",
@@ -135,7 +135,7 @@ pub fn subtest_file_transfer(harness: &mut TestHarness) {
     harness.toxes[1]
         .tox
         .file(&bob_friend_obj, bob_file)
-        .control(ToxFileControl::TOX_FILE_CONTROL_RESUME)
+        .control(FileControl::Resume)
         .unwrap();
 
     // 4. Drive transfer
@@ -199,7 +199,7 @@ pub fn subtest_file_transfer(harness: &mut TestHarness) {
         .tox
         .file_send(
             &f0,
-            ToxFileKind::TOX_FILE_KIND_DATA as u32,
+            FileKind::DATA,
             file_data_cancel.len() as u64,
             None,
             b"cancel.txt",
@@ -233,15 +233,13 @@ pub fn subtest_file_transfer(harness: &mut TestHarness) {
     harness.toxes[1]
         .tox
         .file(&bob_friend_obj, bob_file)
-        .control(ToxFileControl::TOX_FILE_CONTROL_RESUME)
+        .control(FileControl::Resume)
         .unwrap();
     println!("Bob accepted file.");
 
     // Alice cancels immediately
     println!("Alice canceling file...");
-    file_obj
-        .control(ToxFileControl::TOX_FILE_CONTROL_CANCEL)
-        .unwrap();
+    file_obj.control(FileControl::Cancel).unwrap();
     println!("Alice canceled file.");
 
     // Wait for cancel event on Bob
@@ -271,7 +269,14 @@ pub fn subtest_file_after_cancel(harness: &mut TestHarness) {
         completed: Vec<FileNumber>,
     }
     impl ToxHandler for Files {
-        fn on_file_recv(&mut self, _: FriendNumber, file: FileNumber, _: u32, _: u64, _: &[u8]) {
+        fn on_file_recv(
+            &mut self,
+            _: FriendNumber,
+            file: FileNumber,
+            _: FileKind,
+            _: u64,
+            _: &[u8],
+        ) {
             self.offered.push(file);
         }
         fn on_file_recv_chunk(&mut self, _: FriendNumber, file: FileNumber, _: u64, data: &[u8]) {
@@ -303,13 +308,7 @@ pub fn subtest_file_after_cancel(harness: &mut TestHarness) {
     let send = |name: &[u8]| {
         harness.toxes[0]
             .tox
-            .file_send(
-                &sender,
-                ToxFileKind::TOX_FILE_KIND_DATA as u32,
-                data.len() as u64,
-                None,
-                name,
-            )
+            .file_send(&sender, FileKind::DATA, data.len() as u64, None, name)
             .unwrap()
             .number()
     };
@@ -331,7 +330,7 @@ pub fn subtest_file_after_cancel(harness: &mut TestHarness) {
         harness.toxes[1]
             .tox
             .file(&receiver, file)
-            .control(ToxFileControl::TOX_FILE_CONTROL_RESUME)
+            .control(FileControl::Resume)
             .unwrap();
     };
 
@@ -345,7 +344,7 @@ pub fn subtest_file_after_cancel(harness: &mut TestHarness) {
     harness.toxes[0]
         .tox
         .file(&sender, cancelled)
-        .control(ToxFileControl::TOX_FILE_CONTROL_CANCEL)
+        .control(FileControl::Cancel)
         .unwrap();
     run(&mut files, settle, &|_| false);
 

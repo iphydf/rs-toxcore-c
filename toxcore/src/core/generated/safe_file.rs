@@ -27,15 +27,7 @@ impl<'a> File<'a> {
         self.friend
     }
 
-    pub fn send_chunk(&self, position: u64, data: &[u8]) -> Result<()> {
-        self.tox
-            .inner
-            .core
-            .file_send_chunk(self.friend, self.number, position, data)
-            .map_err(ToxError::FileSendChunk)
-    }
-
-    pub fn control(&self, control: ToxFileControl) -> Result<()> {
+    pub fn control(&self, control: FileControl) -> Result<()> {
         self.tox
             .inner
             .core
@@ -57,5 +49,13 @@ impl<'a> File<'a> {
             .core
             .file_get_file_id(self.friend, self.number)
             .map_err(ToxError::FileGet)
+    }
+
+    pub fn send_chunk(&self, position: u64, data: &[u8]) -> Result<()> {
+        self.tox
+            .inner
+            .core
+            .file_send_chunk(self.friend, self.number, position, data)
+            .map_err(ToxError::FileSendChunk)
     }
 }

@@ -11,21 +11,21 @@ impl Tox {
         self.inner.core.get_savedata()
     }
 
-    pub fn bootstrap(&self, host: &str, port: u16, public_key: &DhtId) -> Result<()> {
+    pub fn bootstrap(&self, host: &str, port: Port, public_key: &DhtId) -> Result<()> {
         self.inner
             .core
             .bootstrap(host, port, public_key)
             .map_err(ToxError::Bootstrap)
     }
 
-    pub fn add_tcp_relay(&self, host: &str, port: u16, public_key: &DhtId) -> Result<()> {
+    pub fn add_tcp_relay(&self, host: &str, port: Port, public_key: &DhtId) -> Result<()> {
         self.inner
             .core
             .add_tcp_relay(host, port, public_key)
             .map_err(ToxError::Bootstrap)
     }
 
-    pub fn connection_status(&self) -> ToxConnection {
+    pub fn connection_status(&self) -> Connection {
         self.inner.core.self_get_connection_status()
     }
 
@@ -83,11 +83,11 @@ impl Tox {
         self.inner.core.self_get_status_message()
     }
 
-    pub fn set_status(&self, status: ToxUserStatus) {
+    pub fn set_status(&self, status: UserStatus) {
         self.inner.core.self_set_status(status)
     }
 
-    pub fn status(&self) -> ToxUserStatus {
+    pub fn status(&self) -> UserStatus {
         self.inner.core.self_get_status()
     }
 
@@ -106,14 +106,14 @@ impl Tox {
         self.inner.core.self_get_dht_id()
     }
 
-    pub fn udp_port(&self) -> Result<u16> {
+    pub fn udp_port(&self) -> Result<Port> {
         self.inner
             .core
             .self_get_udp_port()
             .map_err(ToxError::GetPort)
     }
 
-    pub fn tcp_port(&self) -> Result<u16> {
+    pub fn tcp_port(&self) -> Result<Port> {
         self.inner
             .core
             .self_get_tcp_port()

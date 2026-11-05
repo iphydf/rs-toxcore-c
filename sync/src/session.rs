@@ -76,6 +76,7 @@ fn events<'a>(
 
 /// The replies to a message, as far as they only need the store. `Events`
 /// and `Live` are for the caller, which knows what to accept.
+#[cfg_attr(tokstyle, tokstyle::pure)]
 pub fn answer(store: &EventStore, message: &SessionMessage) -> Vec<SessionMessage> {
     match message {
         SessionMessage::Summary(theirs) => heads_for(store, theirs),
@@ -96,6 +97,12 @@ pub fn answer(store: &EventStore, message: &SessionMessage) -> Vec<SessionMessag
                     .filter(|id| store.get(id).is_some_and(|e| e.graph == *graph)),
             )
         }
-        _ => Vec::new(),
+        SessionMessage::Hello { .. }
+        | SessionMessage::Events(_)
+        | SessionMessage::WantBlob(_)
+        | SessionMessage::NoBlob(_)
+        | SessionMessage::Facts { .. }
+        | SessionMessage::Call { .. }
+        | SessionMessage::Unknown { .. } => Vec::new(),
     }
 }

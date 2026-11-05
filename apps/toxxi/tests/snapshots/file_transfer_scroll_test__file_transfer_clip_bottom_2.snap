@@ -1,0 +1,26 @@
+---
+source: rs-toxcore-c/apps/toxxi/tests/file_transfer_scroll_test.rs
+expression: rendered
+---
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Contacts                │Test Group                                                            ┌Participants (2)────────
+  ▼ System              │        ●       | Initial 26                                         ↑│& Tester                
+    ○ Status            │        ●       | Initial 27                                         ││  Alice                 
+    ○ Logs              │        ●       | Initial 28                                         ││                        
+    ○ Files             │        ●       | Initial 29                                         ││                        
+                        │        ●       | Initial 30                                         ││                        
+  ▼ 👤 Friends          │        ●       | Initial 31                                         ││                        
+                        │        ●       | Initial 32                                         █│                        
+  ▼ 👥 Groups           │        ●       | Initial 33                                         █│                        
+┃   # Test Group        │        ●       | Initial 34                                         █│                        
+                        │        ●       | Initial 35                                         ││                        
+  ▼ 🧑‍🤝‍🧑 Conferences      │        ●       | Initial 36                                         ││                        
+                        │        ●       | Initial 37                                         ││                        
+                        │        ●       | Initial 38                                         ││                        
+                        │        ●       | Initial 39                                         ││                        
+                        │        ●       | ╭─ 📥 clipping_test.bin [1.0 MB]──────────────────╮↓│                        
+[12:00] [Offline] <Tester (Tester)> [Online] [0:Status] [1:Test Group]                                                  
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│>                                                                                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
