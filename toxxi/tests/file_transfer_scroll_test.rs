@@ -86,6 +86,7 @@ fn setup_clipping_model(trailing_messages: usize) -> (Model, GroupChatId) {
         status: MessageStatus::Incoming,
         message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
         highlighted: false,
+        privately: None,
     };
     if let Some(conv) = model.domain.conversations.get_mut(&window_id) {
         conv.messages.push(ft_msg);

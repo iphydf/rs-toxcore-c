@@ -248,6 +248,8 @@
       ],
       "name": "the last writer wins",
       "state": {
+        "chats_joined": [],
+        "devices": [],
         "facts": [
           [{ "chat": "&chat" }, { "joined": false }],
           [{ "friend": "%bob" }, { "name": "Bob" }],
@@ -318,6 +320,8 @@
       ],
       "name": "of concurrent settings, the higher event ID wins",
       "state": {
+        "chats_joined": [],
+        "devices": [],
         "facts": [],
         "friends": [],
         "invites": [],
@@ -363,6 +367,8 @@
       ],
       "name": "a setting and a clearing at once",
       "state": {
+        "chats_joined": [],
+        "devices": [],
         "facts": [],
         "friends": [],
         "invites": [],
@@ -427,6 +433,8 @@
       ],
       "name": "concurrent friends and reads",
       "state": {
+        "chats_joined": [],
+        "devices": [],
         "facts": [],
         "friends": [{ "pk": "%bob", "request": null, "wanted": true }],
         "invites": [],
@@ -606,6 +614,8 @@
       ],
       "name": "invites follow their last answer",
       "state": {
+        "chats_joined": [],
+        "devices": [],
         "facts": [],
         "friends": [],
         "invites": [
@@ -702,6 +712,8 @@
       ],
       "name": "avatars are kept, the last one wins",
       "state": {
+        "chats_joined": [],
+        "devices": [],
         "facts": [
           [
             "account",
@@ -711,6 +723,79 @@
           ],
           [{ "friend": "%bob" }, { "avatar": null }]
         ],
+        "friends": [],
+        "invites": [],
+        "merges": [],
+        "read": [],
+        "relay_bots": [],
+        "settings": []
+      }
+    },
+    {
+      "events": [
+        {
+          "bytes": "920396c4206fcb85e59b8be9d9e8851d580aaa9237821cddedab6214ee43b0a08ccafbaadfc4200101010101010101010101010101010101010101010101010101010101010101900000924d92c4200202020202020202020202020202020202020202020202020202020202020202a550686f6e65",
+          "content": { "device": { "name": "Phone", "pk": "%bob" } },
+          "label": "phone"
+        },
+        {
+          "bytes": "920396c4206fcb85e59b8be9d9e8851d580aaa9237821cddedab6214ee43b0a08ccafbaadfc420010101010101010101010101010101010101010101010101010101010101010191c4202aa9aa126112037c862c21eda87c983c8ea3e78ca3d6433281d02905fb0a1fd90100924d92c4200707070707070707070707070707070707070707070707070707070707070707a64c6170746f70",
+          "content": { "device": { "name": "Laptop", "pk": "%carol" } },
+          "label": "laptop",
+          "parents": ["@phone"]
+        },
+        {
+          "bytes": "920396c4206fcb85e59b8be9d9e8851d580aaa9237821cddedab6214ee43b0a08ccafbaadfc420010101010101010101010101010101010101010101010101010101010101010191c420a6a0488d5c0a5c37ad0a50cfa8fdf08ba719ff8b4928ca5f00ac08cccc31ef8d0200924d92c4200202020202020202020202020202020202020202020202020202020202020202a94f6c642070686f6e65",
+          "content": { "device": { "name": "Old phone", "pk": "%bob" } },
+          "label": "renamed",
+          "parents": ["@laptop"]
+        },
+        {
+          "bytes": "920396c4206fcb85e59b8be9d9e8851d580aaa9237821cddedab6214ee43b0a08ccafbaadfc420010101010101010101010101010101010101010101010101010101010101010191c42016752eeee1da86e4db04199a7d53ddcdab35acff5735c1be533b69c7998423ac0300924ec4200707070707070707070707070707070707070707070707070707070707070707",
+          "content": { "device_gone": { "pk": "%carol" } },
+          "label": "gone",
+          "parents": ["@renamed"]
+        },
+        {
+          "bytes": "920396c4206fcb85e59b8be9d9e8851d580aaa9237821cddedab6214ee43b0a08ccafbaadfc420010101010101010101010101010101010101010101010101010101010101010191c420eb1c58cfb0a83aacba19b02a8e100585f801cc828c98ca4f8699a246afb17c7d0400924f9300a34c616200",
+          "content": {
+            "new_chat": { "kind": "group", "name": "Lab", "privacy": "public" }
+          },
+          "label": "found",
+          "parents": ["@gone"]
+        },
+        {
+          "bytes": "920396c4206fcb85e59b8be9d9e8851d580aaa9237821cddedab6214ee43b0a08ccafbaadfc420010101010101010101010101010101010101010101010101010101010101010191c420049428d6667639123788af7a325a6bff3a2cc7f40fce46dec54058682823ce1b0500925292c420049428d6667639123788af7a325a6bff3a2cc7f40fce46dec54058682823ce1b919200c4200404040404040404040404040404040404040404040404040404040404040404",
+          "content": { "chat_joined": { "chat": "&chat", "intent": "@found" } },
+          "label": "founded",
+          "parents": ["@found"]
+        },
+        {
+          "bytes": "920396c4206fcb85e59b8be9d9e8851d580aaa9237821cddedab6214ee43b0a08ccafbaadfc420010101010101010101010101010101010101010101010101010101010101010191c42041f05c23172ed88cb0e52c4e04dd09058ff7918ed9c9d6535369a8ab9aa8b1cc0600925092c420090909090909090909090909090909090909090909090909090909090909090990",
+          "content": {
+            "join_chat": {
+              "chat_id": "0909090909090909090909090909090909090909090909090909090909090909",
+              "password": null
+            }
+          },
+          "label": "join",
+          "parents": ["@founded"]
+        },
+        {
+          "bytes": "920396c4206fcb85e59b8be9d9e8851d580aaa9237821cddedab6214ee43b0a08ccafbaadfc420010101010101010101010101010101010101010101010101010101010101010191c4208b3cbf0144b794128e0f5873480a84f7dceec10645c5a5e5eabcc25dc882b5fa0700925292c4208b3cbf0144b794128e0f5873480a84f7dceec10645c5a5e5eabcc25dc882b5fa90",
+          "content": { "chat_joined": { "chat": null, "intent": "@join" } },
+          "label": "refused",
+          "parents": ["@join"]
+        }
+      ],
+      "name": "the account's devices, and the chats founded for it",
+      "state": {
+        "chats_joined": [
+          { "chat": null, "intent": "@join" },
+          { "chat": "&chat", "intent": "@found" }
+        ],
+        "devices": [{ "name": "Old phone", "pk": "%bob" }],
+        "facts": [],
         "friends": [],
         "invites": [],
         "merges": [],

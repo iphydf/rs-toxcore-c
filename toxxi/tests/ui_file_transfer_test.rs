@@ -93,6 +93,7 @@ fn test_ui_inline_file_transfer_card() {
             status: MessageStatus::Incoming,
             message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
             highlighted: false,
+            privately: None,
         });
     }
 

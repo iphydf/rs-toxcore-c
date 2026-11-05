@@ -637,6 +637,44 @@ fn content(j: &J) -> Content {
             scope: scope(&c["scope"]),
             kind: uint(&c["kind"]).try_into().unwrap(),
         },
+        "received_privately" => Content::ReceivedPrivately {
+            from: pk(&c["from"]),
+            sender: text(&c["sender"]),
+            message: bytes(&c["message"]),
+            kind: message_kind(&c["kind"]),
+        },
+        "send_privately" => Content::SendPrivately {
+            to: pk(&c["to"]),
+            sender: text(&c["sender"]),
+            message: bytes(&c["message"]),
+            kind: message_kind(&c["kind"]),
+        },
+        "device" => Content::Device {
+            pk: pk(&c["pk"]),
+            name: text(&c["name"]),
+        },
+        "device_gone" => Content::DeviceGone { pk: pk(&c["pk"]) },
+        "new_chat" => Content::NewChat {
+            kind: chat_kind(&c["kind"]),
+            name: text(&c["name"]),
+            privacy: named(
+                &PRIVACIES,
+                vec![Privacy::Public, Privacy::Private],
+                &c["privacy"],
+            ),
+        },
+        "join_chat" => Content::JoinChat {
+            chat_id: GroupChatId(b32(&c["chat_id"])),
+            password: opt(&c["password"], text),
+        },
+        "invite_to_chat" => Content::InviteToChat {
+            chat: chat(&c["chat"]),
+            friend: pk(&c["friend"]),
+        },
+        "chat_joined" => Content::ChatJoined {
+            intent: id(&c["intent"]),
+            chat: opt(&c["chat"], chat),
+        },
         other => panic!("not content: {other}"),
     }
 }
@@ -791,6 +829,55 @@ fn content_json(content: &Content) -> J {
         Content::ClearSetting { scope, kind } => json!({"clear_setting": {
             "scope": scope_json(scope),
             "kind": kind,
+        }}),
+        Content::ReceivedPrivately {
+            from,
+            sender,
+            message,
+            kind,
+        } => json!({"received_privately": {
+            "from": hex(&from.0),
+            "sender": sender,
+            "message": hex(message),
+            "kind": message_kind_json(kind),
+        }}),
+        Content::SendPrivately {
+            to,
+            sender,
+            message,
+            kind,
+        } => json!({"send_privately": {
+            "to": hex(&to.0),
+            "sender": sender,
+            "message": hex(message),
+            "kind": message_kind_json(kind),
+        }}),
+        Content::Device { pk, name } => json!({"device": {"pk": hex(&pk.0), "name": name}}),
+        Content::DeviceGone { pk } => json!({"device_gone": {"pk": hex(&pk.0)}}),
+        // Of a kind or privacy this version doesn't know, it founds nothing.
+        Content::NewChat {
+            kind,
+            name,
+            privacy,
+        } => match (chat_kind_json(kind), privacy) {
+            (Some(kind), Privacy::Public | Privacy::Private) => json!({"new_chat": {
+                "kind": kind,
+                "name": name,
+                "privacy": if *privacy == Privacy::Public { "public" } else { "private" },
+            }}),
+            _ => json!({"unknown": 79}),
+        },
+        Content::JoinChat { chat_id, password } => json!({"join_chat": {
+            "chat_id": hex(&chat_id.0),
+            "password": password,
+        }}),
+        Content::InviteToChat { chat, friend } => json!({"invite_to_chat": {
+            "chat": chat_json(chat),
+            "friend": hex(&friend.0),
+        }}),
+        Content::ChatJoined { intent, chat } => json!({"chat_joined": {
+            "intent": hex(&intent.0),
+            "chat": chat.as_ref().map(chat_json),
         }}),
         Content::Unknown { discriminant, .. } => json!({"unknown": discriminant}),
     }
@@ -1022,6 +1109,20 @@ fn state_json(state: &AccountState) -> J {
         "read": sorted(read),
         "settings": sorted(settings),
         "invites": sorted(invites),
+        "devices": sorted(
+            state
+                .devices
+                .iter()
+                .map(|(pk, name)| json!({"pk": hex(&pk.0), "name": name}))
+                .collect()
+        ),
+        "chats_joined": sorted(
+            state
+                .chats_joined
+                .iter()
+                .map(|(intent, chat)| json!({"intent": hex(&intent.0), "chat": chat.as_ref().map(chat_json)}))
+                .collect()
+        ),
     })
 }
 

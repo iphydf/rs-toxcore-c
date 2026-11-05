@@ -2,6 +2,7 @@ use crate::completion::complete_friend_ids;
 use crate::model::{MessageContent, Model, PendingItem, WindowId};
 use crate::msg::{Cmd, ToxAction};
 use toxcore::tox::FriendNumber;
+use toxcore::types::MessageType;
 
 use super::CommandDef;
 
@@ -484,6 +485,16 @@ pub const COMMANDS: &[CommandDef] = &[
         }),
     },
     CommandDef {
+        name: "whisper",
+        args: (None, "<name|public_key> <text>"),
+        desc: (
+            None,
+            "Send a message to one peer in the current group alone",
+        ),
+        exec: handle_whisper_command,
+        complete: Some(complete_ignore_command),
+    },
+    CommandDef {
         name: "ignore",
         args: (None, "<name|peer_id>"),
         desc: (None, "Toggle ignore for a peer in the current group"),
@@ -498,6 +509,53 @@ pub const COMMANDS: &[CommandDef] = &[
         complete: Some(complete_ignore_command),
     },
 ];
+
+/// The peer is named by the fewest words that are a peer's name or key, and
+/// the rest is the message.
+fn handle_whisper_command(model: &mut Model, args: &[&str]) -> Vec<Cmd> {
+    let window_id = model.active_window_id();
+    let WindowId::Group(chat_id) = window_id else {
+        model.add_error_message(MessageContent::Text(
+            "You must be in a group window to whisper.".to_owned(),
+        ));
+        return vec![];
+    };
+    let peers = model
+        .domain
+        .conversations
+        .get(&window_id)
+        .map(|conv| conv.peers.as_slice())
+        .unwrap_or_default();
+    let found = (1..args.len()).find_map(|n| {
+        let target = args[..n].join(" ");
+        peers
+            .iter()
+            .find(|p| p.name == target || crate::utils::encode_hex(&p.id.0.0) == target)
+            .map(|p| (p.id.0, n))
+    });
+    let Some((pk, n)) = found else {
+        model.add_error_message(MessageContent::Text(
+            "Usage: /whisper <name|public_key> <message>, to a peer in this group".to_owned(),
+        ));
+        return vec![];
+    };
+    let text = args[n..].join(" ");
+    let (internal_id, msg) = model.add_outgoing_private_message(
+        chat_id,
+        pk,
+        MessageType::TOX_MESSAGE_TYPE_NORMAL,
+        text.clone(),
+    );
+    let mut cmds = model.record(window_id, &msg);
+    cmds.extend(crate::update::send_pending(
+        model,
+        window_id,
+        internal_id,
+        MessageType::TOX_MESSAGE_TYPE_NORMAL,
+        text.into_bytes(),
+    ));
+    cmds
+}
 
 fn handle_ignore_command(model: &mut Model, args: &[&str], ignore: bool) -> Vec<Cmd> {
     if args.is_empty() {

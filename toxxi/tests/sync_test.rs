@@ -15,7 +15,7 @@ use toxxi::model::{
 use toxxi::msg::{Cmd, IOAction, IOEvent, Msg, SystemEvent, ToxAction, ToxEvent};
 use toxxi::sync::account::InviteStatus;
 use toxxi::sync::event::{BlobId, ChatId, ChatKind, Content, Event, EventId, GraphId};
-use toxxi::sync::fact::{CallState, Role, Subject, Value};
+use toxxi::sync::fact::{CallState, Privacy, Role, Subject, Value};
 use toxxi::sync::files::file_id;
 use toxxi::sync::pairing::PairingCode;
 use toxxi::sync::protocol::{BLOB_FILE_KIND, CallAction, Features, SessionMessage};
@@ -99,13 +99,9 @@ fn test_device_syncs_the_account() {
     }
 
     let hello = SessionMessage::hello(Features::ACCOUNT_SYNC);
-    assert_eq!(
-        handle_command(&mut model, "/device allow 0"),
-        vec![
-            Cmd::IO(IOAction::SaveConfig(None)),
-            Cmd::Tox(ToxAction::SyncSend(DEVICE, hello.encode())),
-        ]
-    );
+    let allowed = handle_command(&mut model, "/device allow 0");
+    assert!(allowed.contains(&Cmd::IO(IOAction::SaveConfig(None))));
+    assert!(allowed.contains(&Cmd::Tox(ToxAction::SyncSend(DEVICE, hello.encode()))));
 
     let to_device = sent_to(&from(&mut model, DEVICE, hello.clone()), DEVICE);
     assert!(matches!(to_device[0], SessionMessage::Summary(_)));
@@ -177,6 +173,153 @@ fn test_device_syncs_the_account() {
 
     handle_command(&mut model, "/device remove 0");
     assert!(model.saved_config.sync_devices.is_empty());
+}
+
+#[test]
+fn test_the_accounts_devices_are_recorded() {
+    let domain = DomainState::new(
+        Address([0u8; 38]),
+        "Me".to_owned(),
+        String::new(),
+        ToxUserStatus::TOX_USER_STATUS_NONE,
+    );
+    // One allowed before devices were recorded.
+    let config = Config {
+        sync_devices: vec![DEVICE],
+        ..Config::default()
+    };
+    let mut model = Model::new(domain, config.clone(), config);
+    model.session.friend_numbers.insert(FriendNumber(0), DEVICE);
+    model.domain.friends.insert(DEVICE, friend("Phone", DEVICE));
+    model.record_account();
+    assert_eq!(
+        model.account.devices.get(&DEVICE).map(String::as_str),
+        Some("Phone")
+    );
+
+    // A device names itself, and adds another it paired.
+    let account = GraphId::account(&ME);
+    // It writes after the account's events, as a device in sync does.
+    let mut device_events = EventStore::default();
+    for (id, _) in model.events.by_rank(&account) {
+        device_events
+            .insert(model.events.bytes(&id).unwrap())
+            .unwrap();
+    }
+    let write = |store: &mut EventStore, content| store.create(account, DEVICE, 0, content).1;
+    let renamed = write(
+        &mut device_events,
+        Content::Device {
+            pk: DEVICE,
+            name: "My phone".to_owned(),
+        },
+    );
+    let paired = write(
+        &mut device_events,
+        Content::Device {
+            pk: BOB,
+            name: String::new(),
+        },
+    );
+    from(
+        &mut model,
+        DEVICE,
+        SessionMessage::hello(Features::ACCOUNT_SYNC),
+    );
+    let cmds = from(
+        &mut model,
+        DEVICE,
+        SessionMessage::Events(vec![renamed, paired]),
+    );
+    assert_eq!(
+        model.account.devices.get(&DEVICE).map(String::as_str),
+        Some("My phone")
+    );
+    assert!(cmds.contains(&Cmd::Tox(ToxAction::AcceptFriend(BOB))));
+    assert!(model.config.sync_devices.contains(&BOB));
+
+    // It removes that one, but can't remove this one.
+    let gone = write(&mut device_events, Content::DeviceGone { pk: BOB });
+    let me_gone = write(&mut device_events, Content::DeviceGone { pk: ME });
+    from(
+        &mut model,
+        DEVICE,
+        SessionMessage::Events(vec![gone, me_gone]),
+    );
+    assert!(!model.config.sync_devices.contains(&BOB));
+    assert!(!model.account.devices.contains_key(&BOB));
+    assert!(
+        model.events.heads_of(&account).iter().all(|head| {
+            model.events.get(head).unwrap().content != Content::DeviceGone { pk: ME }
+        })
+    );
+}
+
+#[test]
+fn test_devices_found_join_and_invite_to_chats() {
+    let mut model = with_device_and_bob();
+    let account = GraphId::account(&ME);
+    let group = GroupChatId([5u8; 32]);
+    model.ensure_group_window(group);
+    let mut device = EventStore::default();
+    let mut write = |content| device.create(account, DEVICE, 0, content);
+
+    let (found, founding) = write(Content::NewChat {
+        kind: ChatKind::Group,
+        name: "Lab".to_owned(),
+        privacy: Privacy::Private,
+    });
+    let (join, joining) = write(Content::JoinChat {
+        chat_id: group,
+        password: Some("pw".to_owned()),
+    });
+    let (_, inviting) = write(Content::InviteToChat {
+        chat: ChatId::Group(group),
+        friend: BOB,
+    });
+    let cmds = from(
+        &mut model,
+        DEVICE,
+        SessionMessage::Events(vec![founding, joining, inviting]),
+    );
+    assert!(cmds.contains(&Cmd::Tox(ToxAction::MakeChat(
+        found,
+        ChatKind::Group,
+        Privacy::Private,
+        "Lab".to_owned()
+    ))));
+    assert!(cmds.contains(&Cmd::Tox(ToxAction::JoinChatById(
+        join,
+        group,
+        Some("pw".to_owned())
+    ))));
+    assert!(cmds.contains(&Cmd::Tox(ToxAction::InviteFriendToGroup(group, BOB))));
+
+    // What Tox made of them goes to the devices.
+    let made = ChatId::Group(GroupChatId([8u8; 32]));
+    let mut told = settled(&mut model, Msg::Tox(ToxEvent::ChatMade(found, Some(made))));
+    told.extend(settled(
+        &mut model,
+        Msg::Tox(ToxEvent::ChatMade(join, None)),
+    ));
+    let results: Vec<Content> = events_in(&sent_to(&told, DEVICE))
+        .into_iter()
+        .map(|event| event.content)
+        .filter(|content| matches!(content, Content::ChatJoined { .. }))
+        .collect();
+    assert_eq!(
+        results,
+        vec![
+            Content::ChatJoined {
+                intent: found,
+                chat: Some(made)
+            },
+            Content::ChatJoined {
+                intent: join,
+                chat: None
+            },
+        ]
+    );
 }
 
 #[test]
@@ -269,7 +412,10 @@ fn test_device_sends_a_message() {
         first(
             GraphId::account(&ME),
             DEVICE,
-            Content::UnwantFriend { pk: BOB },
+            Content::FriendRequest {
+                pk: BOB,
+                message: "only the home writes these".to_owned(),
+            },
         ),
     ];
     let cmds = from(
@@ -663,7 +809,7 @@ fn test_devices_see_members_and_change_tox() {
     );
 
     let wish = |model: &mut Model, subject, value| {
-        let (_, bytes) = EventStore::default().create(
+        let (_, bytes) = synced_account(model).create(
             GraphId::account(&ME),
             DEVICE,
             0,
@@ -1886,4 +2032,255 @@ fn test_friends_coming_online_are_told_there_is_no_avatar() {
             ..
         ))
     )));
+}
+
+#[test]
+fn test_private_messages_in_groups() {
+    let domain = DomainState::new(
+        Address([0u8; 38]),
+        "Me".to_owned(),
+        String::new(),
+        ToxUserStatus::TOX_USER_STATUS_NONE,
+    );
+    let mut model = Model::new(domain, Config::default(), Config::default());
+    model.session.friend_numbers.insert(FriendNumber(0), DEVICE);
+    model
+        .domain
+        .friends
+        .insert(DEVICE, friend("Device", DEVICE));
+    handle_command(&mut model, "/device allow 0");
+    let chat_id = GroupChatId([5u8; 32]);
+    let window = WindowId::Group(chat_id);
+    model.session.group_numbers.insert(GroupNumber(0), chat_id);
+    model.ensure_group_window(chat_id);
+    model
+        .domain
+        .conversations
+        .get_mut(&window)
+        .unwrap()
+        .peers
+        .push(PeerInfo {
+            id: PeerId(BOB),
+            name: "Bob Smith".to_owned(),
+            role: Some(ToxGroupRole::TOX_GROUP_ROLE_USER),
+            status: ToxUserStatus::TOX_USER_STATUS_NONE,
+            is_ignored: false,
+            seen_online: true,
+        });
+    from(
+        &mut model,
+        DEVICE,
+        SessionMessage::hello(Features::ACCOUNT_SYNC),
+    );
+    let normal = MessageType::TOX_MESSAGE_TYPE_NORMAL;
+
+    let cmds = settled(
+        &mut model,
+        Msg::Tox(ToxEvent::GroupPrivateMessage(
+            GroupNumber(0),
+            normal,
+            "Bob Smith".to_owned(),
+            b"psst".to_vec(),
+            BOB,
+        )),
+    );
+    assert!(
+        events_in(&sent_to(&cmds, DEVICE))
+            .iter()
+            .any(|event| event.content
+                == Content::ReceivedPrivately {
+                    from: BOB,
+                    sender: "Bob Smith".to_owned(),
+                    message: b"psst".to_vec(),
+                    kind: normal,
+                })
+    );
+
+    // The peer's name may have spaces, and the rest is the message.
+    let pos = model.ui.window_ids.iter().position(|&w| w == window);
+    model.set_active_window(pos.unwrap());
+    let cmds = handle_command(&mut model, "/whisper Bob Smith hello there");
+    assert!(cmds.contains(&Cmd::Tox(ToxAction::SendGroupPrivateMessage(
+        chat_id,
+        BOB,
+        normal,
+        b"hello there".to_vec(),
+        model.domain.conversations[&window].messages[1].internal_id,
+    ))));
+    assert!(matches!(
+        model.domain.conversations[&window].messages[..],
+        [ref theirs, ref ours] if theirs.privately == Some(BOB) && ours.privately == Some(BOB)
+    ));
+
+    // A device's goes to Tox alone too, and only in groups.
+    let chat = GraphId::group(&chat_id);
+    let privately = Content::SendPrivately {
+        to: BOB,
+        sender: "Me".to_owned(),
+        message: b"from the device".to_vec(),
+        kind: normal,
+    };
+    let (id, bytes) = EventStore::default().create(chat, DEVICE, 0, privately.clone());
+    let elsewhere = EventStore::default()
+        .create(GraphId::friend(&ME, &BOB), DEVICE, 0, privately)
+        .1;
+    let cmds = from(
+        &mut model,
+        DEVICE,
+        SessionMessage::Events(vec![bytes, elsewhere.clone()]),
+    );
+    let internal_id = model.domain.conversations[&window].messages[2].internal_id;
+    assert!(cmds.contains(&Cmd::Tox(ToxAction::SendGroupPrivateMessage(
+        chat_id,
+        BOB,
+        normal,
+        b"from the device".to_vec(),
+        internal_id,
+    ))));
+    assert!(model.events.get(&EventId::of(&elsewhere)).is_none());
+    let cmds = settled(
+        &mut model,
+        Msg::Tox(ToxEvent::GroupMessageSent(GroupNumber(0), internal_id)),
+    );
+    assert!(
+        events_in(&sent_to(&cmds, DEVICE))
+            .iter()
+            .any(|event| event.content == Content::Sent { intent: id })
+    );
+}
+
+#[test]
+fn test_devices_add_accept_and_remove_friends() {
+    let mut model = with_device_and_bob();
+    let carol = PublicKey([3u8; 32]);
+    let dave = PublicKey([4u8; 32]);
+    model.domain.pending_items.push(PendingItem::FriendRequest {
+        pk: dave,
+        message: "hi".to_owned(),
+    });
+    let account = GraphId::account(&ME);
+    let mut device = synced_account(&model);
+    let mut write = |content| device.create(account, DEVICE, 0, content).1;
+    let events = vec![
+        write(Content::WantFriend {
+            pk: carol,
+            request_message: Some("from my phone".to_owned()),
+            nospam: Some(0x01020304),
+        }),
+        write(Content::WantFriend {
+            pk: dave,
+            request_message: None,
+            nospam: None,
+        }),
+        write(Content::UnwantFriend { pk: BOB }),
+        // The account's devices stay its friends.
+        write(Content::UnwantFriend { pk: DEVICE }),
+    ];
+    let cmds = from(&mut model, DEVICE, SessionMessage::Events(events.clone()));
+    let address = Address::from_public_key(carol, 0x01020304);
+    assert!(cmds.contains(&Cmd::Tox(ToxAction::AddFriend(
+        toxxi::utils::encode_hex(&address.0),
+        "from my phone".to_owned(),
+    ))));
+    assert!(cmds.contains(&Cmd::Tox(ToxAction::AcceptFriend(dave))));
+    assert!(cmds.contains(&Cmd::Tox(ToxAction::DeleteFriend(BOB))));
+    assert!(model.events.get(&EventId::of(&events[3])).is_none());
+    assert!(model.domain.friends.contains_key(&DEVICE));
+    // Wanted until Tox says otherwise, so the account keeps them.
+    assert!(model.domain.friends.contains_key(&carol));
+    assert!(model.account.friends[&carol].wanted);
+}
+
+/// The account graph as the home holds it, for a device that has synced it.
+fn synced_account(model: &Model) -> EventStore {
+    let mut store = EventStore::default();
+    for (id, _) in model.events.by_rank(&GraphId::account(&ME)) {
+        store.insert(model.events.bytes(&id).unwrap()).unwrap();
+    }
+    store
+}
+
+#[test]
+fn test_a_friend_change_written_offline_loses_to_a_later_one() {
+    let mut model = with_device_and_bob();
+    let account = GraphId::account(&ME);
+    let (_, removed_offline) =
+        EventStore::default().create(account, DEVICE, 0, Content::UnwantFriend { pk: BOB });
+    let (_, wanted_since) = synced_account(&model).create(
+        account,
+        DEVICE,
+        0,
+        Content::WantFriend {
+            pk: BOB,
+            request_message: None,
+            nospam: None,
+        },
+    );
+    from(
+        &mut model,
+        DEVICE,
+        SessionMessage::Events(vec![wanted_since]),
+    );
+
+    let cmds = from(
+        &mut model,
+        DEVICE,
+        SessionMessage::Events(vec![removed_offline]),
+    );
+    assert!(!cmds.contains(&Cmd::Tox(ToxAction::DeleteFriend(BOB))));
+    assert!(model.domain.friends.contains_key(&BOB));
+    assert!(model.account.friends[&BOB].wanted);
+}
+
+#[test]
+fn test_a_wish_written_offline_loses_to_a_later_change() {
+    let mut model = with_device_and_bob();
+    let (_, wished_offline) = EventStore::default().create(
+        GraphId::account(&ME),
+        DEVICE,
+        0,
+        Content::Want {
+            subject: Subject::Account,
+            value: Value::Name("Old".to_owned()),
+        },
+    );
+    handle_command(&mut model, "/nick New");
+    update(&mut model, Msg::System(SystemEvent::Tick));
+
+    let cmds = from(
+        &mut model,
+        DEVICE,
+        SessionMessage::Events(vec![wished_offline]),
+    );
+    assert!(!cmds.contains(&Cmd::Tox(ToxAction::SetName("Old".to_owned()))));
+    assert_eq!(model.domain.self_name, "New");
+}
+
+#[test]
+fn test_a_dropped_event_is_not_asked_for_again() {
+    let mut model = with_device_and_bob();
+    // A chat we have no window for, so its messages are dropped.
+    let chat = GraphId::friend(&ME, &PublicKey([3u8; 32]));
+    let mut device = EventStore::default();
+    let [parent, child] = ["a", "b"].map(|text| {
+        device
+            .create(
+                chat,
+                DEVICE,
+                0,
+                Content::Send {
+                    sender: "Me".to_owned(),
+                    message: text.as_bytes().to_vec(),
+                    kind: MessageType::TOX_MESSAGE_TYPE_NORMAL,
+                },
+            )
+            .1
+    });
+    let asked = from(&mut model, DEVICE, SessionMessage::Events(vec![child]));
+    assert_eq!(
+        sent_to(&asked, DEVICE),
+        [SessionMessage::Want(vec![EventId::of(&parent)])]
+    );
+    let again = from(&mut model, DEVICE, SessionMessage::Events(vec![parent]));
+    assert_eq!(sent_to(&again, DEVICE), []);
 }

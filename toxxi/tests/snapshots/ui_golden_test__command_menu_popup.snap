@@ -23,7 +23,7 @@ Contacts                │Alice - Happy
 │  /device       pair | allow|remove <id> | list  Manage the devices that can …│
 │  /file         send <fid> <path> | accept ...           Manage file transfers│
 │  /friend       add <tox_id> [msg] | remove <id>                Manage friends│
-╰─────────────────────────────────────────────────── (1/32) [Tab] to complete ─╯
+╰─────────────────────────────────────────────────── (1/34) [Tab] to complete ─╯
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │> /                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────╯

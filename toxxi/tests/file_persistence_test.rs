@@ -49,6 +49,7 @@ fn test_file_transfer_status_persistence() {
             status: MessageStatus::Incoming,
             message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
             highlighted: false,
+            privately: None,
         });
 
         // Also need to track the transfer in domain state for lookup in some handlers
@@ -111,6 +112,7 @@ fn test_file_transfer_status_persistence() {
             status: MessageStatus::Incoming,
             message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
             highlighted: false,
+            privately: None,
         });
         model.domain.file_transfers.insert(
             err_file_id,

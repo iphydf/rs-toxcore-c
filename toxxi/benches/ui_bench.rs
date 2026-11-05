@@ -68,6 +68,7 @@ fn setup_model(msg_count: usize, friend_count: usize) -> Model {
                 status: MessageStatus::Received,
                 message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
                 highlighted: false,
+                privately: None,
             });
         }
     }

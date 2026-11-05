@@ -134,6 +134,7 @@ prop_compose! {
             status,
             message_type,
             highlighted,
+            privately: None,
         }
     }
 }

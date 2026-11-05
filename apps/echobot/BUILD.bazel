@@ -3,6 +3,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rustfmt_test")
 rust_binary(
     name = "echobot",
     srcs = ["src/main.rs"],
+    compile_data = ["echobot.png"],
     edition = "2024",
     rustc_flags = ["-Clink-arg=-fuse-ld=bfd"],
     deps = [

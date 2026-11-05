@@ -165,56 +165,12 @@ pub const COMMANDS: &[CommandDef] = &[
                     .add_error_message(MessageContent::Text("Usage: /me <action text>".to_owned()));
                 return vec![];
             }
-            let action = args.join(" ");
-            let window_id = model.ui.window_ids[model.ui.active_window_index];
-            if window_id == WindowId::Console {
-                model.add_error_message(MessageContent::Text(
-                    "Cannot send action messages in the console window.".to_owned(),
-                ));
-                return vec![];
-            }
-
-            let (internal_id, msg_obj) = model.add_outgoing_message(
-                window_id,
+            crate::update::send_line(
+                model,
+                "/me ",
+                &args.join(" "),
                 MessageType::TOX_MESSAGE_TYPE_ACTION,
-                action.clone(),
-            );
-
-            let mut cmds: Vec<Cmd> = model.record(window_id, &msg_obj).into_iter().collect();
-            if let Some(msg) =
-                model.mark_message_status(window_id, internal_id, MessageStatus::Sending)
-            {
-                cmds.extend(model.record(window_id, &msg));
-            }
-
-            match window_id {
-                WindowId::Friend(pk) => {
-                    cmds.push(Cmd::Tox(ToxAction::SendMessage(
-                        pk,
-                        MessageType::TOX_MESSAGE_TYPE_ACTION,
-                        action.into_bytes(),
-                        internal_id,
-                    )));
-                }
-                WindowId::Group(chat_id) => {
-                    cmds.push(Cmd::Tox(ToxAction::SendGroupMessage(
-                        chat_id,
-                        MessageType::TOX_MESSAGE_TYPE_ACTION,
-                        action.into_bytes(),
-                        internal_id,
-                    )));
-                }
-                WindowId::Conference(conf_id) => {
-                    cmds.push(Cmd::Tox(ToxAction::SendConferenceMessage(
-                        conf_id,
-                        MessageType::TOX_MESSAGE_TYPE_ACTION,
-                        action.into_bytes(),
-                        internal_id,
-                    )));
-                }
-                _ => {}
-            }
-            cmds
+            )
         },
         complete: None,
     },

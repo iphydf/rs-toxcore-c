@@ -27,8 +27,10 @@ use crate::model::{
 use crate::msg::{
     GroupSetting, IOAction, LogContext, LogSeverity, Msg, SystemEvent, ToxAction, ToxEvent,
 };
-use crate::sync::event::ChatId;
+use crate::sync::event::{ChatId, ChatKind};
+use crate::sync::fact::Privacy;
 use crate::sync::frame::{Outbox, PACKET_ID, Reassembler, SendError};
+use crate::sync::trace::SyncTrace;
 use crate::utils::{decode_hex, encode_hex};
 
 fn find_friend(tox: &Tox, pk: &PublicKey) -> Option<FriendNumber> {
@@ -288,6 +290,7 @@ pub fn spawn_tox(
             let mut file_size_map: HashMap<(FriendNumber, FileNumber), u64> = HashMap::new();
             let mut sync_out = Outbox::default();
             let mut sync_in: HashMap<FriendNumber, Reassembler> = HashMap::new();
+            let mut sync_trace = SyncTrace::new(&config_dir);
             let mut calls = match CallBridge::new(&tox) {
                 Ok(calls) => Some(calls),
                 Err(e) => {
@@ -454,6 +457,39 @@ pub fn spawn_tox(
                                     internal_id,
                                 )));
                             }
+                        }
+                        ToxAction::SendGroupPrivateMessage(
+                            chat_id,
+                            pk,
+                            message_type,
+                            msg,
+                            internal_id,
+                        ) => {
+                            let sent = find_group(&tox, &chat_id).and_then(|gnum| {
+                                let peer_id = group_peers.get(&gnum)?.get(&pk).copied()?;
+                                match tox.group(gnum).send_private_message(
+                                    peer_id,
+                                    message_type,
+                                    &msg,
+                                ) {
+                                    Ok(_) => Some(gnum),
+                                    Err(e) => {
+                                        log_error(
+                                            &tx,
+                                            LogContext::Group(chat_id),
+                                            format!("Error sending a private message: {e:?}"),
+                                        );
+                                        None
+                                    }
+                                }
+                            });
+                            let _ = tx.send(Msg::Tox(match sent {
+                                Some(gnum) => ToxEvent::GroupMessageSent(gnum, internal_id),
+                                None => ToxEvent::MessageSendFailed(
+                                    WindowId::Group(chat_id),
+                                    internal_id,
+                                ),
+                            }));
                         }
                         ToxAction::SendConferenceMessage(
                             conference_id,
@@ -700,6 +736,65 @@ pub fn spawn_tox(
                                 let _ = tx.send(Msg::Tox(ToxEvent::InviteJoined(invite, joined)));
                             }
                         }
+                        ToxAction::MakeChat(intent, kind, privacy, name) => {
+                            let made = match kind {
+                                ChatKind::Group => tox
+                                    .group_new(
+                                        if privacy == Privacy::Private {
+                                            ToxGroupPrivacyState::TOX_GROUP_PRIVACY_STATE_PRIVATE
+                                        } else {
+                                            ToxGroupPrivacyState::TOX_GROUP_PRIVACY_STATE_PUBLIC
+                                        },
+                                        name.as_bytes(),
+                                        &tox.name(),
+                                    )
+                                    .ok()
+                                    .and_then(|group| {
+                                        let chat_id = group.chat_id().ok()?;
+                                        let _ = tx.send(Msg::Tox(ToxEvent::GroupCreated(
+                                            group.get_number(),
+                                            chat_id,
+                                            Some(name.clone()),
+                                        )));
+                                        Some(ChatId::Group(chat_id))
+                                    }),
+                                ChatKind::Conference => {
+                                    tox.conference_new().ok().and_then(|conf| {
+                                        let _ = conf.set_title(name.as_bytes());
+                                        let cid = conf.id()?;
+                                        let _ = tx.send(Msg::Tox(ToxEvent::ConferenceCreated(
+                                            conf.number(),
+                                            cid,
+                                        )));
+                                        Some(ChatId::Conference(cid))
+                                    })
+                                }
+                                ChatKind::Unknown { .. } => None,
+                            };
+                            let _ = tx.send(Msg::Tox(ToxEvent::ChatMade(intent, made)));
+                        }
+                        ToxAction::JoinChatById(intent, chat_id, password) => {
+                            let joined = tox
+                                .group_join(
+                                    &chat_id,
+                                    &tox.name(),
+                                    password.as_deref().map(str::as_bytes),
+                                )
+                                // Rejoining a group it has, Tox gives 0, not its number.
+                                .and_then(|_| tox.group_by_id(&chat_id))
+                                .ok()
+                                .map(|group| {
+                                    let name =
+                                        group.name().ok().and_then(|n| String::from_utf8(n).ok());
+                                    let _ = tx.send(Msg::Tox(ToxEvent::GroupCreated(
+                                        group.get_number(),
+                                        chat_id,
+                                        name,
+                                    )));
+                                    ChatId::Group(chat_id)
+                                });
+                            let _ = tx.send(Msg::Tox(ToxEvent::ChatMade(intent, joined)));
+                        }
                         ToxAction::InviteFriendToGroup(chat_id, pk) => {
                             if let Some(group_number) = find_group(&tox, &chat_id)
                                 && let Some(friend_number) = find_friend(&tox, &pk)
@@ -802,11 +897,24 @@ pub fn spawn_tox(
                                 }
                             }
                         }
+                        ToxAction::SetNospam(nospam) => {
+                            tox.set_nospam(nospam);
+                            // Kept at once, as a request to the old ID mustn't
+                            // come back after a crash.
+                            if let Some(path) = &savedata_path {
+                                let _ = fs::write(path, tox.savedata());
+                            }
+                            let _ = tx.send(Msg::Tox(ToxEvent::Address(tox.address())));
+                        }
                         ToxAction::SetStatusMessage(msg) => {
                             let _ = tox.set_status_message(msg.as_bytes());
                         }
                         ToxAction::SetStatusType(status) => {
                             tox.set_status(status);
+                            // Groups show their members' status apart from Tox's.
+                            for group in tox.group_list() {
+                                let _ = group.self_set_status(status);
+                            }
                         }
                         ToxAction::SetTyping(pk, is_typing) => {
                             if let Some(friend_number) = find_friend(&tox, &pk) {
@@ -1059,6 +1167,7 @@ pub fn spawn_tox(
                             }
                         }
                         ToxAction::SyncSend(pk, message) => {
+                            sync_trace.record("out", &pk, &message);
                             if let Some(friend) = find_friend(&tox, &pk) {
                                 sync_out.push(friend, &message);
                             }
@@ -1193,6 +1302,9 @@ pub fn spawn_tox(
                                 let friend = e.friend_number();
                                 match sync_in.entry(friend).or_default().push(e.data()) {
                                     Ok(Some(message)) => {
+                                        if let Ok(pk) = tox.friend(friend).public_key() {
+                                            sync_trace.record("in", &pk, &message);
+                                        }
                                         let _ = tx
                                             .send(Msg::Tox(ToxEvent::SyncMessage(friend, message)));
                                     }
@@ -1229,6 +1341,22 @@ pub fn spawn_tox(
                                     e.message().to_vec(),
                                     pk,
                                 )));
+                            }
+                            Event::GroupPrivateMessage(e) => {
+                                let group = tox.group(e.group_number());
+                                let name = group
+                                    .peer_name(e.peer_id())
+                                    .map(|n| String::from_utf8_lossy(&n).into_owned())
+                                    .unwrap_or_else(|_| format!("Peer {}", e.peer_id().0));
+                                if let Ok(pk) = group.peer_public_key(e.peer_id()) {
+                                    let _ = tx.send(Msg::Tox(ToxEvent::GroupPrivateMessage(
+                                        e.group_number(),
+                                        e.message_type(),
+                                        name,
+                                        e.message().to_vec(),
+                                        pk,
+                                    )));
+                                }
                             }
                             Event::ConferenceMessage(e) => {
                                 let conf = tox.conference(e.conference_number());
@@ -1291,6 +1419,7 @@ pub fn spawn_tox(
                             Event::GroupSelfJoin(e) => {
                                 let gnum = e.group_number();
                                 let group = tox.group(gnum);
+                                let _ = group.self_set_status(tox.status());
                                 let _ = tx.send(Msg::Tox(ToxEvent::GroupSelfJoin(gnum)));
                                 send_group_settings(&tox, &tx, gnum);
                                 if let Ok(name_bytes) = group.name() {
@@ -1572,7 +1701,9 @@ pub fn spawn_tox(
                                             .remove(&(e.friend_number(), e.file_number()));
                                         file_size_map.remove(&(e.friend_number(), e.file_number()));
                                     }
-                                } else {
+                                // Tox ends each transfer with an empty chunk,
+                                // after the last byte ended it here.
+                                } else if !e.data().is_empty() {
                                     log_error(
                                         &tx,
                                         LogContext::Global,
