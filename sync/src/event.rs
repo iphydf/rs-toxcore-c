@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use tox_proto::{Kept, ToxProto};
 use toxcore::types::{ConferenceId, FileId, GroupChatId, MessageType, PublicKey};
 
-use crate::fact::{Subject, Value};
+use crate::fact::{Privacy, Subject, Value};
 use crate::setting::{Scope, Setting};
 
 pub type DecodeError = tox_proto::Error;
@@ -169,6 +169,21 @@ pub enum Content {
         #[tox(default)]
         declined: bool,
     } = 9,
+    /// A message to the account alone in a group, from `from`.
+    ReceivedPrivately {
+        from: PublicKey,
+        sender: String,
+        message: Vec<u8>,
+        kind: MessageType,
+    } = 10,
+    /// "Please send this to `to` alone": `Sent` and `Delivered` answer it as
+    /// they answer `Send`.
+    SendPrivately {
+        to: PublicKey,
+        sender: String,
+        message: Vec<u8>,
+        kind: MessageType,
+    } = 11,
 
     WantFriend {
         pk: PublicKey,
@@ -251,6 +266,38 @@ pub enum Content {
         scope: Scope,
         kind: u32,
     } = 76,
+    /// `pk` is one of the account's devices, named `name`.
+    Device {
+        pk: PublicKey,
+        name: String,
+    } = 77,
+    /// `pk` is no longer one of the account's devices.
+    DeviceGone {
+        pk: PublicKey,
+    } = 78,
+    /// Asks the home to found a group (`kind` group, with `privacy`) or a
+    /// conference named `name`.
+    NewChat {
+        kind: ChatKind,
+        name: String,
+        privacy: Privacy,
+    } = 79,
+    /// Asks the home to join a public group by its chat ID.
+    JoinChat {
+        chat_id: GroupChatId,
+        password: Option<String>,
+    } = 80,
+    /// Asks the home to invite `friend` to `chat`.
+    InviteToChat {
+        chat: ChatId,
+        friend: PublicKey,
+    } = 81,
+    /// What the home made of the `NewChat` or `JoinChat` event `intent`: the
+    /// chat, or none where Tox refused.
+    ChatJoined {
+        intent: EventId,
+        chat: Option<ChatId>,
+    } = 82,
     /// From a newer version: stored and passed on, but not understood.
     #[tox(catch_all)]
     Unknown {

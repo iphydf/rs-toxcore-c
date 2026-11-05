@@ -970,6 +970,9 @@ fn handle_tox_event(model: &mut Model, event: ToxEvent) -> Vec<Cmd> {
                 cmds.extend(crate::sync::friend_status(model, pk, status));
             }
         }
+        ToxEvent::ChatMade(intent, chat) => {
+            cmds.extend(model.record_in_account(vec![Content::ChatJoined { intent, chat }]));
+        }
         ToxEvent::InviteJoined(invite, chat) => {
             cmds.extend(crate::sync::invites::joined(model, invite, chat));
         }
@@ -1117,6 +1120,13 @@ fn handle_tox_event(model: &mut Model, event: ToxEvent) -> Vec<Cmd> {
         ToxEvent::GroupMessage(group_number, t, s, m, pk) => {
             if let Some(chat_id) = model.session.group_numbers.get(&group_number).cloned()
                 && let Some(msg) = model.add_group_message(chat_id, t, s, text::of(&m), pk)
+            {
+                cmds.extend(model.record_received(WindowId::Group(chat_id), &msg, m));
+            }
+        }
+        ToxEvent::GroupPrivateMessage(group_number, t, s, m, pk) => {
+            if let Some(chat_id) = model.session.group_numbers.get(&group_number).cloned()
+                && let Some(msg) = model.add_private_group_message(chat_id, t, s, text::of(&m), pk)
             {
                 cmds.extend(model.record_received(WindowId::Group(chat_id), &msg, m));
             }
@@ -1895,96 +1905,80 @@ fn handle_system_event(model: &mut Model, event: SystemEvent) -> Vec<Cmd> {
 }
 
 pub fn handle_enter(model: &mut Model, input_line: &str) -> Vec<Cmd> {
-    if input_line.starts_with('/') {
+    // An action goes as a message does, spaces and all.
+    if let Some(action) = input_line.strip_prefix("/me ") {
+        send_line(model, "/me ", action, MessageType::TOX_MESSAGE_TYPE_ACTION)
+    } else if input_line.starts_with('/') {
         handle_command(model, input_line)
     } else {
-        let mut blocked_indices = Vec::new();
-        let input_lower = input_line.to_lowercase();
-        for blocked in &model.config.blocked_strings {
-            let blocked_lower = blocked.to_lowercase();
-            let mut start = 0;
-            while let Some(idx) = input_lower[start..].find(&blocked_lower) {
-                let actual_idx = start + idx;
-                // Find char index for actual_idx
-                let char_start = input_line[..actual_idx].chars().count();
-                let char_len = blocked.chars().count();
-                blocked_indices.push((char_start, char_start + char_len));
-                start = actual_idx + blocked.len();
-            }
-        }
+        send_line(model, "", input_line, MessageType::TOX_MESSAGE_TYPE_NORMAL)
+    }
+}
 
-        if !blocked_indices.is_empty() {
-            model.ui.input_state.set_value(input_line.to_owned());
-            // Move cursor to end
-            set_cursor_to_end(&mut model.ui.input_state);
-            model.ui.input_blocked_indices = blocked_indices;
-            model.add_console_message(
-                ConsoleMessageType::Error,
-                "Message contains blocked strings and was not sent.".to_owned(),
-            );
-            return vec![];
-        }
-
-        let window_id = model.active_window_id();
-        if window_id == WindowId::Console || window_id == WindowId::Files {
-            model.add_console_message(ConsoleMessageType::Info, format!("> {}", input_line));
-            model.add_console_message(
-                ConsoleMessageType::Info,
-                "Unknown command. Type /help for help.".to_owned(),
-            );
-            vec![]
-        } else {
-            let parts = split_message(input_line, message_limit(window_id));
-            let mut cmds = Vec::new();
-
-            for part in parts {
-                let (internal_id, msg) = model.add_outgoing_message(
-                    window_id,
-                    MessageType::TOX_MESSAGE_TYPE_NORMAL,
-                    part.to_string(),
-                );
-                cmds.extend(model.record(window_id, &msg));
-                if let Some(updated_msg) =
-                    model.mark_message_status(window_id, internal_id, MessageStatus::Sending)
-                {
-                    cmds.extend(model.record(window_id, &updated_msg));
-                }
-                match window_id {
-                    WindowId::Friend(pk) => {
-                        cmds.push(Cmd::Tox(ToxAction::SendMessage(
-                            pk,
-                            MessageType::TOX_MESSAGE_TYPE_NORMAL,
-                            part.into_bytes(),
-                            internal_id,
-                        )));
-                    }
-                    WindowId::Group(chat_id) => {
-                        cmds.push(Cmd::Tox(ToxAction::SendGroupMessage(
-                            chat_id,
-                            MessageType::TOX_MESSAGE_TYPE_NORMAL,
-                            part.into_bytes(),
-                            internal_id,
-                        )));
-                    }
-                    WindowId::Conference(conf_id) => {
-                        cmds.push(Cmd::Tox(ToxAction::SendConferenceMessage(
-                            conf_id,
-                            MessageType::TOX_MESSAGE_TYPE_NORMAL,
-                            part.into_bytes(),
-                            internal_id,
-                        )));
-                    }
-                    _ => {
-                        model.add_console_message(
-                            ConsoleMessageType::Error,
-                            "Cannot send message: Invalid window type.".to_owned(),
-                        );
-                    }
-                }
-            }
-            cmds
+/// Sends a line typed in the active window, in parts as long as Tox takes.
+/// A line with blocked strings goes back in the input, after `prefix`.
+pub fn send_line(
+    model: &mut Model,
+    prefix: &str,
+    input_line: &str,
+    message_type: MessageType,
+) -> Vec<Cmd> {
+    let shift = prefix.chars().count();
+    let mut blocked_indices = Vec::new();
+    let input_lower = input_line.to_lowercase();
+    for blocked in &model.config.blocked_strings {
+        let blocked_lower = blocked.to_lowercase();
+        let mut start = 0;
+        while let Some(idx) = input_lower[start..].find(&blocked_lower) {
+            let actual_idx = start + idx;
+            // Find char index for actual_idx
+            let char_start = input_line[..actual_idx].chars().count();
+            let char_len = blocked.chars().count();
+            blocked_indices.push((shift + char_start, shift + char_start + char_len));
+            start = actual_idx + blocked.len();
         }
     }
+
+    if !blocked_indices.is_empty() {
+        model
+            .ui
+            .input_state
+            .set_value(format!("{prefix}{input_line}"));
+        // Move cursor to end
+        set_cursor_to_end(&mut model.ui.input_state);
+        model.ui.input_blocked_indices = blocked_indices;
+        model.add_console_message(
+            ConsoleMessageType::Error,
+            "Message contains blocked strings and was not sent.".to_owned(),
+        );
+        return vec![];
+    }
+
+    let window_id = model.active_window_id();
+    if !matches!(
+        window_id,
+        WindowId::Friend(_) | WindowId::Group(_) | WindowId::Conference(_)
+    ) {
+        model.add_console_message(ConsoleMessageType::Info, format!("> {}", input_line));
+        model.add_console_message(
+            ConsoleMessageType::Info,
+            "Unknown command. Type /help for help.".to_owned(),
+        );
+        return vec![];
+    }
+    let mut cmds = Vec::new();
+    for part in split_message(input_line, message_limit(window_id)) {
+        let (internal_id, msg) = model.add_outgoing_message(window_id, message_type, part.clone());
+        cmds.extend(model.record(window_id, &msg));
+        cmds.extend(send_pending(
+            model,
+            window_id,
+            internal_id,
+            message_type,
+            part.into_bytes(),
+        ));
+    }
+    cmds
 }
 
 pub fn handle_command(model: &mut Model, cmd: &str) -> Vec<Cmd> {
@@ -2040,7 +2034,9 @@ pub fn send_pending(
     content: Vec<u8>,
 ) -> Vec<Cmd> {
     let mut cmds = Vec::new();
+    let mut privately = None;
     if let Some(msg) = model.mark_message_status(window_id, internal_id, MessageStatus::Sending) {
+        privately = msg.privately;
         cmds.extend(model.record(window_id, &msg));
     }
     // A device's message can be longer than Tox takes. Its parts go as the
@@ -2056,9 +2052,12 @@ pub fn send_pending(
     for part in parts {
         cmds.push(Cmd::Tox(match window_id {
             WindowId::Friend(pk) => ToxAction::SendMessage(pk, message_type, part, internal_id),
-            WindowId::Group(chat_id) => {
-                ToxAction::SendGroupMessage(chat_id, message_type, part, internal_id)
-            }
+            WindowId::Group(chat_id) => match privately {
+                Some(pk) => {
+                    ToxAction::SendGroupPrivateMessage(chat_id, pk, message_type, part, internal_id)
+                }
+                None => ToxAction::SendGroupMessage(chat_id, message_type, part, internal_id),
+            },
             WindowId::Conference(conf_id) => {
                 ToxAction::SendConferenceMessage(conf_id, message_type, part, internal_id)
             }

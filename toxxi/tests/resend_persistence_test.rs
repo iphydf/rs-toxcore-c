@@ -34,6 +34,7 @@ fn test_group_message_sent_persistence() {
             status: MessageStatus::Pending,
             message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
             highlighted: false,
+            privately: None,
         });
     }
 

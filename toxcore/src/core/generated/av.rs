@@ -7,7 +7,7 @@ use crate::types::*;
 pub struct ToxAV<'a, H: ToxAVHandler> {
     pub(crate) ptr: *mut ffi::ToxAV,
     pub handler: Box<H>,
-    _tox: std::marker::PhantomData<&'a Tox>,
+    _marker: std::marker::PhantomData<&'a Tox>,
 }
 impl<'a, H: ToxAVHandler> Drop for ToxAV<'a, H> {
     fn drop(&mut self) {
@@ -19,7 +19,7 @@ impl<'a, H: ToxAVHandler> ToxAV<'a, H> {
         ffi_call!(toxav_new, ffi::Toxav_Err_New::TOXAV_ERR_NEW_OK, tox.ptr).map(|val| Self {
             ptr: val,
             handler: Box::new(handler),
-            _tox: std::marker::PhantomData,
+            _marker: std::marker::PhantomData,
         })
     }
 

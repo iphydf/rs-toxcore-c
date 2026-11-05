@@ -23,6 +23,11 @@ mod core {
     mod av_groupchat;
 
     pub use av_groupchat::*;
+
+    #[path = "../core/logger.rs"]
+    mod logger;
+
+    pub use logger::*;
 }
 
 mod ffi;

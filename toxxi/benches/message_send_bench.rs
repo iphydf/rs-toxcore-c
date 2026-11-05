@@ -52,6 +52,7 @@ fn setup_model(msg_count: usize) -> (Model, PublicKey) {
                 status: MessageStatus::Received,
                 message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
                 highlighted: false,
+                privately: None,
             });
         }
     }

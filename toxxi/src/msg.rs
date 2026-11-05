@@ -1,5 +1,6 @@
 use crate::model::{GroupSettings, InternalMessageId, WindowId};
-use crate::sync::event::{BlobId, ChatId, EventId};
+use crate::sync::event::{BlobId, ChatId, ChatKind, EventId};
+use crate::sync::fact::Privacy;
 use crossterm::event::Event as CrosstermEvent;
 use toxcore::tox::{
     Address, ConferenceNumber, ConferencePeerNumber, FriendMessageId, FriendNumber, GroupNumber,
@@ -27,6 +28,8 @@ pub enum Msg {
 pub enum ToxEvent {
     Message(FriendNumber, MessageType, Vec<u8>),
     GroupMessage(GroupNumber, MessageType, String, Vec<u8>, Option<PublicKey>),
+    /// To us alone, from the member with the key.
+    GroupPrivateMessage(GroupNumber, MessageType, String, Vec<u8>, PublicKey),
     ConferenceMessage(
         ConferenceNumber,
         MessageType,
@@ -63,6 +66,8 @@ pub enum ToxEvent {
     /// How joining an invite's chat went: the chat, or none where Tox
     /// refused.
     InviteJoined(EventId, Option<ChatId>),
+    /// What Tox made of a device's `NewChat` or `JoinChat`.
+    ChatMade(EventId, Option<ChatId>),
     /// The topic, and the name of who changed it to that, where known.
     GroupTopic(GroupNumber, String, Option<String>),
     GroupName(GroupNumber, String),
@@ -196,6 +201,15 @@ pub enum GroupSetting {
 pub enum ToxAction {
     SendMessage(PublicKey, MessageType, Vec<u8>, InternalMessageId),
     SendGroupMessage(GroupChatId, MessageType, Vec<u8>, InternalMessageId),
+    /// A new end of our Tox ID: friend requests to the old one don't arrive.
+    SetNospam(u32),
+    SendGroupPrivateMessage(
+        GroupChatId,
+        PublicKey,
+        MessageType,
+        Vec<u8>,
+        InternalMessageId,
+    ),
     SendConferenceMessage(ConferenceId, MessageType, Vec<u8>, InternalMessageId),
     AddFriend(String, String), // Address (hex), Message
     AcceptFriend(PublicKey),   // Public Key
@@ -210,6 +224,10 @@ pub enum ToxAction {
     JoinConference(PublicKey, String, Option<EventId>), // Friend, Cookie (hex), the recorded invite
     InviteFriendToGroup(GroupChatId, PublicKey),
     InviteFriendToConference(ConferenceId, PublicKey),
+    /// A device's `NewChat`: a group of that privacy, or a conference, by name.
+    MakeChat(EventId, ChatKind, Privacy, String),
+    /// A device's `JoinChat`: a public group by its chat ID, with a password.
+    JoinChatById(EventId, GroupChatId, Option<String>),
     SetGroupPeerIgnore(GroupChatId, PublicKey, bool),
     SetStatusMessage(String),
     SetStatusType(ToxUserStatus),

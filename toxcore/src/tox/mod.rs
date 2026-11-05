@@ -41,8 +41,7 @@ mod file;
 #[path = "../core/generated/safe_friend.rs"]
 mod friend;
 mod group;
-#[path = "../core/generated/safe_tox_resources.rs"]
-mod safe_tox_resources;
+mod resources;
 
 pub struct Options {
     inner: core::Options,
@@ -121,7 +120,7 @@ impl Tox {
 
     // The flat per-method wrappers (`bootstrap`, `name`, `udp_port`, ...) are
     // generated in `safe_tox.rs`; the resource accessors (`friend`,
-    // `friend_add`, ...) in `safe_tox_resources.rs`. `hash` stays here: it is
+    // `friend_add`, ...) in `resources.rs`. `hash` stays here: it is
     // a static method, not a `&self` delegation.
     pub fn hash(data: &[u8]) -> Hash {
         core::Tox::hash(data)

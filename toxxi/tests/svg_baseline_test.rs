@@ -262,6 +262,7 @@ fn test_svg_full_ui_baseline() {
                 status: MessageStatus::Incoming,
                 message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
                 highlighted: false,
+                privately: None,
             };
             model.domain.next_internal_id.0 += 1;
             if let Some(conv) = model.domain.conversations.get_mut(&window_id) {

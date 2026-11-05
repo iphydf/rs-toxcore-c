@@ -81,6 +81,13 @@ pub struct AccountState {
     pub settings: HashMap<Scope, HashMap<u32, Kept<Setting>>>,
     /// By their `ChatInvite` events.
     pub invites: HashMap<EventId, Invite>,
+    /// The account's devices, by key, with their names.
+    pub devices: HashMap<PublicKey, String>,
+    /// The chats the home founded or joined for `NewChat` and `JoinChat`
+    /// events, or none where Tox refused, by those events.
+    pub chats_joined: HashMap<EventId, Option<ChatId>>,
+    /// Per subject and value kind, the last `Fact` or `Want` about it.
+    pub last_said: HashMap<(Subject, u32), EventId>,
 }
 
 impl AccountState {
@@ -92,6 +99,12 @@ impl AccountState {
             state.apply(id, &event.content);
         }
         state
+    }
+
+    /// Whether the wish `id` for `subject` to have `value` is the last thing
+    /// said about that kind of value, so nothing newer overrides it.
+    pub fn is_last_said(&self, subject: &Subject, value: &Value, id: &EventId) -> bool {
+        self.last_said.get(&(*subject, value.kind())) == Some(id)
     }
 
     /// The setting of `scope` of `T`'s kind.
@@ -128,6 +141,10 @@ impl AccountState {
         match content {
             Content::Fact { subject, value } => {
                 self.facts.set(*subject, value.clone());
+                self.last_said.insert((*subject, value.kind()), id);
+            }
+            Content::Want { subject, value } => {
+                self.last_said.insert((*subject, value.kind()), id);
             }
             Content::WantFriend { pk, .. } => {
                 let friend = self.friends.entry(*pk).or_default();
@@ -234,6 +251,15 @@ impl AccountState {
                     };
                     invite.chat = chat.or(invite.chat);
                 }
+            }
+            Content::Device { pk, name } => {
+                self.devices.insert(*pk, name.clone());
+            }
+            Content::DeviceGone { pk } => {
+                self.devices.remove(pk);
+            }
+            Content::ChatJoined { intent, chat } => {
+                self.chats_joined.insert(*intent, *chat);
             }
             _ => {}
         }

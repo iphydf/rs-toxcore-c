@@ -124,6 +124,9 @@ pub struct Message {
     pub status: MessageStatus,
     pub message_type: MessageType,
     pub highlighted: bool,
+    /// In a group, the member it is between the account and alone: whom it
+    /// went to, or who sent it.
+    pub privately: Option<PublicKey>,
 }
 
 impl Message {
@@ -628,6 +631,7 @@ impl Model {
             .chain(self.request_changes())
             .chain(self.invite_changes())
             .chain(self.read_changes())
+            .chain(self.device_changes())
             .collect();
         let mut cmds = self.record_in_account(contents);
         cmds.extend(crate::sync::facts::push(self, live));
@@ -664,6 +668,34 @@ impl Model {
                 contents.push(Content::UnwantFriend { pk: *pk });
             }
         }
+        contents
+    }
+
+    /// The devices allowed here that the account graph doesn't name, or names
+    /// still, as the account's devices.
+    pub fn device_changes(&self) -> Vec<Content> {
+        let mut contents: Vec<Content> = self
+            .config
+            .sync_devices
+            .iter()
+            .filter(|pk| !self.account.devices.contains_key(pk))
+            .map(|pk| Content::Device {
+                pk: *pk,
+                name: self
+                    .domain
+                    .friends
+                    .get(pk)
+                    .map(|info| info.name.clone())
+                    .unwrap_or_default(),
+            })
+            .collect();
+        contents.extend(
+            self.account
+                .devices
+                .keys()
+                .filter(|pk| !self.config.sync_devices.contains(pk))
+                .map(|pk| Content::DeviceGone { pk: *pk }),
+        );
         contents
     }
 
@@ -807,7 +839,7 @@ impl Model {
         let recorded = self.message_events.get(&(window_id, msg.internal_id));
         match recorded.and_then(|recorded| self.events.get(&recorded.id)) {
             Some(Event {
-                content: Content::Send { message, .. },
+                content: Content::Send { message, .. } | Content::SendPrivately { message, .. },
                 ..
             }) => Some(message.clone()),
             _ => msg.content.as_text().map(|text| text.as_bytes().to_vec()),
@@ -1135,6 +1167,7 @@ impl Model {
                         status: MessageStatus::Incoming,
                         message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
                         highlighted,
+                        privately: None,
                     };
                     conv.messages.push(msg.clone());
                     if active_id != window_id {
@@ -1280,6 +1313,27 @@ impl Model {
         message_type: MessageType,
         content: String,
     ) -> (InternalMessageId, Message) {
+        self.add_outgoing(window_id, message_type, content, None)
+    }
+
+    /// A message to one member of a group alone.
+    pub fn add_outgoing_private_message(
+        &mut self,
+        chat_id: GroupChatId,
+        to: PublicKey,
+        message_type: MessageType,
+        content: String,
+    ) -> (InternalMessageId, Message) {
+        self.add_outgoing(WindowId::Group(chat_id), message_type, content, Some(to))
+    }
+
+    fn add_outgoing(
+        &mut self,
+        window_id: WindowId,
+        message_type: MessageType,
+        content: String,
+        privately: Option<PublicKey>,
+    ) -> (InternalMessageId, Message) {
         self.ensure_window(window_id);
 
         let internal_id = self.domain.next_internal_id;
@@ -1295,6 +1349,7 @@ impl Model {
             status: MessageStatus::Pending,
             message_type,
             highlighted: false,
+            privately,
         };
 
         if let Some(conv) = self.domain.conversations.get_mut(&window_id) {
@@ -1337,7 +1392,7 @@ impl Model {
             .get(&pk)
             .map_or(Some(pk), |info| info.public_key);
 
-        self.add_incoming_message(window_id, message_type, sender, msg, sender_pk)
+        self.add_incoming_message(window_id, message_type, sender, msg, sender_pk, false)
     }
 
     pub fn add_group_message(
@@ -1355,6 +1410,27 @@ impl Model {
             sender,
             content,
             sender_pk,
+            false,
+        )
+    }
+
+    /// A message from one member of a group to the account alone.
+    pub fn add_private_group_message(
+        &mut self,
+        chat_id: GroupChatId,
+        message_type: MessageType,
+        sender: String,
+        content: String,
+        from: PublicKey,
+    ) -> Option<Message> {
+        self.ensure_group_window(chat_id);
+        self.add_incoming_message(
+            WindowId::Group(chat_id),
+            message_type,
+            sender,
+            content,
+            Some(from),
+            true,
         )
     }
 
@@ -1373,6 +1449,7 @@ impl Model {
             sender,
             content,
             sender_pk,
+            false,
         )
     }
 
@@ -1383,6 +1460,7 @@ impl Model {
         sender: String,
         content: String,
         sender_pk: Option<PublicKey>,
+        private: bool,
     ) -> Option<Message> {
         let active_id = self.active_window_id();
         let highlighted = self.should_highlight(window_id, &content);
@@ -1401,6 +1479,7 @@ impl Model {
                 status: MessageStatus::Incoming,
                 message_type,
                 highlighted,
+                privately: sender_pk.filter(|_| private),
             };
             conv.messages.push(msg.clone());
             if active_id != window_id {
@@ -1514,6 +1593,7 @@ impl Model {
                 },
                 message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
                 highlighted: false,
+                privately: None,
             };
 
             conv.messages.push(msg.clone());

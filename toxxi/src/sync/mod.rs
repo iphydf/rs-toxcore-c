@@ -14,13 +14,13 @@ pub use tox_sync::{
 use std::collections::HashSet;
 
 use toxcore::tox::ToxConnection;
-use toxcore::types::PublicKey;
+use toxcore::types::{Address, PublicKey};
 
 use crate::config::Config;
-use crate::model::{ConsoleMessageType, Model, WindowId};
+use crate::model::{ConsoleMessageType, FriendInfo, Model, PendingItem, WindowId};
 use crate::msg::{Cmd, IOAction, ToxAction};
 use account::AccountState;
-use event::{Content, Event, EventId, GraphId};
+use event::{ChatId, Content, Event, EventId, GraphId};
 use fact::is_wishable;
 use fact::{Subject, Value};
 use protocol::{Features, SessionMessage};
@@ -46,6 +46,8 @@ pub fn set_device(model: &mut Model, pk: PublicKey, allowed: bool) -> Vec<Cmd> {
         forget_held(model, pk);
     }
     let mut cmds = vec![Cmd::IO(IOAction::SaveConfig(None))];
+    let changes = model.device_changes();
+    cmds.extend(model.record_in_account(changes));
     // A new Hello tells the device what it may do now.
     if model
         .domain
@@ -223,9 +225,9 @@ enum Allowed {
 
 /// Whether `device` may write `event`: the messages and files they send,
 /// their answers to files, the chats they read and merge, and settings, of
-/// the account or its conversations, and their wishes and answers to
-/// invites, which are for the console. toxxi records the rest of the
-/// account itself.
+/// the account or its conversations, the friends they add or remove, and
+/// their wishes and answers to invites, which are for the console. toxxi
+/// records the rest of the account itself.
 fn allowed(model: &Model, device: PublicKey, event: &Event) -> Option<Allowed> {
     if event.author != device {
         return None;
@@ -236,6 +238,10 @@ fn allowed(model: &Model, device: PublicKey, event: &Event) -> Option<Allowed> {
         Content::Send { .. } | Content::FileAnswered { .. } => {
             model.window_of(&event.graph).map(Allowed::In)
         }
+        Content::SendPrivately { .. } => model
+            .window_of(&event.graph)
+            .filter(|window_id| matches!(window_id, WindowId::Group(_)))
+            .map(Allowed::In),
         Content::File {
             incoming: false,
             file_id: None,
@@ -252,6 +258,23 @@ fn allowed(model: &Model, device: PublicKey, event: &Event) -> Option<Allowed> {
                 .and(model.window_of(&chat.graph())),
         ),
         Content::RelayBot { chat, .. } if in_account => kept(model.window_of(&chat.graph())),
+        Content::NewChat { .. } | Content::JoinChat { .. } if in_account => kept(None),
+        Content::InviteToChat { chat, .. } if in_account => kept(model.window_of(&chat.graph())),
+        // Any device adds, accepts or removes friends, but not the account's
+        // devices, which sync goes through.
+        Content::WantFriend { pk, .. } | Content::UnwantFriend { pk }
+            if in_account
+                && !is_device(&model.config, pk)
+                && *pk != model.domain.self_public_key() =>
+        {
+            kept(None)
+        }
+        // Any device adds, renames or removes devices, but this one, which
+        // the account is named after, stays one.
+        Content::Device { .. } if in_account => kept(None),
+        Content::DeviceGone { pk } if in_account && *pk != model.domain.self_public_key() => {
+            kept(None)
+        }
         Content::Setting { scope, setting } if in_account && setting::fits(setting) => {
             kept(window_of_scope(model, scope))
         }
@@ -375,7 +398,31 @@ fn apply(model: &mut Model, allowed: Allowed, event: Event, id: EventId) -> Vec<
         Allowed::In(window_id) => Some(window_id),
         Allowed::Kept => None,
     };
+    // A device's change can arrive after a later one, written while it was
+    // offline, which then wins.
+    if matches!(
+        event.content,
+        Content::WantFriend { .. } | Content::UnwantFriend { .. } | Content::Want { .. }
+    ) {
+        rebuild_account(model);
+    }
+    let wanted = |model: &Model, pk| model.account.friends.get(&pk).is_some_and(|f| f.wanted);
     match (event.content, window_id) {
+        (
+            Content::WantFriend {
+                pk,
+                request_message,
+                nospam,
+            },
+            _,
+        ) if wanted(model, pk) => want_friend(model, pk, request_message, nospam),
+        (Content::UnwantFriend { pk }, _) if !wanted(model, pk) => unwant_friend(model, pk),
+        (Content::WantFriend { .. } | Content::UnwantFriend { .. }, _) => Vec::new(),
+        (Content::Want { subject, value }, _)
+            if !model.account.is_last_said(&subject, &value, &id) =>
+        {
+            Vec::new()
+        }
         (content @ Content::ReadUpTo { .. }, Some(window_id)) => {
             model.read_elsewhere(window_id, id, &content);
             Vec::new()
@@ -391,6 +438,42 @@ fn apply(model: &mut Model, allowed: Allowed, event: Event, id: EventId) -> Vec<
             rebuild_account(model);
             Vec::new()
         }
+        (Content::Device { pk, .. }, _) => {
+            rebuild_account(model);
+            if is_device(&model.config, &pk) {
+                Vec::new()
+            } else {
+                // Another device paired it: they connect once both are friends.
+                let mut cmds = vec![Cmd::Tox(ToxAction::AcceptFriend(pk))];
+                cmds.extend(set_device(model, pk, true));
+                cmds
+            }
+        }
+        (Content::DeviceGone { pk }, _) => {
+            rebuild_account(model);
+            if is_device(&model.config, &pk) {
+                set_device(model, pk, false)
+            } else {
+                Vec::new()
+            }
+        }
+        (
+            Content::NewChat {
+                kind,
+                name,
+                privacy,
+            },
+            _,
+        ) => vec![Cmd::Tox(ToxAction::MakeChat(id, kind, privacy, name))],
+        (Content::JoinChat { chat_id, password }, _) => {
+            vec![Cmd::Tox(ToxAction::JoinChatById(id, chat_id, password))]
+        }
+        (Content::InviteToChat { chat, friend }, _) => vec![Cmd::Tox(match chat {
+            ChatId::Group(chat_id) => ToxAction::InviteFriendToGroup(chat_id, friend),
+            ChatId::Conference(conference_id) => {
+                ToxAction::InviteFriendToConference(conference_id, friend)
+            }
+        })],
         (Content::AnswerInvite { .. }, _) => {
             rebuild_account(model);
             invites::join(model)
@@ -410,20 +493,70 @@ fn apply(model: &mut Model, allowed: Allowed, event: Event, id: EventId) -> Vec<
             model.add_device_message(window_id, id);
             files::send_pending(model)
         }
-        (Content::Send { message, .. }, Some(window_id)) => {
-            match model.add_device_message(window_id, id) {
-                Some(msg) => crate::update::send_pending(
-                    model,
-                    window_id,
-                    msg.internal_id,
-                    msg.message_type,
-                    message,
-                ),
-                None => Vec::new(),
-            }
-        }
+        (
+            Content::Send { message, .. } | Content::SendPrivately { message, .. },
+            Some(window_id),
+        ) => match model.add_device_message(window_id, id) {
+            Some(msg) => crate::update::send_pending(
+                model,
+                window_id,
+                msg.internal_id,
+                msg.message_type,
+                message,
+            ),
+            None => Vec::new(),
+        },
         _ => Vec::new(),
     }
+}
+
+/// A device's wish for `pk` as a friend: accepting their request, or sending
+/// one to the address it names.
+fn want_friend(
+    model: &mut Model,
+    pk: PublicKey,
+    request_message: Option<String>,
+    nospam: Option<u32>,
+) -> Vec<Cmd> {
+    if model.domain.friends.contains_key(&pk) {
+        return Vec::new();
+    }
+    let requested = model
+        .domain
+        .pending_items
+        .iter()
+        .any(|item| matches!(item, PendingItem::FriendRequest { pk: from, .. } if *from == pk));
+    let action = match nospam {
+        _ if requested => ToxAction::AcceptFriend(pk),
+        Some(nospam) => ToxAction::AddFriend(
+            crate::utils::encode_hex(&Address::from_public_key(pk, nospam).0),
+            request_message
+                .filter(|message| !message.is_empty())
+                .unwrap_or_else(|| "Hello".to_owned()),
+        ),
+        None => return Vec::new(),
+    };
+    // As Tox will say, so the account doesn't record them gone meanwhile.
+    model
+        .domain
+        .friends
+        .insert(pk, FriendInfo::new(pk, ToxConnection::TOX_CONNECTION_NONE));
+    model.invalidate_sidebar_cache();
+    vec![Cmd::Tox(action)]
+}
+
+/// A device's wish to be rid of `pk`: the friend deleted, or their request
+/// declined.
+fn unwant_friend(model: &mut Model, pk: PublicKey) -> Vec<Cmd> {
+    if model.domain.friends.contains_key(&pk) {
+        return model.remove_friend(pk);
+    }
+    model
+        .domain
+        .pending_items
+        .retain(|item| !matches!(item, PendingItem::FriendRequest { pk: from, .. } if *from == pk));
+    model.invalidate_sidebar_cache();
+    Vec::new()
 }
 
 fn start_session(model: &Model, device: PublicKey) -> Vec<Cmd> {

@@ -570,24 +570,53 @@ fn test_handle_me_command() {
     let pk = PublicKey([1u8; 32]);
     add_test_friend(&mut model, fid, pk);
 
-    model.add_friend_message(pk, MessageType::TOX_MESSAGE_TYPE_NORMAL, "hi".to_string());
+    model.add_friend_message(
+        pk,
+        MessageType::TOX_MESSAGE_TYPE_ACTION,
+        "waves".to_string(),
+    );
     model.set_active_window(1);
 
-    for c in "/me is coding".chars() {
+    for c in "/me is   coding".chars() {
         send_key(&mut model, KeyCode::Char(c), KeyModifiers::empty());
     }
     let cmds = send_key(&mut model, KeyCode::Enter, KeyModifiers::empty());
+    let actions = |cmds: Vec<Cmd>| -> Vec<Vec<u8>> {
+        cmds.into_iter()
+            .filter_map(|cmd| match cmd {
+                Cmd::Tox(ToxAction::SendMessage(
+                    f,
+                    MessageType::TOX_MESSAGE_TYPE_ACTION,
+                    msg,
+                    _,
+                )) if f == pk => Some(msg),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(actions(cmds), vec![b"is   coding".to_vec()]);
 
-    let mut found = false;
-    for cmd in cmds {
-        if let Cmd::Tox(ToxAction::SendMessage(f, t, msg, _)) = cmd {
-            assert_eq!(f, pk);
-            assert_eq!(t, MessageType::TOX_MESSAGE_TYPE_ACTION);
-            assert_eq!(msg, b"is coding");
-            found = true;
-        }
-    }
-    assert!(found);
+    // Theirs and ours read as actions.
+    let mut terminal = Terminal::new(TestBackend::new(80, 13)).unwrap();
+    terminal.draw(|f| draw(f, &mut model)).unwrap();
+    let screen: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(screen.contains("Friend 1 waves"), "{screen}");
+    assert!(screen.contains("Tester is   coding"), "{screen}");
+
+    // Too long for one message, it goes in parts as messages do.
+    let long = "x".repeat(toxcore::types::MAX_MESSAGE_LENGTH + 1);
+    let parts = actions(toxxi::update::handle_enter(
+        &mut model,
+        &format!("/me {long}"),
+    ));
+    assert_eq!(parts.concat(), long.into_bytes());
+    assert_eq!(parts.len(), 2);
 }
 
 #[test]
@@ -1770,4 +1799,73 @@ fn test_update_file_command_completion() {
 
     // 3. Verify auto-completion to "/file send " (Note the trailing space)
     assert_eq!(get_text(&model.ui.input_state), "/file send ");
+}
+
+#[test]
+fn test_nospam_command() {
+    let mut model = create_test_model();
+    let nospam = |model: &mut Model, line: &str| -> Option<u32> {
+        toxxi::update::handle_command(model, line)
+            .into_iter()
+            .find_map(|cmd| match cmd {
+                Cmd::Tox(ToxAction::SetNospam(n)) => Some(n),
+                _ => None,
+            })
+    };
+    assert_eq!(nospam(&mut model, "/nospam 0A0B0c0D"), Some(0x0a0b0c0d));
+    assert!(nospam(&mut model, "/nospam new").is_some());
+    for wrong in [
+        "/nospam",
+        "/nospam 0A0B0C",
+        "/nospam +A0B0C0D",
+        "/nospam xyz",
+    ] {
+        assert_eq!(nospam(&mut model, wrong), None, "{wrong}");
+    }
+}
+
+#[test]
+fn test_private_messages_read_as_private() {
+    let mut model = create_test_model();
+    let chat_id = GroupChatId([5u8; 32]);
+    add_test_group(&mut model, GroupNumber(0), chat_id);
+    let bob = PublicKey([2u8; 32]);
+    model
+        .domain
+        .conversations
+        .get_mut(&WindowId::Group(chat_id))
+        .unwrap()
+        .peers
+        .push(toxxi::model::PeerInfo {
+            id: PeerId(bob),
+            name: "Bob".to_owned(),
+            role: Some(ToxGroupRole::TOX_GROUP_ROLE_USER),
+            status: ToxUserStatus::TOX_USER_STATUS_NONE,
+            is_ignored: false,
+            seen_online: true,
+        });
+    model.set_active_window(1);
+    update(
+        &mut model,
+        Msg::Tox(ToxEvent::GroupPrivateMessage(
+            GroupNumber(0),
+            MessageType::TOX_MESSAGE_TYPE_NORMAL,
+            "Bob".to_owned(),
+            b"psst".to_vec(),
+            bob,
+        )),
+    );
+    toxxi::update::handle_command(&mut model, "/whisper Bob hi");
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 13)).unwrap();
+    terminal.draw(|f| draw(f, &mut model)).unwrap();
+    let screen: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(screen.contains("(privately) psst"), "{screen}");
+    assert!(screen.contains("(privately to Bob) hi"), "{screen}");
 }

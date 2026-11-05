@@ -82,6 +82,7 @@ async fn test_chat_window_file_accept() {
             status: MessageStatus::Incoming,
             message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
             highlighted: false,
+            privately: None,
         });
     }
 

@@ -94,6 +94,25 @@ fn created(window_id: WindowId, msg: &Message, bytes: Option<Vec<u8>>) -> Option
             incoming: *is_incoming,
             blob: *blob,
         }),
+        MessageContent::Text(text) if msg.privately.is_some() => {
+            let peer = msg.privately?;
+            let (sender, message, kind) = (msg.sender.clone(), message(text), msg.message_type);
+            Some(if msg.is_self {
+                Content::SendPrivately {
+                    to: peer,
+                    sender,
+                    message,
+                    kind,
+                }
+            } else {
+                Content::ReceivedPrivately {
+                    from: peer,
+                    sender,
+                    message,
+                    kind,
+                }
+            })
+        }
         MessageContent::Text(text) if msg.is_self => Some(Content::Send {
             sender: msg.sender.clone(),
             message: message(text),
@@ -193,6 +212,7 @@ pub fn message_of(
         status: MessageStatus::Incoming,
         message_type: MessageType::TOX_MESSAGE_TYPE_NORMAL,
         highlighted: false,
+        privately: None,
     };
     match content {
         Content::Received {
@@ -222,6 +242,38 @@ pub fn message_of(
             content: MessageContent::Text(text::of(&message)),
             status: MessageStatus::Pending,
             message_type: kind,
+            ..base
+        }),
+        Content::ReceivedPrivately {
+            from,
+            sender,
+            message,
+            kind,
+        } => {
+            let text = text::of(&message);
+            Some(Message {
+                sender,
+                sender_pk: Some(from),
+                highlighted: viewer.highlighted(&text),
+                content: MessageContent::Text(text),
+                message_type: kind,
+                privately: Some(from),
+                ..base
+            })
+        }
+        Content::SendPrivately {
+            to,
+            sender,
+            message,
+            kind,
+        } => Some(Message {
+            sender,
+            sender_pk: Some(viewer.me),
+            is_self: true,
+            content: MessageContent::Text(text::of(&message)),
+            status: MessageStatus::Pending,
+            message_type: kind,
+            privately: Some(to),
             ..base
         }),
         Content::Notice { text } => Some(Message {

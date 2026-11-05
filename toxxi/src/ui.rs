@@ -17,7 +17,7 @@ use ratatui::{
 };
 
 use toxcore::tox::{ToxConnection, ToxUserStatus};
-use toxcore::types::ToxLogLevel;
+use toxcore::types::{MessageType, ToxLogLevel};
 use unicode_width::UnicodeWidthStr;
 
 pub fn draw(f: &mut Frame, model: &mut Model) {
@@ -392,8 +392,26 @@ fn draw_messages(f: &mut Frame, area: Rect, model: &mut Model) {
 
                 // Helper to convert a single message
                 let convert = |msg: &crate::model::Message| -> ChatMessage {
+                    // An action reads "* Name does something".
+                    let action = msg.message_type == MessageType::TOX_MESSAGE_TYPE_ACTION;
+                    // Said in a group to one member alone, which the text
+                    // says, as the sender's column is narrow.
+                    let privately = match msg.privately {
+                        Some(pk) if msg.is_self => {
+                            let peer = conv.peers.iter().find(|p| p.id.0 == pk).map_or_else(
+                                || crate::utils::encode_hex(&pk.0[..4]),
+                                |p| p.name.clone(),
+                            );
+                            format!("(privately to {peer}) ")
+                        }
+                        Some(_) => "(privately) ".to_owned(),
+                        None => String::new(),
+                    };
                     let content = match &msg.content {
-                        MessageContent::Text(t) => WidgetContent::Text(t.clone()),
+                        MessageContent::Text(t) if action => {
+                            WidgetContent::Text(format!("{privately}{} {t}", msg.sender))
+                        }
+                        MessageContent::Text(t) => WidgetContent::Text(format!("{privately}{t}")),
                         MessageContent::List(items) => WidgetContent::Text(items.join("\n")),
                         MessageContent::FileTransfer {
                             file_id,
@@ -450,8 +468,13 @@ fn draw_messages(f: &mut Frame, area: Rect, model: &mut Model) {
                         }
                     };
 
+                    let sender = if action {
+                        "*".to_owned()
+                    } else {
+                        msg.sender.clone()
+                    };
                     ChatMessage {
-                        sender: msg.sender.clone(),
+                        sender,
                         timestamp: msg.timestamp.format("%H:%M").to_string(),
                         unix_timestamp: msg.timestamp.timestamp() as u64,
                         content,

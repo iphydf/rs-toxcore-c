@@ -6,7 +6,6 @@ use std::{error, ffi as std_ffi, fmt};
 
 pub const ADDRESS_SIZE: usize = ffi::TOX_ADDRESS_SIZE as usize;
 pub const CONFERENCE_ID_SIZE: usize = ffi::TOX_CONFERENCE_ID_SIZE as usize;
-pub const CONFERENCE_UID_SIZE: usize = ffi::TOX_CONFERENCE_UID_SIZE as usize;
 pub const DHT_ID_SIZE: usize = ffi::TOX_DHT_ID_SIZE as usize;
 pub const FILE_ID_LENGTH: usize = ffi::TOX_FILE_ID_LENGTH as usize;
 pub const GROUP_CHAT_ID_SIZE: usize = ffi::TOX_GROUP_CHAT_ID_SIZE as usize;
@@ -46,7 +45,6 @@ impl_safe_newtype!(GroupPeerNumber);
 impl_safe_newtype!(MessageId);
 impl_byte_array_type!(Address, ADDRESS_SIZE);
 impl_byte_array_type!(ConferenceId, CONFERENCE_ID_SIZE);
-impl_byte_array_type!(ConferenceUid, CONFERENCE_UID_SIZE);
 impl_byte_array_type!(DhtId, DHT_ID_SIZE);
 impl_byte_array_type!(FileId, FILE_ID_LENGTH);
 impl_byte_array_type!(GroupChatId, GROUP_CHAT_ID_SIZE);

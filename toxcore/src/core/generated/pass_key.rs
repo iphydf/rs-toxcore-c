@@ -1,5 +1,4 @@
 #![allow(unused_imports)]
-use super::tox::Tox;
 use crate::ffi;
 #[allow(unused_imports)]
 use crate::types::*;
@@ -38,10 +37,7 @@ impl PassKey {
 
     pub fn encrypt(&self, plaintext: &[u8]) -> std::result::Result<Vec<u8>, Tox_Err_Encryption> {
         unsafe {
-            let len = std::ops::Add::add(
-                plaintext.len(),
-                ffi::TOX_PASS_ENCRYPTION_EXTRA_LENGTH as usize,
-            );
+            let len = plaintext.len() + ffi::TOX_PASS_ENCRYPTION_EXTRA_LENGTH as usize;
             let mut buf = vec![0u8; len];
             let mut err = ffi::Tox_Err_Encryption::TOX_ERR_ENCRYPTION_OK;
             ffi::tox_pass_key_encrypt(
@@ -60,13 +56,9 @@ impl PassKey {
 
     pub fn decrypt(&self, ciphertext: &[u8]) -> std::result::Result<Vec<u8>, Tox_Err_Decryption> {
         unsafe {
-            if ciphertext.len() < ffi::TOX_PASS_ENCRYPTION_EXTRA_LENGTH as usize {
-                return Err(ffi::Tox_Err_Decryption::TOX_ERR_DECRYPTION_INVALID_LENGTH.into());
-            };
-            let len = std::ops::Sub::sub(
-                ciphertext.len(),
-                ffi::TOX_PASS_ENCRYPTION_EXTRA_LENGTH as usize,
-            );
+            let len = ciphertext
+                .len()
+                .saturating_sub(ffi::TOX_PASS_ENCRYPTION_EXTRA_LENGTH as usize);
             let mut buf = vec![0u8; len];
             let mut err = ffi::Tox_Err_Decryption::TOX_ERR_DECRYPTION_OK;
             ffi::tox_pass_key_decrypt(
@@ -121,10 +113,7 @@ impl PassKey {
         passphrase: &[u8],
     ) -> std::result::Result<Vec<u8>, Tox_Err_Encryption> {
         unsafe {
-            let len = std::ops::Add::add(
-                plaintext.len(),
-                ffi::TOX_PASS_ENCRYPTION_EXTRA_LENGTH as usize,
-            );
+            let len = plaintext.len() + ffi::TOX_PASS_ENCRYPTION_EXTRA_LENGTH as usize;
             let mut buf = vec![0u8; len];
             let mut err = ffi::Tox_Err_Encryption::TOX_ERR_ENCRYPTION_OK;
             ffi::tox_pass_encrypt(
@@ -147,13 +136,9 @@ impl PassKey {
         passphrase: &[u8],
     ) -> std::result::Result<Vec<u8>, Tox_Err_Decryption> {
         unsafe {
-            if ciphertext.len() < ffi::TOX_PASS_ENCRYPTION_EXTRA_LENGTH as usize {
-                return Err(ffi::Tox_Err_Decryption::TOX_ERR_DECRYPTION_INVALID_LENGTH.into());
-            };
-            let len = std::ops::Sub::sub(
-                ciphertext.len(),
-                ffi::TOX_PASS_ENCRYPTION_EXTRA_LENGTH as usize,
-            );
+            let len = ciphertext
+                .len()
+                .saturating_sub(ffi::TOX_PASS_ENCRYPTION_EXTRA_LENGTH as usize);
             let mut buf = vec![0u8; len];
             let mut err = ffi::Tox_Err_Decryption::TOX_ERR_DECRYPTION_OK;
             ffi::tox_pass_decrypt(

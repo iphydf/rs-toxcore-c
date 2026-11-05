@@ -1,9 +1,8 @@
 // Hand-written safe wrappers for the events iteration API. `Tox_Iterate_Options`
 // lives in tox_private.h which apigen cannot parse, so its constructor and
 // setters are written by hand against the bindgen-generated FFI symbols.
-use super::iterate_options::IterateOptions;
-use super::tox::Tox;
-use super::tox::ToxEvents;
+use super::events::ToxEvents;
+use super::tox::{IterateOptions, Tox};
 use crate::ffi;
 use crate::types::*;
 

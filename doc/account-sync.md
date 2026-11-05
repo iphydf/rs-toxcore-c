@@ -7,9 +7,12 @@ An account has several devices. Each keeps a replica of the account's state;
 replicas converge by exchanging events over Tox. Devices record what they know
 or want, offline if need be, and the home device makes the Tox network match.
 
-Not in v1: message IDs shared with friends, edits, reactions; encryption beyond
-Tox's; devices that distrust each other; group histories merged from several
-members (groups are synced as the home sees them).
+Not yet: devices with Tox IDs of their own whose friends and history the
+other devices sync, devices syncing with each other without the home, and
+friends seeing that the devices are one person; message IDs shared with
+friends, edits, reactions; encryption beyond Tox's; devices that distrust each
+other; group histories merged from several members (groups are synced as the
+home sees them).
 
 ## Roles
 
@@ -20,10 +23,13 @@ members (groups are synced as the home sees them).
 -   **Replica**: any other device. It runs its own *device key*, whose only
     friend is the home. bTox shows the account as a separate profile backed by
     that key.
--   **Allowlist**: device keys allowed to sync, edited only at the home (in
-    toxxi, `/device allow <friend>`, `/device remove <friend>`), never through
-    sync. Every friend gets a `Hello`, but only allowed devices are offered
-    sync; sync messages from other keys are ignored and create no state.
+-   **Devices**: the device keys allowed to sync, edited at the home (in
+    toxxi, `/device allow <friend>`, `/device remove <friend>`) or by any
+    device, and recorded in the account graph as `Device` and `DeviceGone`,
+    so every device knows which of the home's friends are its devices. The
+    home is always one. Every friend gets a `Hello`, but only the devices are
+    offered sync; sync messages from other keys are ignored and create no
+    state.
 
 ### Pairing
 
@@ -31,8 +37,8 @@ members (groups are synced as the home sees them).
     code is 16 random bytes in hex, single use, valid 10 minutes.
 2.  The new device creates its device key and sends the home a friend request
     with message `pair:<code>`.
-3.  The home accepts a request with a valid code and allowlists the key. Other
-    requests are ordinary friend requests.
+3.  The home accepts a request with a valid code, makes the key a device and
+    records it with `Device`. Other requests are ordinary friend requests.
 
 ## Data model
 
@@ -88,23 +94,30 @@ Account graph:
 
 | Tag | Content | Merge rule |
 |---|---|---|
-| 64 | `WantFriend[pk: bin, request_message: str?]` | Per friend, last writer wins against `UnwantFriend` |
+| 64 | `WantFriend[pk: bin, request_message: str?, nospam: uint?]` | Per friend, last writer wins against `UnwantFriend`; any device, but never for the account's devices |
 | 65 | `UnwantFriend[pk: bin]` | " |
 | 66 | `ReadUpTo[graph: bin, event: bin, rank: uint]` | Per graph, highest rank wins; reads every event of that rank or lower |
 | 67 | `FriendRequest[pk: bin, message: str]` | Pending until a later `WantFriend` or `UnwantFriend` for `pk`; home |
 | 68 | `MergeChat[chat: ChatId, bot: bin, into: ChatId, into_bot: bin, merged: bool]` | Per `chat`, last writer wins; `chat` shows with `into`, whose bot `into_bot` relays its messages as `bot` does in `chat`; `merged: false` shows them apart; any device |
 | 69 | `RelayBot[chat: ChatId, bot: bin, relays: bool]` | Per `chat`, last writer wins; `bot` relays another chat's messages in `chat`; `relays: false` stops; any device |
 | 70 | `Fact[subject: Subject, value: Value]` | Per subject and value kind, last writer wins; home (see Facts and wishes) |
-| 71 | `Want[subject: Subject, value: Value]` | What a device asks Tox to say; any device |
+| 71 | `Want[subject: Subject, value: Value]` | What a device asks Tox to say; per subject and value kind, the last `Fact` or `Want` wins; any device |
 | 72 | `ChatInvite[from: bin, kind: uint, name: str, invite: bin]` | Pending until answered; friend `from` invites the account to a chat of `kind` (as in `ChatId`) named `name` (empty for a conference); `invite` is what Tox joins with; home |
 | 73 | `AnswerInvite[invite: bin, join: bool, password: str?]` | Per invite, last writer wins; `invite` is the `ChatInvite` event; `join` asks the home to join, with `password` for a group that has one; `false` declines; any device |
 | 74 | `InviteJoined[invite: bin, chat: ChatId?, needs_password: bool]` | Per invite, last writer wins; the chat the home joined, or none where Tox refused; `needs_password` for a missing or wrong password; home |
 | 75 | `Setting[scope: Scope, setting: Setting]` | Per scope and setting kind, last writer wins; any device (see Settings) |
 | 76 | `ClearSetting[scope: Scope, kind: uint]` | Removes the setting of `kind` for `scope`, same rule; any device |
+| 77 | `Device[pk: bin, name: str]` | Per `pk`, last writer wins against `DeviceGone`; `pk` is one of the account's devices, named `name`; any device |
+| 78 | `DeviceGone[pk: bin]` | Same rule; `pk` is no longer one of the account's devices; any device, but never for the home |
+| 79 | `NewChat[kind: uint, name: str, privacy: uint]` | The home founds a group (`kind` 0, `privacy` as in `Privacy`) or a conference (`kind` 1) named `name`; any device |
+| 80 | `JoinChat[chat_id: bin, password: str?]` | The home joins a public group by its chat ID; any device |
+| 81 | `InviteToChat[chat: ChatId, friend: bin]` | The home invites a friend to a chat; any device |
+| 82 | `ChatJoined[intent: bin, chat: ChatId?]` | Per intent, last writer wins; what the home made of `NewChat` or `JoinChat` event `intent`: the chat, or none where Tox refused; home |
 
 `ChatId` is `[kind: uint, id: bin]`: 0 group, 1 conference.
 
--   The home writes `WantFriend`/`UnwantFriend` itself to record its friends.
+-   The home writes `WantFriend`/`UnwantFriend` to record its friends, and
+    devices write them to add, accept or remove friends.
 -   Every device writes `ReadUpTo` when it has shown a conversation to its end.
 -   **Merged chats** (`MergeChat`): two chats bridged by a bot that relays each
     message as `<name> message`. A client merging them shows one chat: a
@@ -172,6 +185,8 @@ Conversation graphs:
 | 7 | `FileAnswered[file: bin, accepted: bool]` | Any device: accept or decline `file`; the home ends a file it no longer has as failed |
 | 8 | `Call[sender: str, incoming: bool, video: bool]` | Home, when a call with the friend starts ringing |
 | 9 | `CallEnded[call: bin, duration: uint?, declined: bool]` | Home, when `call` ends; `duration` connected time in ms, if any; `declined` if it rang here and was declined |
+| 10 | `ReceivedPrivately[from: bin, sender: str, message: bin, kind: uint]` | Home, for a message to the account alone in a group |
+| 11 | `SendPrivately[to: bin, sender: str, message: bin, kind: uint]` | Any device: "please send this to `to` alone"; `Sent` and `Delivered` answer it as they answer `Send` |
 
 -   `message` is the bytes exactly as Tox carries them; only displaying clients
     decode them, so in-message formats (e.g. TRIfA's V3 trailer) survive.
@@ -239,7 +254,8 @@ device. Unknown kinds and values are kept, passed on, and show nothing.
     marked in the table, the home makes Tox match and records the resulting
     fact. A refused wish leaves the fact unchanged. Wishes are declarative:
     repeating one is a no-op, and an offline one applies when it reaches the
-    home.
+    home, unless a `Fact` or `Want` of the same subject and kind ranks after
+    it.
 -   Clients build all Tox state they show from facts.
 
 ## Bridging to Tox
@@ -253,8 +269,9 @@ The home makes toxcore match the account state:
     restart (one rare duplicate is accepted).
 -   **Receipts** become `Delivered`, for a split message that of its last part.
 -   **Friends**: `WantFriend` for an unknown key sends a request or accepts a
-    pending one; `UnwantFriend` deletes the friend. Incoming requests become
-    `FriendRequest`.
+    pending one; `UnwantFriend` deletes the friend. A device's change that a
+    later one for the same friend outranks does nothing. Incoming requests
+    become `FriendRequest`.
 -   **Invites**: incoming invites become `ChatInvite`. A `join` answer is
     carried out with `tox_group_invite_accept` (with its password) or
     `tox_conference_join` once the inviting friend is online, and recorded as
@@ -441,14 +458,17 @@ The cases in `sync/conformance` are checked against both implementations.
 -   Only allowlisted device keys are offered sync. Sync messages from any
     friend are decoded (bounded, non-recursive); from keys not allowed, only
     `Hello` is acted on.
--   The allowlist can't be changed through sync.
+-   Devices are changed through sync only by `Device` and `DeviceGone` from a
+    device, which can't remove the home.
 -   The home takes from a device only events that device authored, of the
     kinds devices write: in this account's conversations, `Send`,
-    `FileAnswered`, and `File` with a blob to send in friend chats; in the
-    account graph, `ReadUpTo`, `MergeChat`, `RelayBot`, `Setting` and
-    `ClearSetting` (for the account or its conversations), `AnswerInvite` for
-    a pending invite, and `Want` for the wishes the table allows. The home
-    records everything else itself.
+    `SendPrivately`, `FileAnswered`, and `File` with a blob to send in friend
+    chats; in the account graph, `ReadUpTo`, `MergeChat`, `RelayBot`, `Setting`
+    and `ClearSetting` (for the account or its conversations), `WantFriend`
+    and `UnwantFriend` for keys other than the account's devices, `AnswerInvite`
+    for a pending invite, `Want` for the wishes the table allows, `Device`,
+    `DeviceGone`, `NewChat`, `JoinChat`, and `InviteToChat` for a chat the
+    account is in. The home records everything else itself.
 -   The home takes a device's event once all its parents are present, lowest
     rank first; one without parents only at rank 0. It keeps account events
     of a chat that's gone, acting on none, so no graph has a gap.
@@ -460,3 +480,4 @@ The cases in `sync/conformance` are checked against both implementations.
 -   Avatars come from any friend, so clients decode them with a pixel limit.
 -   Nothing is encrypted at rest. Group passwords (kept facts, invite answers)
     are in plaintext in the account graph on every device and in `events.log`.
+

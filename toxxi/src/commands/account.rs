@@ -65,6 +65,44 @@ pub const COMMANDS: &[CommandDef] = &[
         complete: None,
     },
     CommandDef {
+        name: "nospam",
+        args: (None, "[new|<8 hex digits>]"),
+        desc: (
+            None,
+            "Show or change the end of your Tox ID, so requests to the old one stop",
+        ),
+        exec: |model, args| {
+            let id = &model.domain.tox_id.0;
+            let current = u32::from_be_bytes([id[32], id[33], id[34], id[35]]);
+            let nospam = match args.first().map(|arg| arg.to_lowercase()) {
+                None => {
+                    model.add_info_message(MessageContent::Text(format!(
+                        "Nospam: {current:08X}. /nospam new changes it."
+                    )));
+                    return vec![];
+                }
+                Some(arg) if arg == "new" => rand::random(),
+                Some(arg) => match u32::from_str_radix(&arg, 16) {
+                    Ok(nospam) if arg.len() == 8 && arg.bytes().all(|b| b.is_ascii_hexdigit()) => {
+                        nospam
+                    }
+                    _ => {
+                        model.add_error_message(MessageContent::Text(
+                            "Usage: /nospam [new|<8 hex digits>]".to_owned(),
+                        ));
+                        return vec![];
+                    }
+                },
+            };
+            model.add_status_message(MessageContent::Text(format!(
+                "Nospam set to {:08X}: friend requests to your old Tox ID no longer arrive.",
+                nospam
+            )));
+            vec![Cmd::Tox(ToxAction::SetNospam(nospam))]
+        },
+        complete: None,
+    },
+    CommandDef {
         name: "status_type",
         args: (None, "<online|away|busy>"),
         desc: (None, "Set status type"),
